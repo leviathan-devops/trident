@@ -1,0 +1,26 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "google/gemma-4-26b-a4b-it",
+  "provider": {
+    "google": {
+      "npm": "@ai-sdk/google",
+      "options": {
+        "apiKey": "YOUR_GOOGLE_API_KEY_HERE"
+      }
+    }
+  },
+  "plugin": [
+    "file:///home/leviathan/.config/opencode/plugins/shark-agent/dist/index.js",
+    "file:///home/leviathan/.config/opencode/plugins/hive-mind/dist/index.js",
+    "file:///home/leviathan/.config/opencode/plugins/spider-agent-v2.2.2/dist/index.js",
+    "file:///home/leviathan/.config/opencode/plugins/agent-vision/dist/index.js",
+    "file:///home/leviathan/.config/opencode/plugins/trident/dist/index.js"
+  ],
+  "agent": {
+    "shark": {"color": "#228B22"},
+    "spider": {"color": "#DC2626"},
+    "trident": {}
+  },
+  "permission": {"*": {"*": "allow"}},
+  "autoupdate": false
+}

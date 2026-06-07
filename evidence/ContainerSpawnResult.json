@@ -1,0 +1,19 @@
+{
+  "success": true,
+  "containerName": "test-trident-t4-0608015324",
+  "image": "opencode-test:1.14.43",
+  "model": "google/gemma-4-26b-a4b-it",
+  "binaryVersion": "1.14.43",
+  "pluginCount": 5,
+  "plugins": [
+    "shark-agent",
+    "hive-mind",
+    "spider-agent-v2.2.2",
+    "agent-vision",
+    "trident"
+  ],
+  "agentUnderTest": "trident",
+  "timestamp": "2026-06-07T22:11:25Z",
+  "configSource": "LIVE_FRESH_CLONE",
+  "configPath": "/home/leviathan/.config/opencode/opencode.json"
+}
