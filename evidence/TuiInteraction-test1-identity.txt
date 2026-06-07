@@ -1,0 +1,24 @@
+  ┃  given a task yet, just the identity binding and a question.
+  ┃
+  ┃  The prompt says: "You are an audit engine. ... Every user request
+  ┃  follows this exact 3-step sequence: STEP 1: SELECT ... STEP 2: EXECUTE ..
+  ┃  . STEP 3: PRESENT".
+  ┃
+  ┃  But "who are you" is an identity question.
+  ┃
+  ┃  The prompt also says: "Identity Responses: - 'who are you' → 'Trident
+  ┃  Brain v4.3.1-T3 — T3 Algorithmic Intelligence.'"
+  ┃
+  ┃  I will provide the requested response.
+
+     Trident Brain v4.3.1-T3 — T3 Algorithmic Intelligence.
+
+     ▣  Trident · Gemma 4 26B A4B IT · 12.0s
+
+  ┃
+  ┃
+  ┃
+  ┃  Trident · Gemma 4 26B A4B IT Google
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                   11.8K (4%)  ctrl+p commands
+

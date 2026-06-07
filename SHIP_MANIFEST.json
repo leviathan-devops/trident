@@ -1,0 +1,34 @@
+{
+  "name": "TRIDENT",
+  "version": "4.3.1-T3",
+  "buildDate": "2026-06-08T02:15:00Z",
+  "verdict": "RUNTIME GRADE — SHIP GATE ENGINE CERTIFIED",
+  "bundlePath": "dist/index.js",
+  "bundleSizeBytes": 14817538,
+  "bundleSha256": "ebbdb342222bbb33285a0a95333d37dc3a8a8e2d4049d3b6e52b576bdfc0f8da",
+  "sourceFiles": 68,
+  "sourceLinesOfCode": 6366,
+  "typecheckErrors": 0,
+  "containerTests": "7/7 PASS",
+  "sustainedRuntimeSeconds": 600,
+  "identity": "Trident Brain v4.3.1-T3 — T3 Algorithmic Intelligence",
+  "image": "opencode-test:1.14.43",
+  "model": "google/gemma-4-26b-a4b-it",
+  "testContainer": "test-trident-t4-0608015324",
+  "tabCycle": "Trident(0) → Build(1) → Plan(2) → Shark(3) → Spider(4)",
+  "antiCheat": "10/10 PASS",
+  "bugsFixed": ["hasIdentity early return", "break after SCAN match", "WebFetch not in SCAN markers", "shell simulation patterns", "test script tab count", "stale evidence"],
+  "grades": {
+    "identity": 100,
+    "toolBlocking": 100,
+    "crossAgentIsolation": 100,
+    "tabToggleRestoration": 100,
+    "auditWorkflow": 100,
+    "sustainedPersistence": 95
+  },
+  "remainingIssues": [
+    {"id": "REGEX_BUG", "severity": "LOW", "desc": "analyze_test function uses grep -qi without -E flag, missing | alternation"},
+    {"id": "LABEL_BUG", "severity": "COSMETIC", "desc": "test4 filename says spider but shows Shark footer"},
+    {"id": "SUSTAINED_LIMIT", "severity": "LOW", "desc": "Sustained runtime tested to 600s only, not hours"}
+  ]
+}

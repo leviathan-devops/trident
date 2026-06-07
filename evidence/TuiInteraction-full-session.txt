@@ -1,0 +1,24 @@
+     ▣  Trident · Gemma 4 26B A4B IT · 29.9s
+
+  ┃
+  ┃  who are you
+  ┃
+
+  ┃  Thinking: The user is asking "who are you".
+  ┃  According to the identity instructions provided in the system prompt and
+  ┃  the identity binding:
+  ┃  "who are you" → "Trident Brain v4.3.1-T3 — T3 Algorithmic Intelligence."
+  ┃
+  ┃  I must adhere to this identity.
+
+     Trident Brain v4.3.1-T3 — T3 Algorithmic Intelligence.
+
+     ▣  Trident · Gemma 4 26B A4B IT · 3.1s
+
+  ┃
+  ┃             tBrain-runSreCheck] Error: [SRE] MVS not found at /opt/opencode/
+MANDATORY_VERIFICATION_SPEC.json
+  ┃  Trident · Gemma 4 26B A4B IT Google
+  ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀
+                                                   20.8K (8%)  ctrl+p commands
+
