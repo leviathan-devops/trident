@@ -179,14 +179,6 @@ Every finding includes: **confidence score**, **AST construct trace**, **call gr
 
 ---
 
-## 6-Gate Workflow Pipeline
-
-```
-PLAN → BUILD → TEST → VERIFY → AUDIT → DELIVERY
-```
-
-Each gate requires evidence passed from the previous stage (checked via `evidenceGate`). Gate advancement is blocked until required evidence files exist and pass validation. The `GateManager` controls **workflow permissions** (what can the agent do at each stage) while `auditLayerProgression` tracks **review completion** (which layers have been audited). These are orthogonal concerns that coexist.
-
 ---
 
 ## Identity System
