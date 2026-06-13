@@ -13,37 +13,37 @@ Trident v4.3.2 is a runtime-grade algorithmic audit engine plugin for opencode. 
 ### Architecture
 
 ```
-                    +----------------------+
-                    |     opencode.json     |
-                    |  (Plugin Registrar)  |
-                    +----------+-----------+
-                               | loads
-                    +----------v-----------+
-                    |   TRIDENT v4.3.2     |
-                    |  (dist/index.js)     |
-                    +----------+-----------+
-                               | hooks into
-          +--------------------+--------------------+
-          |                    |                    |
-   +------v------+   +--------v--------+   +-------v-------------------+
-   |  event      |   |  tool.before    |   |  identity & per-turn      |
-   |  hook       |   |  3-layer gate   |   |  override (system.        |
-   |  (session   |   |  BLOCKED_TOOLS  |   |  transform)               |
-   |   init)     |   |  HIVE_TOOLS     |   +---------------------------+
-   +-------------+   |  THEATRICAL     |
-                     +--------+--------+
-                              |
-                              v
-                     +----------------+
-                     |  17-Layer Audit |
-                     |  Engine (R0-R16)|
-                     +--------+-------+
-                              |
-                              v
-                     +----------------+
-                     |  XState FSM    |
-                     |  Orchestrator  |
-                     +----------------+
+                  +-----------------------+
+                  |     opencode.json      |
+                  |   (Plugin Registrar)   |
+                  +-----------+-----------+
+                              | loads
+                  +-----------v-----------+
+                  |    TRIDENT v4.3.2      |
+                  |   (dist/index.js)      |
+                  +-----------+-----------+
+                              | hooks into
+          +-------------------+-------------------+
+          |                   |                   |
+   +------v------+   +-------v-------+   +-------v--------+
+   |  event      |   |  tool.before  |   |  identity &    |
+   |  hook       |   |  3-layer gate |   |  per-turn      |
+   |  (session   |   | BLOCKED_TOOLS |   |  override      |
+   |   init)     |   | HIVE_TOOLS    |   |  (system.      |
+   +-------------+   | THEATRICAL    |   |  transform)    |
+                     +-------+-------+   +----------------+
+                             |
+                             v
+                    +------------------+
+                    | 17-Layer Audit   |
+                    | Engine (R0-R16)  |
+                    +--------+---------+
+                             |
+                             v
+                    +------------------+
+                    |   XState FSM     |
+                    |   Orchestrator   |
+                    +------------------+
 ```
 
 ### Identity
