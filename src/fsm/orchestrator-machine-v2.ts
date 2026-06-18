@@ -1,0 +1,188 @@
+/**
+ * TRIDENT STATE MACHINE v2 — Pure TypeScript (Spec Phase 6)
+ * 
+ * Programmatic transition logic with validation.
+ * The orchestrator is a REPORTER, not a GATE: transitions are recorded
+ * but never block tool execution. Irregular transitions are logged, not thrown.
+ * This is the PRIMARY state tracker. XState machine is secondary.
+ */
+
+export type TridentMode =
+  | 'IDLE'
+  | 'CODE_REVIEW'
+  | 'DEEP_PLANNING'
+  | 'PROBLEM_SOLVING'
+  | 'CONTEXT_SYNTHESIS';
+
+export type TridentStatus =
+  | 'IDLE'
+  | 'RUNNING'
+  | 'LAYER_COMPLETE'
+  | 'ERROR'
+  | 'TIMEOUT'
+  | 'COMPLETE';
+
+export interface MachineState {
+  mode: TridentMode;
+  currentLayer: number;
+  maxLayers: number;
+  status: TridentStatus;
+  iteration: number;
+  lastTransition: string;
+  transitionHistory: Array<{ from: string; to: string; at: number; trigger: string }>;
+  startedAt: number;
+  error: string | null;
+}
+
+const MODE_LAYER_MAP: Record<TridentMode, number> = {
+  IDLE: 0,
+  CODE_REVIEW: 17,
+  DEEP_PLANNING: 3,
+  PROBLEM_SOLVING: 6,
+  CONTEXT_SYNTHESIS: 4,
+};
+
+const STATUS_TRANSITIONS: Record<string, Set<string>> = {
+  IDLE: new Set(['RUNNING']),
+  RUNNING: new Set(['LAYER_COMPLETE', 'ERROR', 'TIMEOUT', 'COMPLETE']),
+  LAYER_COMPLETE: new Set(['RUNNING', 'COMPLETE', 'ERROR', 'TIMEOUT', 'LAYER_COMPLETE']),
+  ERROR: new Set(['RUNNING', 'IDLE']),
+  TIMEOUT: new Set(['IDLE']),
+  COMPLETE: new Set(['IDLE', 'RUNNING']),
+};
+
+export class OrchestratorMachineV2 {
+  private state: MachineState;
+
+  constructor() {
+    this.state = this.defaultState();
+  }
+
+  private defaultState(): MachineState {
+    return {
+      mode: 'IDLE',
+      currentLayer: 0,
+      maxLayers: 0,
+      status: 'IDLE',
+      iteration: 0,
+      lastTransition: 'init',
+      transitionHistory: [],
+      startedAt: Date.now(),
+      error: null,
+    };
+  }
+
+  private transition(newStatus: TridentStatus, trigger: string): void {
+    const allowed = STATUS_TRANSITIONS[this.state.status];
+    if (!allowed || !allowed.has(newStatus)) {
+      // Reporter, not gate: record the irregular transition but DO NOT throw.
+      this.state.error = `Irregular transition: ${this.state.status} → ${newStatus} (trigger: ${trigger})`;
+    }
+    this.state.transitionHistory.push({
+      from: `${this.state.mode}:${this.state.status}`,
+      to: `${this.state.mode}:${newStatus}`,
+      at: Date.now(),
+      trigger,
+    });
+    this.state.status = newStatus;
+    this.state.lastTransition = trigger;
+    if (this.state.transitionHistory.length > 50) {
+      this.state.transitionHistory = this.state.transitionHistory.slice(-50);
+    }
+  }
+
+  startMode(mode: TridentMode): void {
+    // Always reset before starting a new mode. Never block based on current status.
+    this.state = this.defaultState();
+    this.state.mode = mode;
+    this.state.maxLayers = MODE_LAYER_MAP[mode];
+    this.state.currentLayer = 1; // Start at layer 1
+    this.state.iteration = 0;
+    this.state.startedAt = Date.now();
+    this.state.error = null;
+    this.transition('RUNNING', `start:${mode}`);
+  }
+
+  advanceLayer(): void {
+    // If already complete, auto-reset and restart from layer 1 instead of throwing.
+    if (this.state.status === 'COMPLETE') {
+      const mode = this.state.mode;
+      this.state = this.defaultState();
+      this.state.mode = mode;
+      this.state.maxLayers = MODE_LAYER_MAP[mode];
+      this.state.currentLayer = 1;
+      this.state.startedAt = Date.now();
+      this.transition('RUNNING', 'auto-restart-from-complete');
+      return;
+    }
+    // Auto-recover from error/timeout state instead of throwing.
+    if (this.state.status === 'ERROR' || this.state.status === 'TIMEOUT') {
+      this.state = this.defaultState();
+      return;
+    }
+    // From any other state (RUNNING, LAYER_COMPLETE, IDLE), proceed without throwing.
+    // If at or past max layers, mark complete.
+    if (this.state.currentLayer >= this.state.maxLayers) {
+      this.transition('COMPLETE', 'all-layers-complete');
+      return;
+    }
+    this.state.currentLayer++;
+    this.state.iteration++;
+    this.transition('LAYER_COMPLETE', `layer-${this.state.currentLayer}`);
+  }
+
+  fail(errorMessage: string): void {
+    this.state.error = errorMessage;
+    // Idempotent fail: if already in ERROR, update message but don't transition
+    if (this.state.status === 'ERROR') {
+      return;
+    }
+    this.transition('ERROR', `fail:${errorMessage.substring(0, 80)}`);
+  }
+
+  timeout(): void {
+    this.transition('TIMEOUT', 'timeout');
+  }
+
+  reset(): void {
+    this.state = this.defaultState();
+  }
+
+  getState(): Readonly<MachineState> {
+    return { ...this.state, transitionHistory: [...this.state.transitionHistory] };
+  }
+
+  isRunning(): boolean {
+    return this.state.status === 'RUNNING' || this.state.status === 'LAYER_COMPLETE';
+  }
+
+  isComplete(): boolean {
+    return this.state.status === 'COMPLETE';
+  }
+
+  isError(): boolean {
+    return this.state.status === 'ERROR';
+  }
+
+  getMode(): TridentMode {
+    return this.state.mode;
+  }
+
+  getLayer(): number {
+    return this.state.currentLayer;
+  }
+
+  getMaxLayers(): number {
+    return this.state.maxLayers;
+  }
+
+  getStatus(): TridentStatus {
+    return this.state.status;
+  }
+
+  getElapsedMs(): number {
+    return Date.now() - this.state.startedAt;
+  }
+}
+
+export const orchestratorMachineV2 = new OrchestratorMachineV2();
