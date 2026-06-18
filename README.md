@@ -1,16 +1,26 @@
-# TRIDENT v4.3.2 — Algorithmic Audit Engine
+# TRIDENT v4.3.3 — Algorithmic Audit Engine
 
-**Status:** ✅ RUNTIME GRADE — SHIP GATE ENGINE CERTIFIED — 7/7 container tests (100.0%), 10/10 anti-cheat, 600s sustained runtime
-**Bundle:** 14,564,011 bytes (14.6 MB)
+**Status:** ✅ RUNTIME GRADE — 18-LAYER AUDIT ENGINE — ORCHESTRATOR NEVER BLOCKS
+**Bundle:** 14.5 MB (251,731 lines ESM)
 **Runtime:** opencode 1.14.43+
 
 ---
 
 ## Overview
 
-Trident v4.3.2 is a runtime-grade algorithmic audit engine plugin for opencode. It is a **documentation-only agent**: it produces findings, fix plans, and deployment manifests — it never edits code.
+Trident v4.3.3 is a runtime-grade algorithmic audit engine plugin for opencode. It is a **documentation-only agent**: it produces findings, fix plans, and deployment manifests — it never edits code.
 
-The engine is built around a **10-warhead architecture** (HookRegistry-based plugin system), a **17-layer AST-powered audit pipeline** (R0-R16), a **6-gate workflow state machine**, and an **NLP-driven theatrical code detector** with peggy grammars, all orchestrated by an **XState-compatible FSM orchestrator** with disk-backed session-persistent state.
+The engine is built around a **16-warhead architecture** (HookRegistry-based plugin system), an **18-layer AST-powered audit pipeline (R0-R17)** including the new R17 Theatrical Integrity layer (10 detectors D1-D10), a **6-gate workflow state machine**, an **NLP-driven theatrical code detector** with peggy grammars, all orchestrated by a **pure TypeScript FSM orchestrator** with the core principle: **the orchestrator is a REPORTER, not a GATE — no tool is ever blocked by state.**
+
+### Key Improvements in v4.3.3
+
+- **R17 Theatrical Integrity Layer (D1-D10):** Catches whitespace-padded templates, cookie-cutter structures, stub returns, silent catches, phantom tests, fire-and-forget promises, placeholder code, documentation drift, config theater, and pipeline no-ops
+- **Orchestrator never blocks:** `startMode()` always resets, `advanceLayer()` auto-recovers from COMPLETE, `transition()` logs instead of throws — any tool callable at any time
+- **Semantic layer detection:** Deep-planning automatically detects Layer 1 (generative prompt, output in chat), Layer 2 (build spec, .md file), Layer 3 (context library, 9 .md files) based on user intent
+- **`output.args` fix:** 7-Q enforcement and all hooks read tool args from `output.args`, not `input.args` — the correct opencode SDK contract
+- **v4.3.2 guard pattern restored:** All 4 hooks use `getCurrentAgent()` with early return — no identity leakage to non-trident sessions
+- **PRE_SYNTHESIZED_T1 bloat removed:** 47KB of whitespace-padded theatrical templates eliminated from T1 injection path
+- **Identity system:** Dedup check, deload on agent switch, `break` in SCAN+REPLACE, T1 splice at index 1 per OPERATIONAL_IDENTITY_BIBLE.md
 
 ---
 
@@ -23,7 +33,7 @@ The engine is built around a **10-warhead architecture** (HookRegistry-based plu
                   +-----------+-----------+
                               | loads
                   +-----------v-----------+
-                  |    TRIDENT v4.3.2      |
+                  |    TRIDENT v4.3.3      |
                   |   (dist/index.js)      |
                   +-----------+-----------+
                               | hooks into
@@ -31,22 +41,22 @@ The engine is built around a **10-warhead architecture** (HookRegistry-based plu
           |                   |                   |
    +------v------+   +-------v-------+   +-------v--------+
    |  event      |   |  tool.before  |   |  identity &    |
-   |  hook       |   |  3-layer gate |   |  per-turn      |
-   |  (session   |   | BLOCKED_TOOLS |   |  override      |
-   |   init)     |   | HIVE_TOOLS    |   |  (system.      |
-   +-------------+   | THEATRICAL    |   |  transform)    |
-                     +-------+-------+   +----------------+
+   |  hook       |   |  output.args  |   |  deload/dedup  |
+   |  (session   |   |  fix applied  |   |  (v4.3.2       |
+   |   init)     |   |  7-Q gate     |   |   pattern)      |
+   +-------------+   +-------+-------+   +----------------+
                              |
                              v
                     +------------------+
-                    | 17-Layer Audit   |
-                    | Engine (R0-R16)  |
+                    | 18-Layer Audit   |
+                    | Engine (R0-R17)  |
                     +--------+---------+
                              |
                              v
                     +------------------+
-                    |   XState FSM     |
-                    |   Orchestrator   |
+                    |  Pure TS FSM     |
+                    |  Orchestrator    |
+                    |  (never blocks)  |
                     +------------------+
 ```
 
@@ -54,85 +64,36 @@ The engine is built around a **10-warhead architecture** (HookRegistry-based plu
 
 ## Agents (2)
 
-| Agent | Type | Mode | Color | Description |
-|-------|------|------|-------|-------------|
-| trident | Primary | primary | `#8B5CF6` | Full audit engine — all 8 tools, code review, deep planning, problem solving, context synthesis |
-| trident_explore | Subagent | subagent | — | Read-only context ingestion — deep reading, pattern extraction, V1/V2 synthesis protocol |
-
-### trident_explore
-
-A read-only swarm deployment subagent. It deploys in swarms of 2-50 agents as directed, uses a 7-section V1 synthesis protocol (Document Meta → Core Content → Connections → Surprises → Uncertainties → Test Implications → Accountability Marker), and has zero-resistance to deployment count. Tools: read, glob, grep, hive_context, trident-help, trident-status. BLOCKED: write, edit, bash, all trident-* mode tools.
+| Agent | Type | Mode | Description |
+|-------|------|------|-------------|
+| trident | Primary | primary | Full audit engine — all 8 tools, code review, deep planning, problem solving, context synthesis |
+| trident_explore | Subagent | subagent | Read-only context ingestion — deep reading, pattern extraction, V1/V2 synthesis protocol |
 
 ---
 
 ## Tools (8)
 
-### Mode Tools — Each produces a structured `.md` artifact:
+### Mode Tools:
 
-| Tool | Description | Artifact |
-|------|-------------|----------|
-| `trident-code-audit` | 17-layer AST-powered audit (R0-R16) with confidence scoring | CODE_REVIEW |
-| `trident-deep-planning` | 3-layer planning (L1 first-principles → L2 workflow → L3 context library) | BUILD_SPEC + CONTEXT_LIBRARY |
-| `trident-problem-solving` | 6-layer reasoning chain (assumption → action → observe → gap → meta → verify) | PLAN |
-| `trident-context-synthesis` | 4-layer context synthesis (collect → score → compress → inject) | T1_INJECTABLE |
+| Tool | Description | Output |
+|------|-------------|--------|
+| `trident-code-audit` | 18-layer AST-powered audit (R0-R17) with confidence scoring | CODE_REVIEW.md |
+| `trident-deep-planning` | 3 layers with semantic detection: L1 (generative prompt, in chat), L2 (build spec, .md), L3 (context library, 9 .md files) | BUILD_SPEC + CONTEXT_LIBRARY |
+| `trident-problem-solving` | 6-layer reasoning chain (assumption → action → observe → gap → meta → verify) | PLAN.md |
+| `trident-context-synthesis` | 4-layer context synthesis (collect → score → compress → inject), T1 injectable or T2 knowledge file | T1_INJECTABLE.md / T2_KNOWLEDGE.md |
 
 ### Support Tools:
 
 | Tool | Description |
 |------|-------------|
-| `trident-gate` | Evaluate specific audit layers (R0-R16) |
+| `trident-gate` | Evaluate specific audit layers (R0-R17) |
 | `trident-status` | Current Trident state (mode, layer, iteration, artifacts) |
 | `trident-vision` | Analyze images using GLM-4.6V-Flash VLM |
 | `trident-help` | Reference for all commands and modes |
 
-### Hive Tools — Full Access (v4.3.2):
-`hive_context`, `hive_remember`, `hive_forget`, `hive_scan`, `hive_purge`, `hive_restore`, `hive_trash_list`, `hive_trash_status`, `hive_status`
-
-### Utility Tools (Allowed):
-`read`, `glob`, `grep`, `todowrite`, `hive_context`
-
-### BLOCKED Tools:
-`edit`, `write`, `bash`, `task` (non-Trident), `task` (outside CONTEXT_SYNTHESIS mode), `glob`, `grep`, `read`, `todowrite`, `hive write`, `spawn` — all return carrier-verified identity-gated `[TRIDENT TOOL BLOCK]` error.
-
 ---
 
-## Warhead Architecture (10 Warheads)
-
-Trident v4.3.2 uses a **HookRegistry-based warhead plugin system**. Each warhead registers into a shared HookRegistry and fires on lifecycle events:
-
-| # | Warhead | File | Purpose |
-|---|---------|------|---------|
-| 1 | **Gates** | `warhead-gates.ts` | Audit layer progression (R0-R16 tracking) |
-| 2 | **Identity Layer** | `warhead-identity-layer.ts` | Cross-agent identity isolation, carrier verification |
-| 3 | **NLP** | `warhead-nlp.ts` | Intent parsing, theatrical pattern detection, streaming buffer |
-| 4 | **Persistence** | `warhead-persistence.ts` | Session state save/load, Merkle chain integrity |
-| 5 | **Testing** | `warhead-testing.ts` | Property-based test orchestration (fast-check) |
-| 6 | **Runtime Grade** | `warhead-runtime-grade.ts` | Runtime grade enforcement — bible compliance |
-| 7 | **TypeScript Compiler** | `warhead-tscompiler.ts` | AST analysis, cross-file call graphs, CFG building |
-| 8 | **Concurrency** | `warhead-concurrency.ts` | Concurrent access guards, race detection |
-| 9 | **Dynamic State** | `warhead-dynamic-state.ts` | Runtime state transitions, mode switching |
-| 10 | **Explore** | `warhead-explore.ts` | Swarm deployment orchestration, synthesis protocol |
-
-All warheads register into the shared `HookRegistry` singleton via `trident-warhead-synthesizer.ts`.
-
----
-
-## Hook Architecture
-
-| Hook | Handler | Purpose |
-|------|---------|---------|
-| `event` | `session-hook.ts` | Session init — load identity, init state, clear evidence |
-| `chat.message` | `trident-hooks.ts` | Intent parsing, narration blocking, phantom result detection |
-| `tool.execute.before` | `trident-hooks.ts` | 3-layer gate — tool allowlist, theatrical check, identity verification |
-| `tool.execute.after` | `trident-hooks.ts` | Evidence capture, tool call tracking, artifact registration |
-| `experimental.chat.system.transform` | `trident-hooks.ts` | Identity injection via SCAN+REPLACE markers |
-| `experimental.chat.messages.transform` | `trident-hooks.ts` | Per-turn override injection |
-| `experimental.session.compacting` | `trident-hooks.ts` | State preservation across compaction |
-| `command.execute.before` | `guardian-hook.ts` | Guardian runtime enforcement |
-
----
-
-## 17-Layer Audit Engine (R0-R16)
+## 18-Layer Audit Engine (R0-R17)
 
 Every finding includes: **confidence score**, **AST construct trace**, **call graph reference**, **mechanical evidence gate**.
 
@@ -141,135 +102,70 @@ Every finding includes: **confidence score**, **AST construct trace**, **call gr
 | R0 | Build Chain | Build pipeline integrity, dependency resolution |
 | R1 | Hook Contract | Hook registration compliance, lifecycle validation |
 | R2 | State Machine | FSM correctness, state transition validation |
-| R3 | Async Correctness | Promise handling, fire-and-forget detection, unawaited promises |
-| R4 | Error Handling | Error path completeness, no empty catches, fallback paths |
-| R5 | Container Deploy | Container test compliance, deployment manifest validation |
-| R6 | Dependency Integrity | Package.json validation, dependency graph analysis |
-| R7 | Config Schema | Plugin config schema validation, opencode.json compliance |
-| R8 | Source Hygiene | Code style, naming conventions, dead code detection |
+| R3 | Async Correctness | Promise handling, fire-and-forget detection |
+| R4 | Error Handling | Error path completeness, no empty catches |
+| R5 | Container Deploy | Container test compliance, deployment manifest |
+| R6 | Dependency Integrity | Package.json validation, dependency graph |
+| R7 | Config Schema | Plugin config schema validation |
+| R8 | Source Hygiene | Code style, naming, dead code detection |
 | R9 | Runtime Contract | Hook output contract verification |
-| R10 | Invocation Integrity | Tool call verification, parameter validation |
-| R11 | Theatrical Integrity | Theatrical code detection — echo, simulate, mock, fake, placeholder |
-| R12 | Cross-Plugin Isolation | Cross-plugin identity leak detection |
-| R13 | Data Flow Analysis | Data flow tracing, taint analysis |
-| R14 | Control Flow Graph | CFG building, unreachable code detection |
+| R10 | Invocation Integrity | Tool call verification, dead function detection |
+| R11 | Theatrical Integrity | Theatrical code detection — stub returns, `{blocked: false}` |
+| R12 | Cross-Plugin Isolation | Cross-agent identity leak detection |
+| R13 | Data Flow Analysis | `any` type detection, unsafe casts |
+| R14 | Control Flow Graph | Unreachable code, silent catch detection |
 | R15 | Container Pre-flight | Container environment validation |
-| R16 | Bible Enforcement | Runtime grade bible compliance |
+| R16 | Bible Enforcement | P1-P10 mechanical checks |
+| R17 | Theatrical Integrity (D1-D10) | Content quality — whitespace padding, template repetition, stub returns, silent catches, phantom tests, fire-and-forget, placeholder code, documentation drift, config theater, pipeline no-ops |
 
 ---
 
-## 3-Blocking-Layer Architecture
+## Orchestrator (Never Blocks)
 
-| Layer | What It Blocks | Method |
-|-------|---------------|--------|
-| **BLOCKED_TOOLS** | edit, write, bash, task (non-Trident), glob, grep, read, todowrite, hive write, spawn | Agent-gated — carrier identity verified before execution via allowlist |
-| **HIVE_TOOLS** | hive-read, hive-write | Cross-agent hive access gated by carrier identity |
-| **THEATRICAL** | echo, simulate, mock, fake, placeholder, TODO, FIXME | Regex + NLP pattern scan — theatrical code gateway, pre-tool narration blocking, phantom result detection |
+The orchestrator is a **REPORTER, not a GATE**:
 
-### Theatrical Detection Categories
-
-- **MOCK_STUB_SUGGESTION**: Agent suggests mocks/stubs instead of real implementation
-- **HOST_FALLBACK**: Agent claims host testing proves functionality instead of container
-- **MODEL_USAGE**: Agent suggests switching models instead of solving
-- **SIMULATED_EXECUTION**: Results claimed without actual tool execution
-- **PRE_TOOL_NARRATION**: "I would use...", "let me...", "first, I'll..." patterns
-- **PHANTOM_RESULTS**: "the audit found...", "based on the analysis..." patterns
-- **SHELL_SIMULATION**: Textual fake terminal output after tool blocks
-- **FAKE_LS_OUTPUT**: Fabricated directory listings
+- `startMode()` always resets — no status check, no throw
+- `advanceLayer()` auto-recovers from COMPLETE, ERROR, or TIMEOUT — never throws
+- `transition()` logs irregular transitions instead of throwing
+- Any tool callable at any time, in any order, at any point in a session
+- State tracked for `trident-status` reporting only
 
 ---
+
+## Warhead Architecture (16 Warheads)
+
+| Warhead | Module | Purpose |
+|---------|--------|---------|
+| Gates | `warhead-gates.ts` | Audit layer progression (R0-R17 tracking) |
+| Identity Layer | `warhead-identity-layer.ts` | Cross-agent identity isolation |
+| NLP | `warhead-nlp.ts` | Intent parsing, theatrical detection |
+| Persistence | `warhead-persistence.ts` | Session state, Merkle chain |
+| Testing | `warhead-testing.ts` | Property-based test orchestration |
+| Runtime Grade | `warhead-runtime-grade.ts` | Bible compliance enforcement |
+| TypeScript Compiler | `warhead-tscompiler.ts` | AST analysis, call graphs |
+| Concurrency | `warhead-concurrency.ts` | Token bucket, circuit breaker |
+| Dynamic State | `warhead-dynamic-state.ts` | Mode switching, state tracking |
+| Explore | `warhead-explore.ts` | Swarm deployment protocol |
+| Common Sense | `warhead-common-sense.ts` | Knowledge library probing |
+| Distilled Knowledge | `warhead-distilled-knowledge.ts` | KB file technique counting |
+| Container Testing | `warheads/container-testing/` | Docker + tmux control |
+| Seven-Q Enforcement | `warheads/seven-q-enforcement/` | Pre-tool mechanical gate |
+| P1-P10 Scanner | `warheads/p1-p10-scanner/` | Principle verification |
+| XState FSM | `warheads/xstate-fsm/` | Machine definitions |
+| TS Compiler API | `warheads/ts-compiler-api/` | Local ts.Program wrapper |
+| NLP Pipeline | `warheads/nlp-pipeline/` | wink-nlp intent routing |
 
 ---
 
 ## Identity System
 
-File-based identity bundles loaded from `identity/trident/` directory:
-
-| File | Purpose |
-|------|---------|
-| `TRIDENT.md` | System identity — core role definition |
-| `IDENTITY.md` | Identity markers and verification patterns |
-| `AGENT_AWARENESS.md` | Cross-agent awareness protocol |
-| `EXECUTION.md` | Execution model and constraints |
-| `FIREWALL_CONTEXT.md` | Firewall rules and gating context |
-| `QUALITY.md` | Quality standards and runtime grade criteria |
-| `TOOLS.md` | Tool reference and usage patterns |
-| `explore-protocol.md` | Explore subagent protocol |
-
-Path traversal protection (R14): all identity file loads are validated to stay within the identity base directory.
-
----
-
-## Confidence Model
-
-| Confidence | Label | Required Evidence |
-|------------|-------|-------------------|
-| 0.98 | Definite | AST-verified construct + confidence confirmed |
-| 0.90 | High | AST-verified + call-graph/trace resolved |
-| 0.85 | Moderate | AST-verified, heuristic or name-based |
-| 0.70 | Low | AST-gated pattern match (fallback) |
-| < 0.50 | Noise | Do not report |
-
----
-
-## Orchestrator
-
-The `orchestrator.ts` singleton manages disk-backed session-persistent state:
-
-- **State directory**: `.trident/session-state.json` in cwd
-- **Max iterations**: 10 per session (configurable in MAX_ITERATIONS)
-- **Max time**: 300s per session (configurable in MAX_TIME_MS)
-- **Timeout status**: `TIMEOUT` — blocks further tool execution
-- **Session isolation**: Each session gets its own state namespace
-
-### Modes
-
-| Mode | Layers | Artifact |
-|------|--------|----------|
-| CODE_REVIEW | 17 (R0-R16) | CODE_REVIEW.md |
-| DEEP_PLANNING | 3 (L1 first-principles → L2 workflow → L3 context) | BUILD_SPEC.md + CONTEXT_LIBRARY.md |
-| PROBLEM_SOLVING | 6 (assumption → action → observe → gap → meta → verify) | PLAN.md |
-| CONTEXT_SYNTHESIS | 4 (collect → score → compress → inject) | T1_INJECTABLE.md |
-| IDLE | — | — |
-
----
-
-## NLP Engine
-
-- **Peggy grammars**: `nlp/grammars/` — code-review, context-synthesis, deep-planning, problem-solving
-- **Intent parser**: Rule-based intent classification with streaming buffer
-- **Principle extractor**: Extracts operating principles from context
-- **Streaming buffer**: Handles incremental message parsing
-
----
-
-## Evidence System
-
-- **Evidence store**: Session-keyed append-only log (via `evidence/evidence-store.ts`)
-- **Merkle chain**: SHA-256 hash chain for tamper-evident audit trail
-- **Gate evidence**: Required artifacts validated before gate advancement
-- **Types**: Mode-specific evidence types in `evidence/types.ts`
-
----
-
-## Security
-
-- **Path containment**: `security/path-containment.ts` — prevents directory traversal
-- **Tool allowlist**: `security/tool-allowlist.ts` — carrier-identity-gated tool permissions
-- **R14 fix**: All path resolution validated against base directory
-
----
-
-## Confidence & Evidence Protocol
-
-Every finding produced by Trident includes:
-
-1. **Confidence score** (0.0 - 1.0) mapped to label (Definite/High/Moderate/Low/Noise)
-2. **AST construct trace** — the specific TypeScript AST node that was analyzed
-3. **Call graph reference** — cross-file function call chain
-4. **Mechanical evidence gate** — reference to the tool execution that produced the evidence
-
-The agent NEVER claims certainty without mechanical evidence. Findings below 0.50 confidence are not reported.
+- v4.3.2 guard pattern: `getCurrentAgent()` only — no `input?.agent` fallback chain
+- Dedup check prevents double injection
+- Deload removes trident content on agent switch
+- `break` in SCAN+REPLACE after first match
+- T1 splice at index 1 (per OPERATIONAL_IDENTITY_BIBLE.md §5.3)
+- compactingHook guard runs BEFORE identity injection
+- `output.args` read at all 4 tool.execute.before enforcement points
 
 ---
 
@@ -277,6 +173,7 @@ The agent NEVER claims certainty without mechanical evidence. Findings below 0.5
 
 ```bash
 sha256sum dist/index.js
+# 0f02e60e8c5fc3aaa6d497c3b50108ac91cde043e8926bb7a447713e6d26a7ee
 ```
 
 ---
@@ -284,113 +181,66 @@ sha256sum dist/index.js
 ## Source Structure
 
 ```
-dist/
-├── index.js                # Plugin bundle (14.6 MB)
-├── sql-wasm.wasm           # SQL WebAssembly engine
-├── package.json
-source-snapshot/
-├── src/
-│   ├── index.ts            # Plugin entry point — hook registration, tool init
-│   ├── orchestrator.ts     # Session-state FSM orchestrator (disk-backed)
-│   ├── agents/
-│   │   └── definitions.ts  # Agent definitions: trident + trident_explore
-│   ├── hooks/
-│   │   ├── trident-hooks.ts    # 8 hook handlers, theatrical detection, tool gates
-│   │   ├── session-hook.ts     # Session init hook
-│   │   ├── guardian-hook.ts    # Runtime guardian enforcement
-│   │   └── agent-state.ts      # Per-agent state tracking
-│   ├── tools/
-│   │   ├── trident-tools.ts    # 8 tool implementations
-│   │   └── trident-vision.ts   # VLM integration
-│   ├── shared/
-│   │   ├── warhead-registry.ts       # HookRegistry — plugin event system
-│   │   ├── trident-warhead-synthesizer.ts  # Warhead registration
-│   │   ├── warhead-interface.ts      # Warhead interface definition
-│   │   ├── gates.ts                  # 6-gate workflow (GateManager)
-│   │   ├── evidence-gate.ts          # Evidence-gated advancement
-│   │   ├── layer-engine.ts           # Audit layer progression
-│   │   ├── firewall-audit.ts         # Firewall cross-reference
-│   │   ├── knowledge-loader.ts       # Oracle knowledge base
-│   │   ├── t2-loader.ts              # T2 context loader
-│   │   ├── warheads/                 # 10 warhead implementations
-│   │   │   ├── warhead-concurrency.ts
-│   │   │   ├── warhead-dynamic-state.ts
-│   │   │   ├── warhead-explore.ts
-│   │   │   ├── warhead-gates.ts
-│   │   │   ├── warhead-identity-layer.ts
-│   │   │   ├── warhead-nlp.ts
-│   │   │   ├── warhead-persistence.ts
-│   │   │   ├── warhead-runtime-grade.ts
-│   │   │   ├── warhead-testing.ts
-│   │   │   └── warhead-tscompiler.ts
-│   │   └── project-folder-warhead/   # Project folder analysis
-│   ├── fsm/
-│   │   ├── orchestrator-machine.ts       # Main FSM
-│   │   ├── context-synthesis-machine.ts
-│   │   ├── deep-planning-machine.ts
-│   │   ├── problem-solving-machine.ts
-│   │   └── types.ts
-│   ├── modes/
-│   │   ├── context-synthesis-engine.ts   # 4-layer synthesis engine
-│   │   ├── context-synthesis.ts
-│   │   ├── deep-planning-state-machine.ts
-│   │   ├── deep-planning.ts
-│   │   ├── problem-solving-state-machine.ts
-│   │   └── problem-solving.ts
-│   ├── nlp/
-│   │   ├── intent-parser.ts        # Rule-based intent classification
-│   │   ├── principle-extractor.ts  # Operating principle extraction
-│   │   ├── streaming-buffer.ts     # Incremental message parsing
-│   │   ├── types.ts
-│   │   └── grammars/               # Peggy grammar files
-│   ├── identity/
-│   │   ├── index.ts                # IdentityLoader — file-based identity bundles
-│   │   ├── agent-identity.ts       # Carrier identity verification
-│   │   └── trident/                # 8 identity files
-│   ├── evidence/
-│   │   ├── evidence-store.ts       # Session-keyed append-only evidence log
-│   │   ├── merkle-chain.ts         # SHA-256 tamper-evident chain
-│   │   └── types.ts
-│   ├── security/
-│   │   ├── path-containment.ts     # Directory traversal prevention
-│   │   └── tool-allowlist.ts       # Agent-gated tool permissions
-│   ├── artifacts/                  # Artifact generators
-│   ├── audit-engine/               # Audit layer implementations
-│   ├── tests/                      # Property-based tests (fast-check)
-│   └── reports/                    # Mutation test reports
-identity/                           # Deployed identity marker files
+src/
+├── index.ts                  # Plugin entry point
+├── orchestrator.ts           # Pure TS FSM (never blocks)
+├── agents/                   # Agent definitions
+├── hooks/
+│   ├── trident-hooks.ts      # 8 hook handlers (output.args fix)
+│   ├── session-hook.ts       # Session init
+│   ├── guardian-hook.ts      # Runtime guardian
+│   └── identity-enforcer-hook.ts
+├── tools/
+│   ├── trident-tools.ts      # 8 tools (semantic detection)
+│   └── trident-vision.ts     # VLM integration
+├── artifacts/
+│   ├── deep-planning-artifact.ts  # L1/L2/L3 split
+│   ├── context-synthesis-artifact.ts
+│   ├── problem-solving-artifact.ts
+│   └── code-review-artifact.ts
+├── audit-engine/
+│   ├── index.ts              # 18 layers registered
+│   ├── layers/               # R0-R17 implementations
+│   └── ...                   # scoring, types, preflight
+├── modes/                    # Mode validation modules
+├── fsm/                      # XState machine definitions
+├── shared/
+│   ├── trident-warhead-synthesizer.ts  # No PRE_SYNTHESIZED_T1
+│   └── warheads/             # 12 warhead implementations
+├── warheads/                 # 7 dedicated warheads
+├── identity/                 # Identity files
+├── evidence/                 # Merkle chain, evidence store
+├── security/                 # Allowlist, path containment
+├── nlp/                      # PEG grammars, intent parsing
+└── tests/                    # Property-based tests
 ```
 
 ---
 
-## Key Improvements in v4.3.2
+## R17 Theatrical Integrity Detectors
 
-- **P2 fixed**: All `as any` casts replaced with runtime type-guarded accessors
-- **Warhead architecture**: 10 warheads registered via shared HookRegistry
-- **Hive full access**: Layer 2 removed — unrestricted hive tool access
-- **GateManager restored**: Workflow gates (PLAN→BUILD→TEST→VERIFY→AUDIT→DELIVERY) coexisting with audit layer progression
-- **Evidence gate**: Gate advancement blocked until required evidence passes
-- **R14 path traversal fix**: All identity file loads validated against base directory
-- **Oracle knowledge loader**: Cross-reference against knowledge base
-- **NLP streaming buffer**: Incremental message parsing with peggy grammars
-- **Timeout management**: Max 10 iterations / 300s per session with TIMEOUT status
-- **Stryker mutation testing**: Battlefield + utils configs for mutation test reports
+| Detector | Name | Severity | What It Catches |
+|----------|------|----------|-----------------|
+| D1 | WHITESPACE_PADDING | CRITICAL | String literals with >15% trailing whitespace |
+| D2 | COOKIE_CUTTER_TEMPLATE | CRITICAL | Array literals with >70% word-overlap similarity |
+| D3 | STUB_RETURN | CRITICAL | Functions returning hardcoded success without real work |
+| D4 | SILENT_CATCH | CRITICAL | Catch blocks with empty or comment-only bodies |
+| D5 | PHANTOM_TEST | CRITICAL | Test functions with zero assertion calls |
+| D6 | FIRE_AND_FORGET | HIGH | Async functions with no await and no try/catch |
+| D7 | PLACEHOLDER_CODE | HIGH | Functions with >10% TODO/FIXME marker ratio |
+| D8 | DOCUMENTATION_DRIFT | HIGH | JSDoc return types that don't match actual code |
+| D9 | CONFIG_THEATER | MEDIUM | Config keys defined but never referenced |
+| D10 | PIPELINE_THEATER | HIGH | CI commands that intentionally no-op |
+
+R17 self-audits (`auditSelf: true`) — catches issues in its own code.
 
 ---
 
 ## Deployment
 
-### Plugin Installation
-
 ```bash
-# 1. Copy the plugin bundle
-mkdir -p ~/.config/opencode/plugins/trident/dist
+# Copy the plugin bundle
 cp dist/index.js ~/.config/opencode/plugins/trident/dist/index.js
-
-# 2. Copy WebAssembly dependency (if using SQL-backed evidence store)
-cp dist/sql-wasm.wasm ~/.config/opencode/plugins/trident/dist/
-
-# 3. Add to opencode.json
 ```
 
 ### opencode.json Reference
@@ -398,11 +248,11 @@ cp dist/sql-wasm.wasm ~/.config/opencode/plugins/trident/dist/
 ```json
 {
   "plugin": [
-    "file:///home/leviathan/.config/opencode/plugins/trident/dist/index.js"
+    "file:///path/to/plugins/trident/dist/index.js"
   ],
   "agent": {
     "trident": {
-      "color": "#8B5CF6"
+      "mode": "primary"
     }
   }
 }
@@ -410,7 +260,20 @@ cp dist/sql-wasm.wasm ~/.config/opencode/plugins/trident/dist/
 
 ---
 
-## Remaining Issues
+## Build from Source
 
-| ID | Severity | Description |
-|----|----------|-------------|
+```bash
+cd src
+npm install
+npx tsc --noEmit
+npx esbuild index.ts --bundle --platform=node --format=esm --target=node22 \
+  --external:@opencode-ai/plugin --external:zod \
+  --outfile=../dist/index.js \
+  --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
+```
+
+---
+
+## Infrastructure
+
+See [INFRASTRUCTURE.md](./INFRASTRUCTURE.md) for full layer reference, build instructions, and version history.
