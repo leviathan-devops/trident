@@ -1,19 +1,18 @@
 # Trident v4.3.3 — Infrastructure
 
 ## Ship Package Contents
-- `src/` — TypeScript source code
-- `dist/index.js` — Compiled ESM bundle (14.5MB)
+- `src/` — TypeScript source code (104 files)
+- `dist/index.js` — Compiled ESM bundle (14.5MB, 251,731 lines)
 - `identity/` — Identity files per role
 - `scripts/` — Build and utility scripts
 
 ## Key Features
 - 4 mode tools: code-audit, deep-planning, problem-solving, context-synthesis
 - 18-layer audit engine (R0-R17 including R17 theatrical integrity)
-- Warhead modules: concurrency, NLP, TS compiler, container testing, 7-Q, P1-P10, XState
-- Explore subagent dispatch (trident_explore)
-- Hive tools/MCP integration
-- Semantic layer detection for deep-planning (L1/L2/L3)
+- 16 warhead modules with semantic detection
 - Orchestrator never blocks — any tool callable at any time
+- Semantic layer detection for deep-planning (L1/L2/L3)
+- All identity fixes applied: output.args, v4.3.2 guards, dedup, deload, break
 
 ## Layer Reference
 | Layer | Name | Description |
@@ -41,10 +40,17 @@
 ```bash
 cd src
 npx tsc --noEmit
-npx esbuild index.ts --bundle --platform=node --format=esm --target=node22 --external:@opencode-ai/plugin --external:zod --outfile=../dist/index.js --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
+npx esbuild index.ts --bundle --platform=node --format=esm --target=node22 \
+  --external:@opencode-ai/plugin --external:zod \
+  --outfile=../dist/index.js \
+  --banner:js='import { createRequire } from "module"; const require = createRequire(import.meta.url);'
 ```
 
 ## Current SHA256
 ```
 0f02e60e8c5fc3aaa6d497c3b50108ac91cde043e8926bb7a447713e6d26a7ee
 ```
+
+## Version History
+- **main** — v4.3.3-LIGHTWEIGHT: FIXED baseline + R17 + no T1 bloat
+- **v4.3.2** — Previous stable release (archived)
