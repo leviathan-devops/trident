@@ -1,1 +1,0 @@
-05c8aa8483521b5f3cc1370d8bf474d53ad7d58a25f0231fc1f7e4e83d4e06ba  /home/leviathan/OPENCODE_WORKSPACE/Shared Workspace Context/Manta Agent/Active_Projects/Trident_V4.3.3/dist/index.js
