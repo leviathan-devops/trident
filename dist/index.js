@@ -2186,7 +2186,7 @@ ${err.message}`);
       nextState = enterStates(nextState, event, actorScope, filteredTransitions, mutStateNodeSet, internalQueue, historyValue, isInitial);
       const nextStateNodes = [...mutStateNodeSet];
       if (nextState.status === "done") {
-        nextState = resolveActionsAndContext(nextState, event, actorScope, nextStateNodes.sort((a, b) => b.order - a.order).flatMap((state2) => state2.exit), internalQueue, undefined);
+        nextState = resolveActionsAndContext(nextState, event, actorScope, nextStateNodes.sort((a, b) => b.order - a.order).flatMap((state) => state.exit), internalQueue, undefined);
       }
       try {
         if (historyValue === currentSnapshot.historyValue && areStateNodeCollectionsEqual(currentSnapshot._nodes, mutStateNodeSet)) {
@@ -2826,7 +2826,7 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
   function fromCallback(callback) {
     const logic = {
       config: callback,
-      start: (state2, actorScope) => {
+      start: (state, actorScope) => {
         const {
           self: self2,
           system,
@@ -2838,7 +2838,7 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
         };
         instanceStates.set(self2, callbackState);
         callbackState.dispose = callback({
-          input: state2.input,
+          input: state.input,
           system,
           self: self2,
           sendBack: (event) => {
@@ -2856,21 +2856,21 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
           emit
         });
       },
-      transition: (state2, event, actorScope) => {
+      transition: (state, event, actorScope) => {
         const callbackState = instanceStates.get(actorScope.self);
         if (event.type === dist_xstateGuards.XSTATE_STOP) {
-          state2 = {
-            ...state2,
+          state = {
+            ...state,
             status: "stopped",
             error: undefined
           };
           instanceStates.delete(actorScope.self);
           callbackState.receivers?.clear();
           callbackState.dispose?.();
-          return state2;
+          return state;
         }
         callbackState.receivers?.forEach((receiver) => receiver(event));
-        return state2;
+        return state;
       },
       getInitialSnapshot: (_, input) => {
         return {
@@ -2940,16 +2940,16 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
           _subscription: undefined
         };
       },
-      start: (state2, {
+      start: (state, {
         self: self2,
         system,
         emit
       }) => {
-        if (state2.status === "done") {
+        if (state.status === "done") {
           return;
         }
-        state2._subscription = observableCreator({
-          input: state2.input,
+        state._subscription = observableCreator({
+          input: state.input,
           system,
           self: self2,
           emit
@@ -2975,10 +2975,10 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
       },
       getPersistedSnapshot: ({
         _subscription,
-        ...state2
-      }) => state2,
-      restoreSnapshot: (state2) => ({
-        ...state2,
+        ...state
+      }) => state,
+      restoreSnapshot: (state) => ({
+        ...state,
         _subscription: undefined
       })
     };
@@ -2987,14 +2987,14 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
   function fromEventObservable(lazyObservable) {
     const logic = {
       config: lazyObservable,
-      transition: (state2, event) => {
-        if (state2.status !== "active") {
-          return state2;
+      transition: (state, event) => {
+        if (state.status !== "active") {
+          return state;
         }
         switch (event.type) {
           case XSTATE_OBSERVABLE_ERROR:
             return {
-              ...state2,
+              ...state,
               status: "error",
               error: event.data,
               input: undefined,
@@ -3002,21 +3002,21 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
             };
           case XSTATE_OBSERVABLE_COMPLETE:
             return {
-              ...state2,
+              ...state,
               status: "done",
               input: undefined,
               _subscription: undefined
             };
           case dist_xstateGuards.XSTATE_STOP:
-            state2._subscription.unsubscribe();
+            state._subscription.unsubscribe();
             return {
-              ...state2,
+              ...state,
               status: "stopped",
               input: undefined,
               _subscription: undefined
             };
           default:
-            return state2;
+            return state;
         }
       },
       getInitialSnapshot: (_, input) => {
@@ -3029,16 +3029,16 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
           _subscription: undefined
         };
       },
-      start: (state2, {
+      start: (state, {
         self: self2,
         system,
         emit
       }) => {
-        if (state2.status === "done") {
+        if (state.status === "done") {
           return;
         }
-        state2._subscription = lazyObservable({
-          input: state2.input,
+        state._subscription = lazyObservable({
+          input: state.input,
           system,
           self: self2,
           emit
@@ -3078,15 +3078,15 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
   function fromPromise(promiseCreator) {
     const logic = {
       config: promiseCreator,
-      transition: (state2, event, scope) => {
-        if (state2.status !== "active") {
-          return state2;
+      transition: (state, event, scope) => {
+        if (state.status !== "active") {
+          return state;
         }
         switch (event.type) {
           case XSTATE_PROMISE_RESOLVE: {
             const resolvedValue = event.data;
             return {
-              ...state2,
+              ...state,
               status: "done",
               output: resolvedValue,
               input: undefined
@@ -3094,7 +3094,7 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
           }
           case XSTATE_PROMISE_REJECT:
             return {
-              ...state2,
+              ...state,
               status: "error",
               error: event.data,
               input: undefined
@@ -3103,27 +3103,27 @@ var require_xstate_actors_development_cjs = __commonJS((exports) => {
             controllerMap.get(scope.self)?.abort();
             controllerMap.delete(scope.self);
             return {
-              ...state2,
+              ...state,
               status: "stopped",
               input: undefined
             };
           }
           default:
-            return state2;
+            return state;
         }
       },
-      start: (state2, {
+      start: (state, {
         self: self2,
         system,
         emit
       }) => {
-        if (state2.status !== "active") {
+        if (state.status !== "active") {
           return;
         }
         const controller = new AbortController;
         controllerMap.set(self2, controller);
         const resolvedPromise = Promise.resolve(promiseCreator({
-          input: state2.input,
+          input: state.input,
           system,
           self: self2,
           signal: controller.signal,
@@ -3389,8 +3389,8 @@ var require_StateMachine_be2e51a3_development_cjs = __commonJS((exports) => {
           })
         } : undefined,
         history: this.history,
-        states: dist_xstateGuards.mapValues(this.states, (state2) => {
-          return state2.definition;
+        states: dist_xstateGuards.mapValues(this.states, (state) => {
+          return state.definition;
         }),
         on: this.on,
         transitions: [...this.transitions.values()].flat().map((t) => ({
@@ -3489,9 +3489,9 @@ ${err.message}`);
         const events = new Set(this.ownEvents);
         if (states) {
           for (const stateId of Object.keys(states)) {
-            const state2 = states[stateId];
-            if (state2.states) {
-              for (const event of state2.events) {
+            const state = states[stateId];
+            if (state.states) {
+              for (const event of state.events) {
                 events.add(`${event}`);
               }
             }
@@ -3549,7 +3549,7 @@ ${err.message}`);
       dist_xstateGuards.formatRouteTransitions(this.root);
       this.states = this.root.states;
       this.events = this.root.events;
-      if (!("output" in this.root) && Object.values(this.states).some((state2) => state2.type === "final" && ("output" in state2))) {
+      if (!("output" in this.root) && Object.values(this.states).some((state) => state.type === "final" && ("output" in state))) {
         console.warn("Missing `machine.output` declaration (top-level final state with output detected)");
       }
     }
@@ -4218,9 +4218,9 @@ var require_xstate_development_cjs = __commonJS((exports) => {
     } = dist_xstateGuards.macrostep(first[0], initEvent, actorScope, internalQueue);
     return [first, ...microsteps];
   }
-  function getNextTransitions(state2) {
+  function getNextTransitions(state) {
     const potentialTransitions = [];
-    const atomicStates = state2._nodes.filter(dist_xstateGuards.isAtomicStateNode);
+    const atomicStates = state._nodes.filter(dist_xstateGuards.isAtomicStateNode);
     const visited = new Set;
     for (const stateNode of atomicStates) {
       for (const s of [stateNode].concat(dist_xstateGuards.getProperAncestors(stateNode, undefined))) {
@@ -4384,8 +4384,8 @@ class AuditFSM {
     return this.actor.getSnapshot()?.context;
   }
   isRunning() {
-    const state2 = this.getState();
-    return state2 !== "idle" && state2 !== "failed";
+    const state = this.getState();
+    return state !== "idle" && state !== "failed";
   }
   stop() {
     this.actor.stop();
@@ -4544,67 +4544,67 @@ class Orchestrator {
   startAudit(sessionId) {
     orchestratorMachineV2.startMode("CODE_REVIEW");
     this.auditFSM.send({ type: "START_SCAN", targetPath: sessionId || "default" });
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "CODE_REVIEW";
-    state2.currentLayer = orchestratorMachineV2.getLayer();
-    state2.status = orchestratorMachineV2.getStatus();
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "CODE_REVIEW";
+    state.currentLayer = orchestratorMachineV2.getLayer();
+    state.status = orchestratorMachineV2.getStatus();
   }
   startPlanning(sessionId) {
     orchestratorMachineV2.startMode("DEEP_PLANNING");
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "DEEP_PLANNING";
-    state2.currentLayer = orchestratorMachineV2.getLayer();
-    state2.status = orchestratorMachineV2.getStatus();
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "DEEP_PLANNING";
+    state.currentLayer = orchestratorMachineV2.getLayer();
+    state.status = orchestratorMachineV2.getStatus();
   }
   startProblemSolving(sessionId) {
     orchestratorMachineV2.startMode("PROBLEM_SOLVING");
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "PROBLEM_SOLVING";
-    state2.currentLayer = orchestratorMachineV2.getLayer();
-    state2.status = orchestratorMachineV2.getStatus();
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "PROBLEM_SOLVING";
+    state.currentLayer = orchestratorMachineV2.getLayer();
+    state.status = orchestratorMachineV2.getStatus();
   }
   startContextSynthesis(sessionId) {
     orchestratorMachineV2.startMode("CONTEXT_SYNTHESIS");
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "CONTEXT_SYNTHESIS";
-    state2.currentLayer = orchestratorMachineV2.getLayer();
-    state2.status = orchestratorMachineV2.getStatus();
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "CONTEXT_SYNTHESIS";
+    state.currentLayer = orchestratorMachineV2.getLayer();
+    state.status = orchestratorMachineV2.getStatus();
   }
   startPoseidon(sessionId) {
     orchestratorMachineV2.startMode("POSEIDON");
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "POSEIDON";
-    state2.currentLayer = 1;
-    state2.status = orchestratorMachineV2.getStatus();
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "POSEIDON";
+    state.currentLayer = 1;
+    state.status = orchestratorMachineV2.getStatus();
   }
   stopPoseidon(sessionId) {
     orchestratorMachineV2.reset();
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.mode = "IDLE";
-    state2.status = "IDLE";
+    var state = this.getStateFor(sessionId || "default");
+    state.mode = "IDLE";
+    state.status = "IDLE";
   }
   completeLayer(sessionId) {
     orchestratorMachineV2.advanceLayer();
     this.auditFSM.send({ type: "SCAN_COMPLETE", filesFound: 1 });
-    const state2 = this.getStateFor(sessionId || "default");
-    state2.currentLayer = orchestratorMachineV2.getLayer();
-    state2.status = orchestratorMachineV2.getStatus();
-    tridentLog("LAYER", "orchestrator", `Layer completed \u2192 ${state2.currentLayer}/${state2.maxLayers}`);
+    const state = this.getStateFor(sessionId || "default");
+    state.currentLayer = orchestratorMachineV2.getLayer();
+    state.status = orchestratorMachineV2.getStatus();
+    tridentLog("LAYER", "orchestrator", `Layer completed \u2192 ${state.currentLayer}/${state.maxLayers}`);
   }
   failLayer(reason, sessionId) {
     this.auditFSM.send({ type: "FAIL", error: reason });
     orchestratorMachineV2.fail(reason);
-    const state2 = this.getStateFor(sessionId || "default");
-    state2.status = orchestratorMachineV2.getStatus();
+    const state = this.getStateFor(sessionId || "default");
+    state.status = orchestratorMachineV2.getStatus();
     tridentLog("ERROR", "orchestrator", `Layer failed: ${reason}`);
   }
   addArtifact(key, value, sessionId) {
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.artifacts.set(key, value);
+    var state = this.getStateFor(sessionId || "default");
+    state.artifacts.set(key, value);
   }
   getState(sessionId) {
-    var state2 = this.getStateFor(sessionId || "default");
-    return { ...state2, artifacts: new Map(state2.artifacts) };
+    var state = this.getStateFor(sessionId || "default");
+    return { ...state, artifacts: new Map(state.artifacts) };
   }
   getMaxLayers() {
     return 17;
@@ -4627,8 +4627,8 @@ class Orchestrator {
     tridentLog("INFO", "orchestrator", "Intent detect: " + text.substring(0, 80));
   }
   setIdentityLoaded(v, sessionId) {
-    var state2 = this.getStateFor(sessionId || "default");
-    state2.identityLoaded = v;
+    var state = this.getStateFor(sessionId || "default");
+    state.identityLoaded = v;
   }
   reset(sessionId) {
     var sid = sessionId || "default";
@@ -5026,13 +5026,13 @@ function log2(level, component, message) {
   }
 }
 function getProjectRoot() {
-  return state2.rootPath;
+  return state.rootPath;
 }
 function getContextManagementPath() {
-  return state2.contextManagementPath;
+  return state.contextManagementPath;
 }
 function isInitialized() {
-  return state2.initialized;
+  return state.initialized;
 }
 function setProjectRoot(agent, projectName, rootPath) {
   if (!agent || typeof agent !== "string") {
@@ -5050,15 +5050,15 @@ function setProjectRoot(agent, projectName, rootPath) {
   if (!fs3.existsSync(rootPath)) {
     throw new Error("[P2] Project root does not exist: " + rootPath);
   }
-  state2.currentAgentId = agent;
-  state2.projectName = projectName;
-  state2.rootPath = rootPath;
-  state2.contextManagementPath = path4.join(rootPath, "context_management");
-  state2.initialized = true;
+  state.currentAgentId = agent;
+  state.projectName = projectName;
+  state.rootPath = rootPath;
+  state.contextManagementPath = path4.join(rootPath, "context_management");
+  state.initialized = true;
   log2("INFO", "memory-store", "Project root SET: " + rootPath + " (" + agent + "/" + projectName + ")");
 }
 function migrateProjectRoot(newAgent, newProjectName, newRootPath) {
-  const oldPath = state2.rootPath;
+  const oldPath = state.rootPath;
   if (!newAgent || typeof newAgent !== "string") {
     throw new Error("[P2] migrateProjectRoot: newAgent must be a non-empty string");
   }
@@ -5071,26 +5071,26 @@ function migrateProjectRoot(newAgent, newProjectName, newRootPath) {
   if (newRootPath.includes("..") || newRootPath.includes("//")) {
     throw new Error("[P7] Path traversal in migration target: " + newRootPath);
   }
-  state2.currentAgentId = newAgent;
-  state2.projectName = newProjectName;
-  state2.rootPath = newRootPath;
-  state2.contextManagementPath = path4.join(newRootPath, "context_management");
-  state2.initialized = true;
+  state.currentAgentId = newAgent;
+  state.projectName = newProjectName;
+  state.rootPath = newRootPath;
+  state.contextManagementPath = path4.join(newRootPath, "context_management");
+  state.initialized = true;
   log2("INFO", "memory-store", "Project root MIGRATED: " + (oldPath || "(none)") + " " + newRootPath);
 }
 function persistMarkerFile() {
-  if (!state2.rootPath)
+  if (!state.rootPath)
     return;
   try {
     if (!fs3.existsSync(MARKER_DIR)) {
       fs3.mkdirSync(MARKER_DIR, { recursive: true });
     }
     const markerData = {
-      rootPath: state2.rootPath,
-      agent: state2.currentAgentId,
-      projectName: state2.projectName,
-      displayName: state2.displayName,
-      contextManagementPath: state2.contextManagementPath,
+      rootPath: state.rootPath,
+      agent: state.currentAgentId,
+      projectName: state.projectName,
+      displayName: state.displayName,
+      contextManagementPath: state.contextManagementPath,
       timestamp: Date.now()
     };
     fs3.writeFileSync(MARKER_FILE, JSON.stringify(markerData, null, 2), "utf-8");
@@ -5099,12 +5099,12 @@ function persistMarkerFile() {
     log2("ERROR", "memory-store", "Failed to persist marker file: " + errMsg);
   }
 }
-var MARKER_DIR, MARKER_FILE, state2;
+var MARKER_DIR, MARKER_FILE, state;
 var init_memory_store = __esm(() => {
   init_utils();
   MARKER_DIR = path4.resolve(os2.homedir(), ".opencode", ".trident");
   MARKER_FILE = path4.resolve(MARKER_DIR, ".current-project");
-  state2 = {
+  state = {
     rootPath: null,
     currentAgentId: null,
     projectName: null,
@@ -5123,12 +5123,12 @@ var init_memory_store = __esm(() => {
       const displayName = typeof marker.displayName === "string" ? marker.displayName : null;
       const cmPath = typeof marker.contextManagementPath === "string" ? marker.contextManagementPath : rootPath ? path4.join(rootPath, "context_management") : null;
       if (rootPath && fs3.existsSync(rootPath)) {
-        state2.rootPath = rootPath;
-        state2.currentAgentId = agent;
-        state2.projectName = projectName;
-        state2.displayName = displayName;
-        state2.contextManagementPath = cmPath;
-        state2.initialized = true;
+        state.rootPath = rootPath;
+        state.currentAgentId = agent;
+        state.projectName = projectName;
+        state.displayName = displayName;
+        state.contextManagementPath = cmPath;
+        state.initialized = true;
         log2("INFO", "memory-store", `State restored from marker: ${rootPath} (${agent}/${projectName})`);
       }
     }
@@ -8143,40 +8143,40 @@ var require_automaton = __commonJS((exports, module) => {
       const length = pattern.length;
       const last = length - 1;
       const target = undefined;
-      let state3 = root;
+      let state2 = root;
       let goBackTo = root;
       let ev, nextState;
       for (let k = 0;k < length; k += 1) {
         ev = pattern[k];
-        if (fsm[state3] === undefined) {
-          fsm[state3] = Object.create(null);
-          fsm[state3][otherwise] = goBackTo;
+        if (fsm[state2] === undefined) {
+          fsm[state2] = Object.create(null);
+          fsm[state2][otherwise] = goBackTo;
         }
-        if (fsm[state3][ev] === undefined) {
+        if (fsm[state2][ev] === undefined) {
           nextState = getNextState(k, last, target);
-          fsm[state3][ev] = nextState;
-          state3 = nextState;
-        } else if (terminalStates[fsm[state3][ev]]) {
-          if (fsm[state3][otherwise] === root)
-            fsm[state3][otherwise] = goBackTo;
-          goBackTo = fsm[state3][ev];
+          fsm[state2][ev] = nextState;
+          state2 = nextState;
+        } else if (terminalStates[fsm[state2][ev]]) {
+          if (fsm[state2][otherwise] === root)
+            fsm[state2][otherwise] = goBackTo;
+          goBackTo = fsm[state2][ev];
           nextState = getNextState(k, last, target);
-          fsm[state3][ev] = nextState;
-          state3 = nextState;
+          fsm[state2][ev] = nextState;
+          state2 = nextState;
         } else if (k === last) {
           nextState = getNextState(k, last, target);
-          fsm[fsm[state3][ev]][otherwise] = nextState;
-          state3 = nextState;
+          fsm[fsm[state2][ev]][otherwise] = nextState;
+          state2 = nextState;
         } else {
-          state3 = fsm[state3][ev];
+          state2 = fsm[state2][ev];
         }
       }
-      terminalStates[state3] = name;
+      terminalStates[state2] = name;
       if (mark) {
-        markedStates[state3] = identifyMarkedArea(mark, length);
+        markedStates[state2] = identifyMarkedArea(mark, length);
       }
       if (customProperty !== undefined) {
-        customPropertyAtStates[state3] = customProperty;
+        customPropertyAtStates[state2] = customProperty;
       }
     };
     var learn = function(patterns) {
@@ -8235,7 +8235,7 @@ var require_automaton = __commonJS((exports, module) => {
       var transformTokenFn = typeof transformToken === "function" ? transformToken : null;
       var patterns = [];
       var first = 0;
-      var state3 = root;
+      var state2 = root;
       var ns = root;
       var p = null;
       var lastOtherwiseIndex;
@@ -8254,8 +8254,8 @@ var require_automaton = __commonJS((exports, module) => {
             delta = 1;
           if (transformTokenFn && j < length)
             t = transformTokenFn(t, cache, param, j);
-          ns = fsm[state3][t] || root;
-          if (!state3 && ns)
+          ns = fsm[state2][t] || root;
+          if (!state2 && ns)
             first = j;
           if (terminalStates[ns]) {
             p = [first, j + delta - 1, ns];
@@ -8276,10 +8276,10 @@ var require_automaton = __commonJS((exports, module) => {
               j = length + 100;
             }
           }
-          state3 = ns;
-          if (fsm[state3][otherwise]) {
+          state2 = ns;
+          if (fsm[state2][otherwise]) {
             lastOtherwiseIndex = j + delta - 1;
-            lastOtherwiseState = fsm[state3][otherwise];
+            lastOtherwiseState = fsm[state2][otherwise];
           }
         }
       }
@@ -21849,12 +21849,12 @@ class FocusWarhead {
         const sessionId = inputR.sessionID;
         if (!sessionId)
           return;
-        const state3 = orchestrator.getState(sessionId);
-        if (state3) {
-          this.mode = state3.mode || "IDLE";
-          this.layer = typeof state3.currentLayer === "number" ? state3.currentLayer : 0;
+        const state2 = orchestrator.getState(sessionId);
+        if (state2) {
+          this.mode = state2.mode || "IDLE";
+          this.layer = typeof state2.currentLayer === "number" ? state2.currentLayer : 0;
           this.gate = gateManager.getCurrentGate();
-          this.task = state3.status || "idle";
+          this.task = state2.status || "idle";
         }
       } catch (e) {
         await tridentLog("WARN", "warhead-focus", `State update failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -34410,7 +34410,7 @@ ${lanes.join(`
       pos = pos + shebang.length;
       return pos;
     }
-    function iterateCommentRanges(reduce, text, pos, trailing, cb, state3, initial) {
+    function iterateCommentRanges(reduce, text, pos, trailing, cb, state2, initial) {
       let pendingPos;
       let pendingEnd;
       let pendingKind;
@@ -34475,7 +34475,7 @@ ${lanes.join(`
                 }
                 if (collecting) {
                   if (hasPendingCommentRange) {
-                    accumulator = cb(pendingPos, pendingEnd, pendingKind, pendingHasTrailingNewLine, state3, accumulator);
+                    accumulator = cb(pendingPos, pendingEnd, pendingKind, pendingHasTrailingNewLine, state2, accumulator);
                     if (!reduce && accumulator) {
                       return accumulator;
                     }
@@ -34501,21 +34501,21 @@ ${lanes.join(`
           }
         }
       if (hasPendingCommentRange) {
-        accumulator = cb(pendingPos, pendingEnd, pendingKind, pendingHasTrailingNewLine, state3, accumulator);
+        accumulator = cb(pendingPos, pendingEnd, pendingKind, pendingHasTrailingNewLine, state2, accumulator);
       }
       return accumulator;
     }
-    function forEachLeadingCommentRange(text, pos, cb, state3) {
-      return iterateCommentRanges(false, text, pos, false, cb, state3);
+    function forEachLeadingCommentRange(text, pos, cb, state2) {
+      return iterateCommentRanges(false, text, pos, false, cb, state2);
     }
-    function forEachTrailingCommentRange(text, pos, cb, state3) {
-      return iterateCommentRanges(false, text, pos, true, cb, state3);
+    function forEachTrailingCommentRange(text, pos, cb, state2) {
+      return iterateCommentRanges(false, text, pos, true, cb, state2);
     }
-    function reduceEachLeadingCommentRange(text, pos, cb, state3, initial) {
-      return iterateCommentRanges(true, text, pos, false, cb, state3, initial);
+    function reduceEachLeadingCommentRange(text, pos, cb, state2, initial) {
+      return iterateCommentRanges(true, text, pos, false, cb, state2, initial);
     }
-    function reduceEachTrailingCommentRange(text, pos, cb, state3, initial) {
-      return iterateCommentRanges(true, text, pos, true, cb, state3, initial);
+    function reduceEachTrailingCommentRange(text, pos, cb, state2, initial) {
+      return iterateCommentRanges(true, text, pos, true, cb, state2, initial);
     }
     function appendCommentRange(pos, end, kind, hasTrailingNewLine, _state, comments = []) {
       comments.push({ kind, pos, end, hasTrailingNewLine });
@@ -45209,38 +45209,38 @@ ${lanes.join(`
       })(States || (States = {}));
       let partStart = 0;
       let partEnd = 0;
-      let state3 = 0;
+      let state2 = 0;
       while (partEnd >= 0) {
         partStart = partEnd;
         partEnd = fullPath.indexOf("/", partStart + 1);
-        switch (state3) {
+        switch (state2) {
           case 0:
             if (fullPath.indexOf(nodeModulesPathPart, partStart) === partStart) {
               topLevelNodeModulesIndex = partStart;
               topLevelPackageNameIndex = partEnd;
-              state3 = 1;
+              state2 = 1;
             }
             break;
           case 1:
           case 2:
-            if (state3 === 1 && fullPath.charAt(partStart + 1) === "@") {
-              state3 = 2;
+            if (state2 === 1 && fullPath.charAt(partStart + 1) === "@") {
+              state2 = 2;
             } else {
               packageRootIndex = partEnd;
-              state3 = 3;
+              state2 = 3;
             }
             break;
           case 3:
             if (fullPath.indexOf(nodeModulesPathPart, partStart) === partStart) {
-              state3 = 1;
+              state2 = 1;
             } else {
-              state3 = 3;
+              state2 = 3;
             }
             break;
         }
       }
       fileNameIndex = partStart;
-      return state3 > 1 ? { topLevelNodeModulesIndex, topLevelPackageNameIndex, packageRootIndex, fileNameIndex } : undefined;
+      return state2 > 1 ? { topLevelNodeModulesIndex, topLevelPackageNameIndex, packageRootIndex, fileNameIndex } : undefined;
     }
     function isTypeDeclaration(node) {
       switch (node.kind) {
@@ -51388,29 +51388,29 @@ ${lanes.join(`
         context.requestEmitHelper(createBindingHelper);
         return factory2.createCallExpression(getUnscopedHelperName("__exportStar"), undefined, [moduleExpression, exportsExpression]);
       }
-      function createClassPrivateFieldGetHelper(receiver, state3, kind, f) {
+      function createClassPrivateFieldGetHelper(receiver, state2, kind, f) {
         context.requestEmitHelper(classPrivateFieldGetHelper);
         let args;
         if (!f) {
-          args = [receiver, state3, factory2.createStringLiteral(kind)];
+          args = [receiver, state2, factory2.createStringLiteral(kind)];
         } else {
-          args = [receiver, state3, factory2.createStringLiteral(kind), f];
+          args = [receiver, state2, factory2.createStringLiteral(kind), f];
         }
         return factory2.createCallExpression(getUnscopedHelperName("__classPrivateFieldGet"), undefined, args);
       }
-      function createClassPrivateFieldSetHelper(receiver, state3, value, kind, f) {
+      function createClassPrivateFieldSetHelper(receiver, state2, value, kind, f) {
         context.requestEmitHelper(classPrivateFieldSetHelper);
         let args;
         if (!f) {
-          args = [receiver, state3, value, factory2.createStringLiteral(kind)];
+          args = [receiver, state2, value, factory2.createStringLiteral(kind)];
         } else {
-          args = [receiver, state3, value, factory2.createStringLiteral(kind), f];
+          args = [receiver, state2, value, factory2.createStringLiteral(kind), f];
         }
         return factory2.createCallExpression(getUnscopedHelperName("__classPrivateFieldSet"), undefined, args);
       }
-      function createClassPrivateFieldInHelper(state3, receiver) {
+      function createClassPrivateFieldInHelper(state2, receiver) {
         context.requestEmitHelper(classPrivateFieldInHelper);
-        return factory2.createCallExpression(getUnscopedHelperName("__classPrivateFieldIn"), undefined, [state3, receiver]);
+        return factory2.createCallExpression(getUnscopedHelperName("__classPrivateFieldIn"), undefined, [state2, receiver]);
       }
       function createAddDisposableResourceHelper(envBinding, value, async) {
         context.requestEmitHelper(addDisposableResourceHelper);
@@ -59162,7 +59162,7 @@ ${lanes.join(`
           parsingContext = saveParsingContext;
           return result;
           function doJSDocScan() {
-            let state3 = 1;
+            let state2 = 1;
             let margin;
             let indent3 = start - (content.lastIndexOf(`
 `, start) + 1) + 4;
@@ -59177,7 +59177,7 @@ ${lanes.join(`
             while (parseOptionalJsdoc(5))
               ;
             if (parseOptionalJsdoc(4)) {
-              state3 = 0;
+              state2 = 0;
               indent3 = 0;
             }
             loop:
@@ -59188,27 +59188,27 @@ ${lanes.join(`
                     if (!commentsPos)
                       commentsPos = getNodePos();
                     addTag(parseTag(indent3));
-                    state3 = 0;
+                    state2 = 0;
                     margin = undefined;
                     break;
                   case 4:
                     comments.push(scanner2.getTokenText());
-                    state3 = 0;
+                    state2 = 0;
                     indent3 = 0;
                     break;
                   case 42:
                     const asterisk = scanner2.getTokenText();
-                    if (state3 === 1) {
-                      state3 = 2;
+                    if (state2 === 1) {
+                      state2 = 2;
                       pushComment(asterisk);
                     } else {
-                      Debug.assert(state3 === 0);
-                      state3 = 1;
+                      Debug.assert(state2 === 0);
+                      state2 = 1;
                       indent3 += asterisk.length;
                     }
                     break;
                   case 5:
-                    Debug.assert(state3 !== 2, "whitespace shouldn't come from the scanner while saving top-level comment text");
+                    Debug.assert(state2 !== 2, "whitespace shouldn't come from the scanner while saving top-level comment text");
                     const whitespace = scanner2.getTokenText();
                     if (margin !== undefined && indent3 + whitespace.length > margin) {
                       comments.push(whitespace.slice(margin - indent3));
@@ -59218,11 +59218,11 @@ ${lanes.join(`
                   case 1:
                     break loop;
                   case 82:
-                    state3 = 2;
+                    state2 = 2;
                     pushComment(scanner2.getTokenValue());
                     break;
                   case 19:
-                    state3 = 2;
+                    state2 = 2;
                     const commentEnd = scanner2.getTokenFullStart();
                     const linkStart = scanner2.getTokenEnd() - 1;
                     const link = parseJSDocLink(linkStart);
@@ -59237,11 +59237,11 @@ ${lanes.join(`
                       break;
                     }
                   default:
-                    state3 = 2;
+                    state2 = 2;
                     pushComment(scanner2.getTokenText());
                     break;
                 }
-                if (state3 === 2) {
+                if (state2 === 2) {
                   nextJSDocCommentTextToken(false);
                 } else {
                   nextTokenJSDoc();
@@ -59418,7 +59418,7 @@ ${lanes.join(`
             let comments2 = [];
             const parts2 = [];
             let linkEnd2;
-            let state3 = 0;
+            let state2 = 0;
             let margin;
             function pushComment(text) {
               if (!margin) {
@@ -59431,14 +59431,14 @@ ${lanes.join(`
               if (initialMargin !== "") {
                 pushComment(initialMargin);
               }
-              state3 = 1;
+              state2 = 1;
             }
             let tok = token();
             loop:
               while (true) {
                 switch (tok) {
                   case 4:
-                    state3 = 0;
+                    state2 = 0;
                     comments2.push(scanner2.getTokenText());
                     indent3 = 0;
                     break;
@@ -59448,16 +59448,16 @@ ${lanes.join(`
                   case 1:
                     break loop;
                   case 5:
-                    Debug.assert(state3 !== 2 && state3 !== 3, "whitespace shouldn't come from the scanner while saving comment text");
+                    Debug.assert(state2 !== 2 && state2 !== 3, "whitespace shouldn't come from the scanner while saving comment text");
                     const whitespace = scanner2.getTokenText();
                     if (margin !== undefined && indent3 + whitespace.length > margin) {
                       comments2.push(whitespace.slice(margin - indent3));
-                      state3 = 2;
+                      state2 = 2;
                     }
                     indent3 += whitespace.length;
                     break;
                   case 19:
-                    state3 = 2;
+                    state2 = 2;
                     const commentEnd = scanner2.getTokenFullStart();
                     const linkStart = scanner2.getTokenEnd() - 1;
                     const link = parseJSDocLink(linkStart);
@@ -59471,34 +59471,34 @@ ${lanes.join(`
                     }
                     break;
                   case 62:
-                    if (state3 === 3) {
-                      state3 = 2;
+                    if (state2 === 3) {
+                      state2 = 2;
                     } else {
-                      state3 = 3;
+                      state2 = 3;
                     }
                     pushComment(scanner2.getTokenText());
                     break;
                   case 82:
-                    if (state3 !== 3) {
-                      state3 = 2;
+                    if (state2 !== 3) {
+                      state2 = 2;
                     }
                     pushComment(scanner2.getTokenValue());
                     break;
                   case 42:
-                    if (state3 === 0) {
-                      state3 = 1;
+                    if (state2 === 0) {
+                      state2 = 1;
                       indent3 += 1;
                       break;
                     }
                   default:
-                    if (state3 !== 3) {
-                      state3 = 2;
+                    if (state2 !== 3) {
+                      state2 = 2;
                     }
                     pushComment(scanner2.getTokenText());
                     break;
                 }
-                if (state3 === 2 || state3 === 3) {
-                  tok = nextJSDocCommentTextToken(state3 === 3);
+                if (state2 === 2 || state2 === 3) {
+                  tok = nextJSDocCommentTextToken(state2 === 3);
                 } else {
                   tok = nextTokenJSDoc();
                 }
@@ -63759,7 +63759,7 @@ ${lanes.join(`
     function isTraceEnabled(compilerOptions, host) {
       return !!compilerOptions.traceResolution && host.trace !== undefined;
     }
-    function withPackageId(packageInfo, r, state3) {
+    function withPackageId(packageInfo, r, state2) {
       let packageId;
       if (r && packageInfo) {
         const packageJsonContent = packageInfo.contents.packageJsonContent;
@@ -63768,7 +63768,7 @@ ${lanes.join(`
             name: packageJsonContent.name,
             subModuleName: r.path.slice(packageInfo.packageDirectory.length + directorySeparator.length),
             version: packageJsonContent.version,
-            peerDependencies: getPeerDependenciesOfPackageJsonInfo(packageInfo, state3)
+            peerDependencies: getPeerDependenciesOfPackageJsonInfo(packageInfo, state2)
           };
         }
       }
@@ -63814,13 +63814,13 @@ ${lanes.join(`
       Debug.assert(extensionIsTS(resolved.extension));
       return { fileName: resolved.path, packageId: resolved.packageId };
     }
-    function createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state3, cache, alternateResult) {
-      if (!state3.resultFromCache && !state3.compilerOptions.preserveSymlinks && resolved && isExternalLibraryImport && !resolved.originalPath && !isExternalModuleNameRelative(moduleName)) {
-        const { resolvedFileName, originalPath } = getOriginalAndResolvedFileName(resolved.path, state3.host, state3.traceEnabled);
+    function createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state2, cache, alternateResult) {
+      if (!state2.resultFromCache && !state2.compilerOptions.preserveSymlinks && resolved && isExternalLibraryImport && !resolved.originalPath && !isExternalModuleNameRelative(moduleName)) {
+        const { resolvedFileName, originalPath } = getOriginalAndResolvedFileName(resolved.path, state2.host, state2.traceEnabled);
         if (originalPath)
           resolved = { ...resolved, path: resolvedFileName, originalPath };
       }
-      return createResolvedModuleWithFailedLookupLocations(resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state3.resultFromCache, cache, alternateResult);
+      return createResolvedModuleWithFailedLookupLocations(resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state2.resultFromCache, cache, alternateResult);
     }
     function createResolvedModuleWithFailedLookupLocations(resolved, isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, resultFromCache, cache, alternateResult) {
       if (resultFromCache) {
@@ -63871,79 +63871,79 @@ ${lanes.join(`
         return fromCache.slice();
       return [...fromCache, ...value];
     }
-    function readPackageJsonField(jsonContent, fieldName, typeOfTag, state3) {
+    function readPackageJsonField(jsonContent, fieldName, typeOfTag, state2) {
       if (!hasProperty(jsonContent, fieldName)) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_does_not_have_a_0_field, fieldName);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_does_not_have_a_0_field, fieldName);
         }
         return;
       }
       const value = jsonContent[fieldName];
       if (typeof value !== typeOfTag || value === null) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Expected_type_of_0_field_in_package_json_to_be_1_got_2, fieldName, typeOfTag, value === null ? "null" : typeof value);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Expected_type_of_0_field_in_package_json_to_be_1_got_2, fieldName, typeOfTag, value === null ? "null" : typeof value);
         }
         return;
       }
       return value;
     }
-    function readPackageJsonPathField(jsonContent, fieldName, baseDirectory, state3) {
-      const fileName = readPackageJsonField(jsonContent, fieldName, "string", state3);
+    function readPackageJsonPathField(jsonContent, fieldName, baseDirectory, state2) {
+      const fileName = readPackageJsonField(jsonContent, fieldName, "string", state2);
       if (fileName === undefined) {
         return;
       }
       if (!fileName) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_had_a_falsy_0_field, fieldName);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_had_a_falsy_0_field, fieldName);
         }
         return;
       }
       const path13 = normalizePath(combinePaths(baseDirectory, fileName));
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.package_json_has_0_field_1_that_references_2, fieldName, fileName, path13);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.package_json_has_0_field_1_that_references_2, fieldName, fileName, path13);
       }
       return path13;
     }
-    function readPackageJsonTypesFields(jsonContent, baseDirectory, state3) {
-      return readPackageJsonPathField(jsonContent, "typings", baseDirectory, state3) || readPackageJsonPathField(jsonContent, "types", baseDirectory, state3);
+    function readPackageJsonTypesFields(jsonContent, baseDirectory, state2) {
+      return readPackageJsonPathField(jsonContent, "typings", baseDirectory, state2) || readPackageJsonPathField(jsonContent, "types", baseDirectory, state2);
     }
-    function readPackageJsonTSConfigField(jsonContent, baseDirectory, state3) {
-      return readPackageJsonPathField(jsonContent, "tsconfig", baseDirectory, state3);
+    function readPackageJsonTSConfigField(jsonContent, baseDirectory, state2) {
+      return readPackageJsonPathField(jsonContent, "tsconfig", baseDirectory, state2);
     }
-    function readPackageJsonMainField(jsonContent, baseDirectory, state3) {
-      return readPackageJsonPathField(jsonContent, "main", baseDirectory, state3);
+    function readPackageJsonMainField(jsonContent, baseDirectory, state2) {
+      return readPackageJsonPathField(jsonContent, "main", baseDirectory, state2);
     }
-    function readPackageJsonTypesVersionsField(jsonContent, state3) {
-      const typesVersions = readPackageJsonField(jsonContent, "typesVersions", "object", state3);
+    function readPackageJsonTypesVersionsField(jsonContent, state2) {
+      const typesVersions = readPackageJsonField(jsonContent, "typesVersions", "object", state2);
       if (typesVersions === undefined)
         return;
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.package_json_has_a_typesVersions_field_with_version_specific_path_mappings);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.package_json_has_a_typesVersions_field_with_version_specific_path_mappings);
       }
       return typesVersions;
     }
-    function readPackageJsonTypesVersionPaths(jsonContent, state3) {
-      const typesVersions = readPackageJsonTypesVersionsField(jsonContent, state3);
+    function readPackageJsonTypesVersionPaths(jsonContent, state2) {
+      const typesVersions = readPackageJsonTypesVersionsField(jsonContent, state2);
       if (typesVersions === undefined)
         return;
-      if (state3.traceEnabled) {
+      if (state2.traceEnabled) {
         for (const key in typesVersions) {
           if (hasProperty(typesVersions, key) && !VersionRange.tryParse(key)) {
-            trace(state3.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_is_not_a_valid_semver_range, key);
+            trace(state2.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_is_not_a_valid_semver_range, key);
           }
         }
       }
       const result = getPackageJsonTypesVersionsPaths(typesVersions);
       if (!result) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_does_not_have_a_typesVersions_entry_that_matches_version_0, versionMajorMinor);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_does_not_have_a_typesVersions_entry_that_matches_version_0, versionMajorMinor);
         }
         return;
       }
       const { version: bestVersionKey, paths: bestVersionPaths } = result;
       if (typeof bestVersionPaths !== "object") {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Expected_type_of_0_field_in_package_json_to_be_1_got_2, `typesVersions['${bestVersionKey}']`, "object", typeof bestVersionPaths);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Expected_type_of_0_field_in_package_json_to_be_1_got_2, `typesVersions['${bestVersionKey}']`, "object", typeof bestVersionPaths);
         }
         return;
       }
@@ -64622,48 +64622,48 @@ ${lanes.join(`
       }
       return result;
     }
-    function tryLoadModuleUsingOptionalResolutionSettings(extensions, moduleName, containingDirectory, loader, state3) {
-      const resolved = tryLoadModuleUsingPathsIfEligible(extensions, moduleName, loader, state3);
+    function tryLoadModuleUsingOptionalResolutionSettings(extensions, moduleName, containingDirectory, loader, state2) {
+      const resolved = tryLoadModuleUsingPathsIfEligible(extensions, moduleName, loader, state2);
       if (resolved)
         return resolved.value;
       if (!isExternalModuleNameRelative(moduleName)) {
-        return tryLoadModuleUsingBaseUrl(extensions, moduleName, loader, state3);
+        return tryLoadModuleUsingBaseUrl(extensions, moduleName, loader, state2);
       } else {
-        return tryLoadModuleUsingRootDirs(extensions, moduleName, containingDirectory, loader, state3);
+        return tryLoadModuleUsingRootDirs(extensions, moduleName, containingDirectory, loader, state2);
       }
     }
-    function tryLoadModuleUsingPathsIfEligible(extensions, moduleName, loader, state3) {
-      const { baseUrl, paths } = state3.compilerOptions;
+    function tryLoadModuleUsingPathsIfEligible(extensions, moduleName, loader, state2) {
+      const { baseUrl, paths } = state2.compilerOptions;
       if (paths && !pathIsRelative(moduleName)) {
-        if (state3.traceEnabled) {
+        if (state2.traceEnabled) {
           if (baseUrl) {
-            trace(state3.host, Diagnostics.baseUrl_option_is_set_to_0_using_this_value_to_resolve_non_relative_module_name_1, baseUrl, moduleName);
+            trace(state2.host, Diagnostics.baseUrl_option_is_set_to_0_using_this_value_to_resolve_non_relative_module_name_1, baseUrl, moduleName);
           }
-          trace(state3.host, Diagnostics.paths_option_is_specified_looking_for_a_pattern_to_match_module_name_0, moduleName);
+          trace(state2.host, Diagnostics.paths_option_is_specified_looking_for_a_pattern_to_match_module_name_0, moduleName);
         }
-        const baseDirectory = getPathsBasePath(state3.compilerOptions, state3.host);
+        const baseDirectory = getPathsBasePath(state2.compilerOptions, state2.host);
         const pathPatterns = tryParsePatterns(paths);
-        return tryLoadModuleUsingPaths(extensions, moduleName, baseDirectory, paths, pathPatterns, loader, false, state3);
+        return tryLoadModuleUsingPaths(extensions, moduleName, baseDirectory, paths, pathPatterns, loader, false, state2);
       }
     }
-    function tryLoadModuleUsingRootDirs(extensions, moduleName, containingDirectory, loader, state3) {
-      if (!state3.compilerOptions.rootDirs) {
+    function tryLoadModuleUsingRootDirs(extensions, moduleName, containingDirectory, loader, state2) {
+      if (!state2.compilerOptions.rootDirs) {
         return;
       }
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.rootDirs_option_is_set_using_it_to_resolve_relative_module_name_0, moduleName);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.rootDirs_option_is_set_using_it_to_resolve_relative_module_name_0, moduleName);
       }
       const candidate = normalizePath(combinePaths(containingDirectory, moduleName));
       let matchedRootDir;
       let matchedNormalizedPrefix;
-      for (const rootDir of state3.compilerOptions.rootDirs) {
+      for (const rootDir of state2.compilerOptions.rootDirs) {
         let normalizedRoot = normalizePath(rootDir);
         if (!endsWith(normalizedRoot, directorySeparator)) {
           normalizedRoot += directorySeparator;
         }
         const isLongestMatchingPrefix = startsWith(candidate, normalizedRoot) && (matchedNormalizedPrefix === undefined || matchedNormalizedPrefix.length < normalizedRoot.length);
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Checking_if_0_is_the_longest_matching_prefix_for_1_2, normalizedRoot, candidate, isLongestMatchingPrefix);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Checking_if_0_is_the_longest_matching_prefix_for_1_2, normalizedRoot, candidate, isLongestMatchingPrefix);
         }
         if (isLongestMatchingPrefix) {
           matchedNormalizedPrefix = normalizedRoot;
@@ -64671,53 +64671,53 @@ ${lanes.join(`
         }
       }
       if (matchedNormalizedPrefix) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Longest_matching_prefix_for_0_is_1, candidate, matchedNormalizedPrefix);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Longest_matching_prefix_for_0_is_1, candidate, matchedNormalizedPrefix);
         }
         const suffix = candidate.substr(matchedNormalizedPrefix.length);
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Loading_0_from_the_root_dir_1_candidate_location_2, suffix, matchedNormalizedPrefix, candidate);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Loading_0_from_the_root_dir_1_candidate_location_2, suffix, matchedNormalizedPrefix, candidate);
         }
-        const resolvedFileName = loader(extensions, candidate, !directoryProbablyExists(containingDirectory, state3.host), state3);
+        const resolvedFileName = loader(extensions, candidate, !directoryProbablyExists(containingDirectory, state2.host), state2);
         if (resolvedFileName) {
           return resolvedFileName;
         }
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Trying_other_entries_in_rootDirs);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Trying_other_entries_in_rootDirs);
         }
-        for (const rootDir of state3.compilerOptions.rootDirs) {
+        for (const rootDir of state2.compilerOptions.rootDirs) {
           if (rootDir === matchedRootDir) {
             continue;
           }
           const candidate2 = combinePaths(normalizePath(rootDir), suffix);
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Loading_0_from_the_root_dir_1_candidate_location_2, suffix, rootDir, candidate2);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Loading_0_from_the_root_dir_1_candidate_location_2, suffix, rootDir, candidate2);
           }
           const baseDirectory = getDirectoryPath(candidate2);
-          const resolvedFileName2 = loader(extensions, candidate2, !directoryProbablyExists(baseDirectory, state3.host), state3);
+          const resolvedFileName2 = loader(extensions, candidate2, !directoryProbablyExists(baseDirectory, state2.host), state2);
           if (resolvedFileName2) {
             return resolvedFileName2;
           }
         }
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Module_resolution_using_rootDirs_has_failed);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Module_resolution_using_rootDirs_has_failed);
         }
       }
       return;
     }
-    function tryLoadModuleUsingBaseUrl(extensions, moduleName, loader, state3) {
-      const { baseUrl } = state3.compilerOptions;
+    function tryLoadModuleUsingBaseUrl(extensions, moduleName, loader, state2) {
+      const { baseUrl } = state2.compilerOptions;
       if (!baseUrl) {
         return;
       }
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.baseUrl_option_is_set_to_0_using_this_value_to_resolve_non_relative_module_name_1, baseUrl, moduleName);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.baseUrl_option_is_set_to_0_using_this_value_to_resolve_non_relative_module_name_1, baseUrl, moduleName);
       }
       const candidate = normalizePath(combinePaths(baseUrl, moduleName));
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.Resolving_module_name_0_relative_to_base_url_1_2, moduleName, baseUrl, candidate);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.Resolving_module_name_0_relative_to_base_url_1_2, moduleName, baseUrl, candidate);
       }
-      return loader(extensions, candidate, !directoryProbablyExists(getDirectoryPath(candidate), state3.host), state3);
+      return loader(extensions, candidate, !directoryProbablyExists(getDirectoryPath(candidate), state2.host), state2);
     }
     function resolveJSModule(moduleName, initialDir, host) {
       const { resolvedModule, failedLookupLocations } = tryResolveJSModuleWorker(moduleName, initialDir, host);
@@ -64790,7 +64790,7 @@ ${lanes.join(`
       const moduleResolution = getEmitModuleResolutionKind(compilerOptions);
       conditions ?? (conditions = getConditions(compilerOptions, moduleResolution === 100 || moduleResolution === 2 ? undefined : features & 32 ? 99 : 1));
       const diagnostics = [];
-      const state3 = {
+      const state2 = {
         compilerOptions,
         host,
         traceEnabled,
@@ -64806,24 +64806,24 @@ ${lanes.join(`
         resolvedPackageDirectory: false
       };
       if (traceEnabled && moduleResolutionSupportsPackageJsonExportsAndImports(moduleResolution)) {
-        trace(host, Diagnostics.Resolving_in_0_mode_with_conditions_1, features & 32 ? "ESM" : "CJS", state3.conditions.map((c) => `'${c}'`).join(", "));
+        trace(host, Diagnostics.Resolving_in_0_mode_with_conditions_1, features & 32 ? "ESM" : "CJS", state2.conditions.map((c) => `'${c}'`).join(", "));
       }
       let result;
       if (moduleResolution === 2) {
         const priorityExtensions = extensions & (1 | 4);
         const secondaryExtensions = extensions & ~(1 | 4);
-        result = priorityExtensions && tryResolve(priorityExtensions, state3) || secondaryExtensions && tryResolve(secondaryExtensions, state3) || undefined;
+        result = priorityExtensions && tryResolve(priorityExtensions, state2) || secondaryExtensions && tryResolve(secondaryExtensions, state2) || undefined;
       } else {
-        result = tryResolve(extensions, state3);
+        result = tryResolve(extensions, state2);
       }
       let alternateResult;
-      if (state3.resolvedPackageDirectory && !isConfigLookup && !isExternalModuleNameRelative(moduleName)) {
+      if (state2.resolvedPackageDirectory && !isConfigLookup && !isExternalModuleNameRelative(moduleName)) {
         const wantedTypesButGotJs = (result == null ? undefined : result.value) && extensions & (1 | 4) && !extensionIsOk(1 | 4, result.value.resolved.extension);
         if (((_a3 = result == null ? undefined : result.value) == null ? undefined : _a3.isExternalLibraryImport) && wantedTypesButGotJs && features & 8 && (conditions == null ? undefined : conditions.includes("import"))) {
-          traceIfEnabled(state3, Diagnostics.Resolution_of_non_relative_name_failed_trying_with_modern_Node_resolution_features_disabled_to_see_if_npm_library_needs_configuration_update);
+          traceIfEnabled(state2, Diagnostics.Resolution_of_non_relative_name_failed_trying_with_modern_Node_resolution_features_disabled_to_see_if_npm_library_needs_configuration_update);
           const diagnosticState = {
-            ...state3,
-            features: state3.features & ~8,
+            ...state2,
+            features: state2.features & ~8,
             reportDiagnostic: noop
           };
           const diagnosticResult = tryResolve(extensions & (1 | 4), diagnosticState);
@@ -64831,10 +64831,10 @@ ${lanes.join(`
             alternateResult = diagnosticResult.value.resolved.path;
           }
         } else if ((!(result == null ? undefined : result.value) || wantedTypesButGotJs) && moduleResolution === 2) {
-          traceIfEnabled(state3, Diagnostics.Resolution_of_non_relative_name_failed_trying_with_moduleResolution_bundler_to_see_if_project_may_need_configuration_update);
-          const diagnosticsCompilerOptions = { ...state3.compilerOptions, moduleResolution: 100 };
+          traceIfEnabled(state2, Diagnostics.Resolution_of_non_relative_name_failed_trying_with_moduleResolution_bundler_to_see_if_project_may_need_configuration_update);
+          const diagnosticsCompilerOptions = { ...state2.compilerOptions, moduleResolution: 100 };
           const diagnosticState = {
-            ...state3,
+            ...state2,
             compilerOptions: diagnosticsCompilerOptions,
             features: 94,
             conditions: getConditions(diagnosticsCompilerOptions),
@@ -64846,9 +64846,9 @@ ${lanes.join(`
           }
         }
       }
-      return createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, (_d = result == null ? undefined : result.value) == null ? undefined : _d.resolved, (_e = result == null ? undefined : result.value) == null ? undefined : _e.isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state3, cache, alternateResult);
+      return createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, (_d = result == null ? undefined : result.value) == null ? undefined : _d.resolved, (_e = result == null ? undefined : result.value) == null ? undefined : _e.isExternalLibraryImport, failedLookupLocations, affectingLocations, diagnostics, state2, cache, alternateResult);
       function tryResolve(extensions2, state22) {
-        const loader = (extensions3, candidate, onlyRecordFailures, state32) => nodeLoadModuleByRelativeName(extensions3, candidate, onlyRecordFailures, state32, true);
+        const loader = (extensions3, candidate, onlyRecordFailures, state3) => nodeLoadModuleByRelativeName(extensions3, candidate, onlyRecordFailures, state3, true);
         const resolved = tryLoadModuleUsingOptionalResolutionSettings(extensions2, moduleName, containingDirectory, loader, state22);
         if (resolved) {
           return toSearchResult({ resolved, isExternalLibraryImport: pathContainsNodeModules(resolved.path) });
@@ -64904,38 +64904,38 @@ ${lanes.join(`
       }
       return real;
     }
-    function nodeLoadModuleByRelativeName(extensions, candidate, onlyRecordFailures, state3, considerPackageJson) {
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.Loading_module_as_file_Slash_folder_candidate_module_location_0_target_file_types_Colon_1, candidate, formatExtensions(extensions));
+    function nodeLoadModuleByRelativeName(extensions, candidate, onlyRecordFailures, state2, considerPackageJson) {
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.Loading_module_as_file_Slash_folder_candidate_module_location_0_target_file_types_Colon_1, candidate, formatExtensions(extensions));
       }
       if (!hasTrailingDirectorySeparator(candidate)) {
         if (!onlyRecordFailures) {
           const parentOfCandidate = getDirectoryPath(candidate);
-          if (!directoryProbablyExists(parentOfCandidate, state3.host)) {
-            if (state3.traceEnabled) {
-              trace(state3.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, parentOfCandidate);
+          if (!directoryProbablyExists(parentOfCandidate, state2.host)) {
+            if (state2.traceEnabled) {
+              trace(state2.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, parentOfCandidate);
             }
             onlyRecordFailures = true;
           }
         }
-        const resolvedFromFile = loadModuleFromFile(extensions, candidate, onlyRecordFailures, state3);
+        const resolvedFromFile = loadModuleFromFile(extensions, candidate, onlyRecordFailures, state2);
         if (resolvedFromFile) {
           const packageDirectory = considerPackageJson ? parseNodeModuleFromPath(resolvedFromFile.path) : undefined;
-          const packageInfo = packageDirectory ? getPackageJsonInfo(packageDirectory, false, state3) : undefined;
-          return withPackageId(packageInfo, resolvedFromFile, state3);
+          const packageInfo = packageDirectory ? getPackageJsonInfo(packageDirectory, false, state2) : undefined;
+          return withPackageId(packageInfo, resolvedFromFile, state2);
         }
       }
       if (!onlyRecordFailures) {
-        const candidateExists = directoryProbablyExists(candidate, state3.host);
+        const candidateExists = directoryProbablyExists(candidate, state2.host);
         if (!candidateExists) {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, candidate);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, candidate);
           }
           onlyRecordFailures = true;
         }
       }
-      if (!(state3.features & 32)) {
-        return loadNodeModuleFromDirectory(extensions, candidate, onlyRecordFailures, state3, considerPackageJson);
+      if (!(state2.features & 32)) {
+        return loadNodeModuleFromDirectory(extensions, candidate, onlyRecordFailures, state2, considerPackageJson);
       }
       return;
     }
@@ -64960,22 +64960,22 @@ ${lanes.join(`
       const nextSeparatorIndex = path13.indexOf(directorySeparator, prevSeparatorIndex + 1);
       return nextSeparatorIndex === -1 ? isFolder ? path13.length : prevSeparatorIndex : nextSeparatorIndex;
     }
-    function loadModuleFromFileNoPackageId(extensions, candidate, onlyRecordFailures, state3) {
-      return noPackageId(loadModuleFromFile(extensions, candidate, onlyRecordFailures, state3));
+    function loadModuleFromFileNoPackageId(extensions, candidate, onlyRecordFailures, state2) {
+      return noPackageId(loadModuleFromFile(extensions, candidate, onlyRecordFailures, state2));
     }
-    function loadModuleFromFile(extensions, candidate, onlyRecordFailures, state3) {
-      const resolvedByReplacingExtension = loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state3);
+    function loadModuleFromFile(extensions, candidate, onlyRecordFailures, state2) {
+      const resolvedByReplacingExtension = loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state2);
       if (resolvedByReplacingExtension) {
         return resolvedByReplacingExtension;
       }
-      if (!(state3.features & 32)) {
-        const resolvedByAddingExtension = tryAddingExtensions(candidate, extensions, "", onlyRecordFailures, state3);
+      if (!(state2.features & 32)) {
+        const resolvedByAddingExtension = tryAddingExtensions(candidate, extensions, "", onlyRecordFailures, state2);
         if (resolvedByAddingExtension) {
           return resolvedByAddingExtension;
         }
       }
     }
-    function loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state3) {
+    function loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state2) {
       const filename = getBaseFileName(candidate);
       if (!filename.includes(".")) {
         return;
@@ -64985,28 +64985,28 @@ ${lanes.join(`
         extensionless = candidate.substring(0, candidate.lastIndexOf("."));
       }
       const extension = candidate.substring(extensionless.length);
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.File_name_0_has_a_1_extension_stripping_it, candidate, extension);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.File_name_0_has_a_1_extension_stripping_it, candidate, extension);
       }
-      return tryAddingExtensions(extensionless, extensions, extension, onlyRecordFailures, state3);
+      return tryAddingExtensions(extensionless, extensions, extension, onlyRecordFailures, state2);
     }
-    function loadFileNameFromPackageJsonField(extensions, candidate, packageJsonValue, onlyRecordFailures, state3) {
+    function loadFileNameFromPackageJsonField(extensions, candidate, packageJsonValue, onlyRecordFailures, state2) {
       if (extensions & 1 && fileExtensionIsOneOf(candidate, supportedTSImplementationExtensions) || extensions & 4 && fileExtensionIsOneOf(candidate, supportedDeclarationExtensions)) {
-        const result = tryFile(candidate, onlyRecordFailures, state3);
+        const result = tryFile(candidate, onlyRecordFailures, state2);
         const ext = tryExtractTSExtension(candidate);
         return result !== undefined ? { path: candidate, ext, resolvedUsingTsExtension: packageJsonValue ? !endsWith(packageJsonValue, ext) : undefined } : undefined;
       }
-      if (state3.isConfigLookup && extensions === 8 && fileExtensionIs(candidate, ".json")) {
-        const result = tryFile(candidate, onlyRecordFailures, state3);
+      if (state2.isConfigLookup && extensions === 8 && fileExtensionIs(candidate, ".json")) {
+        const result = tryFile(candidate, onlyRecordFailures, state2);
         return result !== undefined ? { path: candidate, ext: ".json", resolvedUsingTsExtension: undefined } : undefined;
       }
-      return loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state3);
+      return loadModuleFromFileNoImplicitExtensions(extensions, candidate, onlyRecordFailures, state2);
     }
-    function tryAddingExtensions(candidate, extensions, originalExtension, onlyRecordFailures, state3) {
+    function tryAddingExtensions(candidate, extensions, originalExtension, onlyRecordFailures, state2) {
       if (!onlyRecordFailures) {
         const directory = getDirectoryPath(candidate);
         if (directory) {
-          onlyRecordFailures = !directoryProbablyExists(directory, state3.host);
+          onlyRecordFailures = !directoryProbablyExists(directory, state2.host);
         }
       }
       switch (originalExtension) {
@@ -65027,44 +65027,44 @@ ${lanes.join(`
         case ".d.ts":
         case ".js":
         case "":
-          return extensions & 1 && (tryExtension(".ts", originalExtension === ".ts" || originalExtension === ".d.ts") || tryExtension(".tsx", originalExtension === ".ts" || originalExtension === ".d.ts")) || extensions & 4 && tryExtension(".d.ts", originalExtension === ".ts" || originalExtension === ".d.ts") || extensions & 2 && (tryExtension(".js") || tryExtension(".jsx")) || state3.isConfigLookup && tryExtension(".json") || undefined;
+          return extensions & 1 && (tryExtension(".ts", originalExtension === ".ts" || originalExtension === ".d.ts") || tryExtension(".tsx", originalExtension === ".ts" || originalExtension === ".d.ts")) || extensions & 4 && tryExtension(".d.ts", originalExtension === ".ts" || originalExtension === ".d.ts") || extensions & 2 && (tryExtension(".js") || tryExtension(".jsx")) || state2.isConfigLookup && tryExtension(".json") || undefined;
         default:
           return extensions & 4 && !isDeclarationFileName(candidate + originalExtension) && tryExtension(`.d${originalExtension}.ts`) || undefined;
       }
       function tryExtension(ext, resolvedUsingTsExtension) {
-        const path13 = tryFile(candidate + ext, onlyRecordFailures, state3);
-        return path13 === undefined ? undefined : { path: path13, ext, resolvedUsingTsExtension: !state3.candidateIsFromPackageJsonField && resolvedUsingTsExtension };
+        const path13 = tryFile(candidate + ext, onlyRecordFailures, state2);
+        return path13 === undefined ? undefined : { path: path13, ext, resolvedUsingTsExtension: !state2.candidateIsFromPackageJsonField && resolvedUsingTsExtension };
       }
     }
-    function tryFile(fileName, onlyRecordFailures, state3) {
+    function tryFile(fileName, onlyRecordFailures, state2) {
       var _a3;
-      if (!((_a3 = state3.compilerOptions.moduleSuffixes) == null ? undefined : _a3.length)) {
-        return tryFileLookup(fileName, onlyRecordFailures, state3);
+      if (!((_a3 = state2.compilerOptions.moduleSuffixes) == null ? undefined : _a3.length)) {
+        return tryFileLookup(fileName, onlyRecordFailures, state2);
       }
       const ext = tryGetExtensionFromPath2(fileName) ?? "";
       const fileNameNoExtension = ext ? removeExtension(fileName, ext) : fileName;
-      return forEach(state3.compilerOptions.moduleSuffixes, (suffix) => tryFileLookup(fileNameNoExtension + suffix + ext, onlyRecordFailures, state3));
+      return forEach(state2.compilerOptions.moduleSuffixes, (suffix) => tryFileLookup(fileNameNoExtension + suffix + ext, onlyRecordFailures, state2));
     }
-    function tryFileLookup(fileName, onlyRecordFailures, state3) {
+    function tryFileLookup(fileName, onlyRecordFailures, state2) {
       var _a3;
       if (!onlyRecordFailures) {
-        if (state3.host.fileExists(fileName)) {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.File_0_exists_use_it_as_a_name_resolution_result, fileName);
+        if (state2.host.fileExists(fileName)) {
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.File_0_exists_use_it_as_a_name_resolution_result, fileName);
           }
           return fileName;
         } else {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.File_0_does_not_exist, fileName);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.File_0_does_not_exist, fileName);
           }
         }
       }
-      (_a3 = state3.failedLookupLocations) == null || _a3.push(fileName);
+      (_a3 = state2.failedLookupLocations) == null || _a3.push(fileName);
       return;
     }
-    function loadNodeModuleFromDirectory(extensions, candidate, onlyRecordFailures, state3, considerPackageJson = true) {
-      const packageInfo = considerPackageJson ? getPackageJsonInfo(candidate, onlyRecordFailures, state3) : undefined;
-      return withPackageId(packageInfo, loadNodeModuleFromDirectoryWorker(extensions, candidate, onlyRecordFailures, state3, packageInfo), state3);
+    function loadNodeModuleFromDirectory(extensions, candidate, onlyRecordFailures, state2, considerPackageJson = true) {
+      const packageInfo = considerPackageJson ? getPackageJsonInfo(candidate, onlyRecordFailures, state2) : undefined;
+      return withPackageId(packageInfo, loadNodeModuleFromDirectoryWorker(extensions, candidate, onlyRecordFailures, state2, packageInfo), state2);
     }
     function getEntrypointsFromPackageJsonInfo(packageJsonInfo, options2, host, cache, resolveJs) {
       if (!resolveJs && packageJsonInfo.contents.resolvedEntrypoints !== undefined) {
@@ -65092,7 +65092,7 @@ ${lanes.join(`
       }
       return packageJsonInfo.contents.resolvedEntrypoints = entrypoints || false;
     }
-    function loadEntrypointsFromExportMap(scope, exports2, state3, extensions) {
+    function loadEntrypointsFromExportMap(scope, exports2, state2, extensions) {
       let entrypoints;
       if (isArray(exports2)) {
         for (const target of exports2) {
@@ -65109,11 +65109,11 @@ ${lanes.join(`
       function loadEntrypointsFromTargetExports(target) {
         var _a3, _b;
         if (typeof target === "string" && startsWith(target, "./")) {
-          if (target.includes("*") && state3.host.readDirectory) {
+          if (target.includes("*") && state2.host.readDirectory) {
             if (target.indexOf("*") !== target.lastIndexOf("*")) {
               return false;
             }
-            state3.host.readDirectory(scope.packageDirectory, extensionsToExtensionsArray(extensions), undefined, [
+            state2.host.readDirectory(scope.packageDirectory, extensionsToExtensionsArray(extensions), undefined, [
               changeFullExtension(replaceFirstStar(target, "**/*"), ".*")
             ]).forEach((entry) => {
               entrypoints = appendIfUnique(entrypoints, {
@@ -65128,8 +65128,8 @@ ${lanes.join(`
               return false;
             }
             const resolvedTarget = combinePaths(scope.packageDirectory, target);
-            const finalPath = getNormalizedAbsolutePath(resolvedTarget, (_b = (_a3 = state3.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
-            const result = loadFileNameFromPackageJsonField(extensions, finalPath, target, false, state3);
+            const finalPath = getNormalizedAbsolutePath(resolvedTarget, (_b = (_a3 = state2.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
+            const result = loadFileNameFromPackageJsonField(extensions, finalPath, target, false, state2);
             if (result) {
               entrypoints = appendIfUnique(entrypoints, result, (a, b) => a.path === b.path);
               return true;
@@ -65144,7 +65144,7 @@ ${lanes.join(`
           }
         } else if (typeof target === "object" && target !== null) {
           return forEach(getOwnKeys(target), (key) => {
-            if (key === "default" || contains(state3.conditions, key) || isApplicableVersionedTypesKey(state3.conditions, key)) {
+            if (key === "default" || contains(state2.conditions, key) || isApplicableVersionedTypesKey(state2.conditions, key)) {
               loadEntrypointsFromTargetExports(target[key]);
               return true;
             }
@@ -65169,65 +65169,65 @@ ${lanes.join(`
         resolvedPackageDirectory: false
       };
     }
-    function getPackageScopeForPath(directory, state3) {
-      return forEachAncestorDirectoryStoppingAtGlobalCache(state3.host, directory, (dir) => getPackageJsonInfo(dir, false, state3));
+    function getPackageScopeForPath(directory, state2) {
+      return forEachAncestorDirectoryStoppingAtGlobalCache(state2.host, directory, (dir) => getPackageJsonInfo(dir, false, state2));
     }
-    function getVersionPathsOfPackageJsonInfo(packageJsonInfo, state3) {
+    function getVersionPathsOfPackageJsonInfo(packageJsonInfo, state2) {
       if (packageJsonInfo.contents.versionPaths === undefined) {
-        packageJsonInfo.contents.versionPaths = readPackageJsonTypesVersionPaths(packageJsonInfo.contents.packageJsonContent, state3) || false;
+        packageJsonInfo.contents.versionPaths = readPackageJsonTypesVersionPaths(packageJsonInfo.contents.packageJsonContent, state2) || false;
       }
       return packageJsonInfo.contents.versionPaths || undefined;
     }
-    function getPeerDependenciesOfPackageJsonInfo(packageJsonInfo, state3) {
+    function getPeerDependenciesOfPackageJsonInfo(packageJsonInfo, state2) {
       if (packageJsonInfo.contents.peerDependencies === undefined) {
-        packageJsonInfo.contents.peerDependencies = readPackageJsonPeerDependencies(packageJsonInfo, state3) || false;
+        packageJsonInfo.contents.peerDependencies = readPackageJsonPeerDependencies(packageJsonInfo, state2) || false;
       }
       return packageJsonInfo.contents.peerDependencies || undefined;
     }
-    function readPackageJsonPeerDependencies(packageJsonInfo, state3) {
-      const peerDependencies = readPackageJsonField(packageJsonInfo.contents.packageJsonContent, "peerDependencies", "object", state3);
+    function readPackageJsonPeerDependencies(packageJsonInfo, state2) {
+      const peerDependencies = readPackageJsonField(packageJsonInfo.contents.packageJsonContent, "peerDependencies", "object", state2);
       if (peerDependencies === undefined)
         return;
-      if (state3.traceEnabled)
-        trace(state3.host, Diagnostics.package_json_has_a_peerDependencies_field);
-      const packageDirectory = realPath(packageJsonInfo.packageDirectory, state3.host, state3.traceEnabled);
+      if (state2.traceEnabled)
+        trace(state2.host, Diagnostics.package_json_has_a_peerDependencies_field);
+      const packageDirectory = realPath(packageJsonInfo.packageDirectory, state2.host, state2.traceEnabled);
       const nodeModules = packageDirectory.substring(0, packageDirectory.lastIndexOf("node_modules") + "node_modules".length) + directorySeparator;
       let result = "";
       for (const key in peerDependencies) {
         if (hasProperty(peerDependencies, key)) {
-          const peerPackageJson = getPackageJsonInfo(nodeModules + key, false, state3);
+          const peerPackageJson = getPackageJsonInfo(nodeModules + key, false, state2);
           if (peerPackageJson) {
             const version22 = peerPackageJson.contents.packageJsonContent.version;
             result += `+${key}@${version22}`;
-            if (state3.traceEnabled)
-              trace(state3.host, Diagnostics.Found_peerDependency_0_with_1_version, key, version22);
+            if (state2.traceEnabled)
+              trace(state2.host, Diagnostics.Found_peerDependency_0_with_1_version, key, version22);
           } else {
-            if (state3.traceEnabled)
-              trace(state3.host, Diagnostics.Failed_to_find_peerDependency_0, key);
+            if (state2.traceEnabled)
+              trace(state2.host, Diagnostics.Failed_to_find_peerDependency_0, key);
           }
         }
       }
       return result;
     }
-    function getPackageJsonInfo(packageDirectory, onlyRecordFailures, state3) {
+    function getPackageJsonInfo(packageDirectory, onlyRecordFailures, state2) {
       var _a3, _b, _c, _d, _e, _f;
-      const { host, traceEnabled } = state3;
+      const { host, traceEnabled } = state2;
       const packageJsonPath = combinePaths(packageDirectory, "package.json");
       if (onlyRecordFailures) {
-        (_a3 = state3.failedLookupLocations) == null || _a3.push(packageJsonPath);
+        (_a3 = state2.failedLookupLocations) == null || _a3.push(packageJsonPath);
         return;
       }
-      const existing = (_b = state3.packageJsonInfoCache) == null ? undefined : _b.getPackageJsonInfo(packageJsonPath);
+      const existing = (_b = state2.packageJsonInfoCache) == null ? undefined : _b.getPackageJsonInfo(packageJsonPath);
       if (existing !== undefined) {
         if (isPackageJsonInfo(existing)) {
           if (traceEnabled)
             trace(host, Diagnostics.File_0_exists_according_to_earlier_cached_lookups, packageJsonPath);
-          (_c = state3.affectingLocations) == null || _c.push(packageJsonPath);
+          (_c = state2.affectingLocations) == null || _c.push(packageJsonPath);
           return existing.packageDirectory === packageDirectory ? existing : { packageDirectory, contents: existing.contents };
         } else {
           if (existing.directoryExists && traceEnabled)
             trace(host, Diagnostics.File_0_does_not_exist_according_to_earlier_cached_lookups, packageJsonPath);
-          (_d = state3.failedLookupLocations) == null || _d.push(packageJsonPath);
+          (_d = state2.failedLookupLocations) == null || _d.push(packageJsonPath);
           return;
         }
       }
@@ -65238,27 +65238,27 @@ ${lanes.join(`
           trace(host, Diagnostics.Found_package_json_at_0, packageJsonPath);
         }
         const result = { packageDirectory, contents: { packageJsonContent, versionPaths: undefined, resolvedEntrypoints: undefined, peerDependencies: undefined } };
-        if (state3.packageJsonInfoCache && !state3.packageJsonInfoCache.isReadonly)
-          state3.packageJsonInfoCache.setPackageJsonInfo(packageJsonPath, result);
-        (_e = state3.affectingLocations) == null || _e.push(packageJsonPath);
+        if (state2.packageJsonInfoCache && !state2.packageJsonInfoCache.isReadonly)
+          state2.packageJsonInfoCache.setPackageJsonInfo(packageJsonPath, result);
+        (_e = state2.affectingLocations) == null || _e.push(packageJsonPath);
         return result;
       } else {
         if (directoryExists && traceEnabled) {
           trace(host, Diagnostics.File_0_does_not_exist, packageJsonPath);
         }
-        if (state3.packageJsonInfoCache && !state3.packageJsonInfoCache.isReadonly)
-          state3.packageJsonInfoCache.setPackageJsonInfo(packageJsonPath, { packageDirectory, directoryExists });
-        (_f = state3.failedLookupLocations) == null || _f.push(packageJsonPath);
+        if (state2.packageJsonInfoCache && !state2.packageJsonInfoCache.isReadonly)
+          state2.packageJsonInfoCache.setPackageJsonInfo(packageJsonPath, { packageDirectory, directoryExists });
+        (_f = state2.failedLookupLocations) == null || _f.push(packageJsonPath);
       }
     }
-    function loadNodeModuleFromDirectoryWorker(extensions, candidate, onlyRecordFailures, state3, packageJson) {
-      const versionPaths = packageJson && getVersionPathsOfPackageJsonInfo(packageJson, state3);
+    function loadNodeModuleFromDirectoryWorker(extensions, candidate, onlyRecordFailures, state2, packageJson) {
+      const versionPaths = packageJson && getVersionPathsOfPackageJsonInfo(packageJson, state2);
       let packageFile;
-      if (packageJson && arePathsEqual(packageJson == null ? undefined : packageJson.packageDirectory, candidate, state3.host)) {
-        if (state3.isConfigLookup) {
-          packageFile = readPackageJsonTSConfigField(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state3);
+      if (packageJson && arePathsEqual(packageJson == null ? undefined : packageJson.packageDirectory, candidate, state2.host)) {
+        if (state2.isConfigLookup) {
+          packageFile = readPackageJsonTSConfigField(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state2);
         } else {
-          packageFile = extensions & 4 && readPackageJsonTypesFields(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state3) || extensions & (3 | 4) && readPackageJsonMainField(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state3) || undefined;
+          packageFile = extensions & 4 && readPackageJsonTypesFields(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state2) || extensions & (3 | 4) && readPackageJsonMainField(packageJson.contents.packageJsonContent, packageJson.packageDirectory, state2) || undefined;
         }
       }
       const loader = (extensions2, candidate2, onlyRecordFailures2, state22) => {
@@ -65278,25 +65278,25 @@ ${lanes.join(`
         state22.candidateIsFromPackageJsonField = candidateIsFromPackageJsonField;
         return result;
       };
-      const onlyRecordFailuresForPackageFile = packageFile ? !directoryProbablyExists(getDirectoryPath(packageFile), state3.host) : undefined;
-      const onlyRecordFailuresForIndex = onlyRecordFailures || !directoryProbablyExists(candidate, state3.host);
-      const indexPath = combinePaths(candidate, state3.isConfigLookup ? "tsconfig" : "index");
+      const onlyRecordFailuresForPackageFile = packageFile ? !directoryProbablyExists(getDirectoryPath(packageFile), state2.host) : undefined;
+      const onlyRecordFailuresForIndex = onlyRecordFailures || !directoryProbablyExists(candidate, state2.host);
+      const indexPath = combinePaths(candidate, state2.isConfigLookup ? "tsconfig" : "index");
       if (versionPaths && (!packageFile || containsPath(candidate, packageFile))) {
         const moduleName = getRelativePathFromDirectory(candidate, packageFile || indexPath, false);
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2, versionPaths.version, version3, moduleName);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2, versionPaths.version, version3, moduleName);
         }
         const pathPatterns = tryParsePatterns(versionPaths.paths);
-        const result = tryLoadModuleUsingPaths(extensions, moduleName, candidate, versionPaths.paths, pathPatterns, loader, onlyRecordFailuresForPackageFile || onlyRecordFailuresForIndex, state3);
+        const result = tryLoadModuleUsingPaths(extensions, moduleName, candidate, versionPaths.paths, pathPatterns, loader, onlyRecordFailuresForPackageFile || onlyRecordFailuresForIndex, state2);
         if (result) {
           return removeIgnoredPackageId(result.value);
         }
       }
-      const packageFileResult = packageFile && removeIgnoredPackageId(loader(extensions, packageFile, onlyRecordFailuresForPackageFile, state3));
+      const packageFileResult = packageFile && removeIgnoredPackageId(loader(extensions, packageFile, onlyRecordFailuresForPackageFile, state2));
       if (packageFileResult)
         return packageFileResult;
-      if (!(state3.features & 32)) {
-        return loadModuleFromFile(extensions, indexPath, onlyRecordFailuresForIndex, state3);
+      if (!(state2.features & 32)) {
+        return loadModuleFromFile(extensions, indexPath, onlyRecordFailuresForIndex, state2);
       }
     }
     function extensionIsOk(extensions, extension) {
@@ -65315,10 +65315,10 @@ ${lanes.join(`
     function noKeyStartsWithDot(obj) {
       return !some(getOwnKeys(obj), (k) => startsWith(k, "."));
     }
-    function loadModuleFromSelfNameReference(extensions, moduleName, directory, state3, cache, redirectedReference) {
+    function loadModuleFromSelfNameReference(extensions, moduleName, directory, state2, cache, redirectedReference) {
       var _a3, _b;
-      const directoryPath = getNormalizedAbsolutePath(directory, (_b = (_a3 = state3.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
-      const scope = getPackageScopeForPath(directoryPath, state3);
+      const directoryPath = getNormalizedAbsolutePath(directory, (_b = (_a3 = state2.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
+      const scope = getPackageScopeForPath(directoryPath, state2);
       if (!scope || !scope.contents.packageJsonContent.exports) {
         return;
       }
@@ -65332,14 +65332,14 @@ ${lanes.join(`
       }
       const trailingParts = parts.slice(nameParts.length);
       const subpath = !length(trailingParts) ? "." : `.${directorySeparator}${trailingParts.join(directorySeparator)}`;
-      if (getAllowJSCompilerOption(state3.compilerOptions) && !pathContainsNodeModules(directory)) {
-        return loadModuleFromExports(scope, extensions, subpath, state3, cache, redirectedReference);
+      if (getAllowJSCompilerOption(state2.compilerOptions) && !pathContainsNodeModules(directory)) {
+        return loadModuleFromExports(scope, extensions, subpath, state2, cache, redirectedReference);
       }
       const priorityExtensions = extensions & (1 | 4);
       const secondaryExtensions = extensions & ~(1 | 4);
-      return loadModuleFromExports(scope, priorityExtensions, subpath, state3, cache, redirectedReference) || loadModuleFromExports(scope, secondaryExtensions, subpath, state3, cache, redirectedReference);
+      return loadModuleFromExports(scope, priorityExtensions, subpath, state2, cache, redirectedReference) || loadModuleFromExports(scope, secondaryExtensions, subpath, state2, cache, redirectedReference);
     }
-    function loadModuleFromExports(scope, extensions, subpath, state3, cache, redirectedReference) {
+    function loadModuleFromExports(scope, extensions, subpath, state2, cache, redirectedReference) {
       if (!scope.contents.packageJsonContent.exports) {
         return;
       }
@@ -65351,54 +65351,54 @@ ${lanes.join(`
           mainExport = scope.contents.packageJsonContent.exports["."];
         }
         if (mainExport) {
-          const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state3, cache, redirectedReference, subpath, scope, false);
+          const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state2, cache, redirectedReference, subpath, scope, false);
           return loadModuleFromTargetExportOrImport(mainExport, "", false, ".");
         }
       } else if (allKeysStartWithDot(scope.contents.packageJsonContent.exports)) {
         if (typeof scope.contents.packageJsonContent.exports !== "object") {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Export_specifier_0_does_not_exist_in_package_json_scope_at_path_1, subpath, scope.packageDirectory);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Export_specifier_0_does_not_exist_in_package_json_scope_at_path_1, subpath, scope.packageDirectory);
           }
           return toSearchResult(undefined);
         }
-        const result = loadModuleFromExportsOrImports(extensions, state3, cache, redirectedReference, subpath, scope.contents.packageJsonContent.exports, scope, false);
+        const result = loadModuleFromExportsOrImports(extensions, state2, cache, redirectedReference, subpath, scope.contents.packageJsonContent.exports, scope, false);
         if (result) {
           return result;
         }
       }
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.Export_specifier_0_does_not_exist_in_package_json_scope_at_path_1, subpath, scope.packageDirectory);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.Export_specifier_0_does_not_exist_in_package_json_scope_at_path_1, subpath, scope.packageDirectory);
       }
       return toSearchResult(undefined);
     }
-    function loadModuleFromImports(extensions, moduleName, directory, state3, cache, redirectedReference) {
+    function loadModuleFromImports(extensions, moduleName, directory, state2, cache, redirectedReference) {
       var _a3, _b;
-      if (moduleName === "#" || startsWith(moduleName, "#/") && !(state3.features & 64)) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Invalid_import_specifier_0_has_no_possible_resolutions, moduleName);
+      if (moduleName === "#" || startsWith(moduleName, "#/") && !(state2.features & 64)) {
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Invalid_import_specifier_0_has_no_possible_resolutions, moduleName);
         }
         return toSearchResult(undefined);
       }
-      const directoryPath = getNormalizedAbsolutePath(directory, (_b = (_a3 = state3.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
-      const scope = getPackageScopeForPath(directoryPath, state3);
+      const directoryPath = getNormalizedAbsolutePath(directory, (_b = (_a3 = state2.host).getCurrentDirectory) == null ? undefined : _b.call(_a3));
+      const scope = getPackageScopeForPath(directoryPath, state2);
       if (!scope) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Directory_0_has_no_containing_package_json_scope_Imports_will_not_resolve, directoryPath);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Directory_0_has_no_containing_package_json_scope_Imports_will_not_resolve, directoryPath);
         }
         return toSearchResult(undefined);
       }
       if (!scope.contents.packageJsonContent.imports) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_scope_0_has_no_imports_defined, scope.packageDirectory);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_scope_0_has_no_imports_defined, scope.packageDirectory);
         }
         return toSearchResult(undefined);
       }
-      const result = loadModuleFromExportsOrImports(extensions, state3, cache, redirectedReference, moduleName, scope.contents.packageJsonContent.imports, scope, true);
+      const result = loadModuleFromExportsOrImports(extensions, state2, cache, redirectedReference, moduleName, scope.contents.packageJsonContent.imports, scope, true);
       if (result) {
         return result;
       }
-      if (state3.traceEnabled) {
-        trace(state3.host, Diagnostics.Import_specifier_0_does_not_exist_in_package_json_scope_at_path_1, moduleName, scope.packageDirectory);
+      if (state2.traceEnabled) {
+        trace(state2.host, Diagnostics.Import_specifier_0_does_not_exist_in_package_json_scope_at_path_1, moduleName, scope.packageDirectory);
       }
       return toSearchResult(undefined);
     }
@@ -65421,15 +65421,15 @@ ${lanes.join(`
         return 1;
       return 0;
     }
-    function loadModuleFromExportsOrImports(extensions, state3, cache, redirectedReference, moduleName, lookupTable, scope, isImports) {
-      const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state3, cache, redirectedReference, moduleName, scope, isImports);
+    function loadModuleFromExportsOrImports(extensions, state2, cache, redirectedReference, moduleName, lookupTable, scope, isImports) {
+      const loadModuleFromTargetExportOrImport = getLoadModuleFromTargetExportOrImport(extensions, state2, cache, redirectedReference, moduleName, scope, isImports);
       if (!endsWith(moduleName, directorySeparator) && !moduleName.includes("*") && hasProperty(lookupTable, moduleName)) {
         const target = lookupTable[moduleName];
         return loadModuleFromTargetExportOrImport(target, "", false, moduleName);
       }
       const expandingKeys = toSorted(filter(getOwnKeys(lookupTable), (k) => hasOneAsterisk(k) || endsWith(k, "/")), comparePatternKeys);
       for (const potentialTarget of expandingKeys) {
-        if (state3.features & 16 && matchesPatternWithTrailer(potentialTarget, moduleName)) {
+        if (state2.features & 16 && matchesPatternWithTrailer(potentialTarget, moduleName)) {
           const target = lookupTable[potentialTarget];
           const starPos = potentialTarget.indexOf("*");
           const subpath = moduleName.substring(potentialTarget.substring(0, starPos).length, moduleName.length - (potentialTarget.length - 1 - starPos));
@@ -65457,25 +65457,25 @@ ${lanes.join(`
       const firstStar = patternKey.indexOf("*");
       return firstStar !== -1 && firstStar === patternKey.lastIndexOf("*");
     }
-    function getLoadModuleFromTargetExportOrImport(extensions, state3, cache, redirectedReference, moduleName, scope, isImports) {
+    function getLoadModuleFromTargetExportOrImport(extensions, state2, cache, redirectedReference, moduleName, scope, isImports) {
       return loadModuleFromTargetExportOrImport;
       function loadModuleFromTargetExportOrImport(target, subpath, pattern, key) {
         var _a3, _b;
         if (typeof target === "string") {
           if (!pattern && subpath.length > 0 && !endsWith(target, "/")) {
-            if (state3.traceEnabled) {
-              trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+            if (state2.traceEnabled) {
+              trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
             }
             return toSearchResult(undefined);
           }
           if (!startsWith(target, "./")) {
             if (isImports && !startsWith(target, "../") && !startsWith(target, "/") && !isRootedDiskPath(target)) {
               const combinedLookup = pattern ? target.replace(/\*/g, subpath) : target + subpath;
-              traceIfEnabled(state3, Diagnostics.Using_0_subpath_1_with_target_2, "imports", key, combinedLookup);
-              traceIfEnabled(state3, Diagnostics.Resolving_module_0_from_1, combinedLookup, scope.packageDirectory + "/");
-              const result = nodeModuleNameResolverWorker(state3.features, combinedLookup, scope.packageDirectory + "/", state3.compilerOptions, state3.host, cache, extensions, false, redirectedReference, state3.conditions);
-              (_a3 = state3.failedLookupLocations) == null || _a3.push(...result.failedLookupLocations ?? emptyArray);
-              (_b = state3.affectingLocations) == null || _b.push(...result.affectingLocations ?? emptyArray);
+              traceIfEnabled(state2, Diagnostics.Using_0_subpath_1_with_target_2, "imports", key, combinedLookup);
+              traceIfEnabled(state2, Diagnostics.Resolving_module_0_from_1, combinedLookup, scope.packageDirectory + "/");
+              const result = nodeModuleNameResolverWorker(state2.features, combinedLookup, scope.packageDirectory + "/", state2.compilerOptions, state2.host, cache, extensions, false, redirectedReference, state2.conditions);
+              (_a3 = state2.failedLookupLocations) == null || _a3.push(...result.failedLookupLocations ?? emptyArray);
+              (_b = state2.affectingLocations) == null || _b.push(...result.affectingLocations ?? emptyArray);
               return toSearchResult(result.resolvedModule ? {
                 path: result.resolvedModule.resolvedFileName,
                 extension: result.resolvedModule.extension,
@@ -65484,62 +65484,62 @@ ${lanes.join(`
                 resolvedUsingTsExtension: result.resolvedModule.resolvedUsingTsExtension
               } : undefined);
             }
-            if (state3.traceEnabled) {
-              trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+            if (state2.traceEnabled) {
+              trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
             }
             return toSearchResult(undefined);
           }
           const parts = pathIsRelative(target) ? getPathComponents(target).slice(1) : getPathComponents(target);
           const partsAfterFirst = parts.slice(1);
           if (partsAfterFirst.includes("..") || partsAfterFirst.includes(".") || partsAfterFirst.includes("node_modules")) {
-            if (state3.traceEnabled) {
-              trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+            if (state2.traceEnabled) {
+              trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
             }
             return toSearchResult(undefined);
           }
           const resolvedTarget = combinePaths(scope.packageDirectory, target);
           const subpathParts = getPathComponents(subpath);
           if (subpathParts.includes("..") || subpathParts.includes(".") || subpathParts.includes("node_modules")) {
-            if (state3.traceEnabled) {
-              trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+            if (state2.traceEnabled) {
+              trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
             }
             return toSearchResult(undefined);
           }
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Using_0_subpath_1_with_target_2, isImports ? "imports" : "exports", key, pattern ? target.replace(/\*/g, subpath) : target + subpath);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Using_0_subpath_1_with_target_2, isImports ? "imports" : "exports", key, pattern ? target.replace(/\*/g, subpath) : target + subpath);
           }
           const finalPath = toAbsolutePath(pattern ? resolvedTarget.replace(/\*/g, subpath) : resolvedTarget + subpath);
           const inputLink = tryLoadInputFileForPath(finalPath, subpath, combinePaths(scope.packageDirectory, "package.json"), isImports);
           if (inputLink)
             return inputLink;
-          return toSearchResult(withPackageId(scope, loadFileNameFromPackageJsonField(extensions, finalPath, target, false, state3), state3));
+          return toSearchResult(withPackageId(scope, loadFileNameFromPackageJsonField(extensions, finalPath, target, false, state2), state2));
         } else if (typeof target === "object" && target !== null) {
           if (!Array.isArray(target)) {
-            traceIfEnabled(state3, Diagnostics.Entering_conditional_exports);
+            traceIfEnabled(state2, Diagnostics.Entering_conditional_exports);
             for (const condition of getOwnKeys(target)) {
-              if (condition === "default" || state3.conditions.includes(condition) || isApplicableVersionedTypesKey(state3.conditions, condition)) {
-                traceIfEnabled(state3, Diagnostics.Matched_0_condition_1, isImports ? "imports" : "exports", condition);
+              if (condition === "default" || state2.conditions.includes(condition) || isApplicableVersionedTypesKey(state2.conditions, condition)) {
+                traceIfEnabled(state2, Diagnostics.Matched_0_condition_1, isImports ? "imports" : "exports", condition);
                 const subTarget = target[condition];
                 const result = loadModuleFromTargetExportOrImport(subTarget, subpath, pattern, key);
                 if (result) {
                   if (result.value) {
-                    traceIfEnabled(state3, Diagnostics.Resolved_under_condition_0, condition);
+                    traceIfEnabled(state2, Diagnostics.Resolved_under_condition_0, condition);
                   }
-                  traceIfEnabled(state3, Diagnostics.Exiting_conditional_exports);
+                  traceIfEnabled(state2, Diagnostics.Exiting_conditional_exports);
                   return result;
                 } else {
-                  traceIfEnabled(state3, Diagnostics.Failed_to_resolve_under_condition_0, condition);
+                  traceIfEnabled(state2, Diagnostics.Failed_to_resolve_under_condition_0, condition);
                 }
               } else {
-                traceIfEnabled(state3, Diagnostics.Saw_non_matching_condition_0, condition);
+                traceIfEnabled(state2, Diagnostics.Saw_non_matching_condition_0, condition);
               }
             }
-            traceIfEnabled(state3, Diagnostics.Exiting_conditional_exports);
+            traceIfEnabled(state2, Diagnostics.Exiting_conditional_exports);
             return;
           } else {
             if (!length(target)) {
-              if (state3.traceEnabled) {
-                trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+              if (state2.traceEnabled) {
+                trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
               }
               return toSearchResult(undefined);
             }
@@ -65551,35 +65551,35 @@ ${lanes.join(`
             }
           }
         } else if (target === null) {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.package_json_scope_0_explicitly_maps_specifier_1_to_null, scope.packageDirectory, moduleName);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.package_json_scope_0_explicitly_maps_specifier_1_to_null, scope.packageDirectory, moduleName);
           }
           return { value: undefined };
         }
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_scope_0_has_invalid_type_for_target_of_specifier_1, scope.packageDirectory, moduleName);
         }
         return toSearchResult(undefined);
         function toAbsolutePath(path13) {
           var _a22, _b2;
           if (path13 === undefined)
             return path13;
-          return getNormalizedAbsolutePath(path13, (_b2 = (_a22 = state3.host).getCurrentDirectory) == null ? undefined : _b2.call(_a22));
+          return getNormalizedAbsolutePath(path13, (_b2 = (_a22 = state2.host).getCurrentDirectory) == null ? undefined : _b2.call(_a22));
         }
         function combineDirectoryPath(root, dir) {
           return ensureTrailingDirectorySeparator(combinePaths(root, dir));
         }
         function tryLoadInputFileForPath(finalPath, entry, packagePath, isImports2) {
           var _a22, _b2, _c, _d;
-          if (!state3.isConfigLookup && (state3.compilerOptions.declarationDir || state3.compilerOptions.outDir) && !finalPath.includes("/node_modules/") && (state3.compilerOptions.configFile ? containsPath(scope.packageDirectory, toAbsolutePath(state3.compilerOptions.configFile.fileName), !useCaseSensitiveFileNames(state3)) : true)) {
-            const getCanonicalFileName = hostGetCanonicalFileName({ useCaseSensitiveFileNames: () => useCaseSensitiveFileNames(state3) });
+          if (!state2.isConfigLookup && (state2.compilerOptions.declarationDir || state2.compilerOptions.outDir) && !finalPath.includes("/node_modules/") && (state2.compilerOptions.configFile ? containsPath(scope.packageDirectory, toAbsolutePath(state2.compilerOptions.configFile.fileName), !useCaseSensitiveFileNames(state2)) : true)) {
+            const getCanonicalFileName = hostGetCanonicalFileName({ useCaseSensitiveFileNames: () => useCaseSensitiveFileNames(state2) });
             const commonSourceDirGuesses = [];
-            if (state3.compilerOptions.rootDir || state3.compilerOptions.configFilePath) {
-              const commonDir = toAbsolutePath(getCommonSourceDirectory(state3.compilerOptions, () => [], ((_b2 = (_a22 = state3.host).getCurrentDirectory) == null ? undefined : _b2.call(_a22)) || "", getCanonicalFileName));
+            if (state2.compilerOptions.rootDir || state2.compilerOptions.configFilePath) {
+              const commonDir = toAbsolutePath(getCommonSourceDirectory(state2.compilerOptions, () => [], ((_b2 = (_a22 = state2.host).getCurrentDirectory) == null ? undefined : _b2.call(_a22)) || "", getCanonicalFileName));
               commonSourceDirGuesses.push(commonDir);
-            } else if (state3.requestContainingDirectory) {
-              const requestingFile = toAbsolutePath(combinePaths(state3.requestContainingDirectory, "index.ts"));
-              const commonDir = toAbsolutePath(getCommonSourceDirectory(state3.compilerOptions, () => [requestingFile, toAbsolutePath(packagePath)], ((_d = (_c = state3.host).getCurrentDirectory) == null ? undefined : _d.call(_c)) || "", getCanonicalFileName));
+            } else if (state2.requestContainingDirectory) {
+              const requestingFile = toAbsolutePath(combinePaths(state2.requestContainingDirectory, "index.ts"));
+              const commonDir = toAbsolutePath(getCommonSourceDirectory(state2.compilerOptions, () => [requestingFile, toAbsolutePath(packagePath)], ((_d = (_c = state2.host).getCurrentDirectory) == null ? undefined : _d.call(_c)) || "", getCanonicalFileName));
               commonSourceDirGuesses.push(commonDir);
               let fragment = ensureTrailingDirectorySeparator(commonDir);
               while (fragment && fragment.length > 1) {
@@ -65591,12 +65591,12 @@ ${lanes.join(`
               }
             }
             if (commonSourceDirGuesses.length > 1) {
-              state3.reportDiagnostic(createCompilerDiagnostic(isImports2 ? Diagnostics.The_project_root_is_ambiguous_but_is_required_to_resolve_import_map_entry_0_in_file_1_Supply_the_rootDir_compiler_option_to_disambiguate : Diagnostics.The_project_root_is_ambiguous_but_is_required_to_resolve_export_map_entry_0_in_file_1_Supply_the_rootDir_compiler_option_to_disambiguate, entry === "" ? "." : entry, packagePath));
+              state2.reportDiagnostic(createCompilerDiagnostic(isImports2 ? Diagnostics.The_project_root_is_ambiguous_but_is_required_to_resolve_import_map_entry_0_in_file_1_Supply_the_rootDir_compiler_option_to_disambiguate : Diagnostics.The_project_root_is_ambiguous_but_is_required_to_resolve_export_map_entry_0_in_file_1_Supply_the_rootDir_compiler_option_to_disambiguate, entry === "" ? "." : entry, packagePath));
             }
             for (const commonSourceDirGuess of commonSourceDirGuesses) {
               const candidateDirectories = getOutputDirectoriesForBaseDirectory(commonSourceDirGuess);
               for (const candidateDir of candidateDirectories) {
-                if (containsPath(candidateDir, finalPath, !useCaseSensitiveFileNames(state3))) {
+                if (containsPath(candidateDir, finalPath, !useCaseSensitiveFileNames(state2))) {
                   const pathFragment = finalPath.slice(candidateDir.length + 1);
                   const possibleInputBase = combinePaths(commonSourceDirGuess, pathFragment);
                   const jsAndDtsExtensions = [".mjs", ".cjs", ".js", ".json", ".d.mts", ".d.cts", ".d.ts"];
@@ -65606,9 +65606,9 @@ ${lanes.join(`
                       for (const possibleExt of inputExts) {
                         if (!extensionIsOk(extensions, possibleExt))
                           continue;
-                        const possibleInputWithInputExtension = changeAnyExtension(possibleInputBase, possibleExt, ext, !useCaseSensitiveFileNames(state3));
-                        if (state3.host.fileExists(possibleInputWithInputExtension)) {
-                          return toSearchResult(withPackageId(scope, loadFileNameFromPackageJsonField(extensions, possibleInputWithInputExtension, undefined, false, state3), state3));
+                        const possibleInputWithInputExtension = changeAnyExtension(possibleInputBase, possibleExt, ext, !useCaseSensitiveFileNames(state2));
+                        if (state2.host.fileExists(possibleInputWithInputExtension)) {
+                          return toSearchResult(withPackageId(scope, loadFileNameFromPackageJsonField(extensions, possibleInputWithInputExtension, undefined, false, state2), state2));
                         }
                       }
                     }
@@ -65620,13 +65620,13 @@ ${lanes.join(`
           return;
           function getOutputDirectoriesForBaseDirectory(commonSourceDirGuess) {
             var _a32, _b3;
-            const currentDir = state3.compilerOptions.configFile ? ((_b3 = (_a32 = state3.host).getCurrentDirectory) == null ? undefined : _b3.call(_a32)) || "" : commonSourceDirGuess;
+            const currentDir = state2.compilerOptions.configFile ? ((_b3 = (_a32 = state2.host).getCurrentDirectory) == null ? undefined : _b3.call(_a32)) || "" : commonSourceDirGuess;
             const candidateDirectories = [];
-            if (state3.compilerOptions.declarationDir) {
-              candidateDirectories.push(toAbsolutePath(combineDirectoryPath(currentDir, state3.compilerOptions.declarationDir)));
+            if (state2.compilerOptions.declarationDir) {
+              candidateDirectories.push(toAbsolutePath(combineDirectoryPath(currentDir, state2.compilerOptions.declarationDir)));
             }
-            if (state3.compilerOptions.outDir && state3.compilerOptions.outDir !== state3.compilerOptions.declarationDir) {
-              candidateDirectories.push(toAbsolutePath(combineDirectoryPath(currentDir, state3.compilerOptions.outDir)));
+            if (state2.compilerOptions.outDir && state2.compilerOptions.outDir !== state2.compilerOptions.declarationDir) {
+              candidateDirectories.push(toAbsolutePath(combineDirectoryPath(currentDir, state2.compilerOptions.outDir)));
             }
             return candidateDirectories;
           }
@@ -65643,34 +65643,34 @@ ${lanes.join(`
         return false;
       return range.test(version3);
     }
-    function loadModuleFromNearestNodeModulesDirectory(extensions, moduleName, directory, state3, cache, redirectedReference) {
-      return loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state3, false, cache, redirectedReference);
+    function loadModuleFromNearestNodeModulesDirectory(extensions, moduleName, directory, state2, cache, redirectedReference) {
+      return loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state2, false, cache, redirectedReference);
     }
-    function loadModuleFromNearestNodeModulesDirectoryTypesScope(moduleName, directory, state3) {
-      return loadModuleFromNearestNodeModulesDirectoryWorker(4, moduleName, directory, state3, true, undefined, undefined);
+    function loadModuleFromNearestNodeModulesDirectoryTypesScope(moduleName, directory, state2) {
+      return loadModuleFromNearestNodeModulesDirectoryWorker(4, moduleName, directory, state2, true, undefined, undefined);
     }
-    function loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state3, typesScopeOnly, cache, redirectedReference) {
-      const mode = state3.features === 0 ? undefined : state3.features & 32 || state3.conditions.includes("import") ? 99 : 1;
+    function loadModuleFromNearestNodeModulesDirectoryWorker(extensions, moduleName, directory, state2, typesScopeOnly, cache, redirectedReference) {
+      const mode = state2.features === 0 ? undefined : state2.features & 32 || state2.conditions.includes("import") ? 99 : 1;
       const priorityExtensions = extensions & (1 | 4);
       const secondaryExtensions = extensions & ~(1 | 4);
       if (priorityExtensions) {
-        traceIfEnabled(state3, Diagnostics.Searching_all_ancestor_node_modules_directories_for_preferred_extensions_Colon_0, formatExtensions(priorityExtensions));
+        traceIfEnabled(state2, Diagnostics.Searching_all_ancestor_node_modules_directories_for_preferred_extensions_Colon_0, formatExtensions(priorityExtensions));
         const result = lookup(priorityExtensions);
         if (result)
           return result;
       }
       if (secondaryExtensions && !typesScopeOnly) {
-        traceIfEnabled(state3, Diagnostics.Searching_all_ancestor_node_modules_directories_for_fallback_extensions_Colon_0, formatExtensions(secondaryExtensions));
+        traceIfEnabled(state2, Diagnostics.Searching_all_ancestor_node_modules_directories_for_fallback_extensions_Colon_0, formatExtensions(secondaryExtensions));
         return lookup(secondaryExtensions);
       }
       function lookup(extensions2) {
-        return forEachAncestorDirectoryStoppingAtGlobalCache(state3.host, normalizeSlashes(directory), (ancestorDirectory) => {
+        return forEachAncestorDirectoryStoppingAtGlobalCache(state2.host, normalizeSlashes(directory), (ancestorDirectory) => {
           if (getBaseFileName(ancestorDirectory) !== "node_modules") {
-            const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache, moduleName, mode, ancestorDirectory, redirectedReference, state3);
+            const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache, moduleName, mode, ancestorDirectory, redirectedReference, state2);
             if (resolutionFromCache) {
               return resolutionFromCache;
             }
-            return toSearchResult(loadModuleFromImmediateNodeModulesDirectory(extensions2, moduleName, ancestorDirectory, state3, typesScopeOnly, cache, redirectedReference));
+            return toSearchResult(loadModuleFromImmediateNodeModulesDirectory(extensions2, moduleName, ancestorDirectory, state2, typesScopeOnly, cache, redirectedReference));
           }
         });
       }
@@ -65686,14 +65686,14 @@ ${lanes.join(`
           return false;
       }) || undefined;
     }
-    function loadModuleFromImmediateNodeModulesDirectory(extensions, moduleName, directory, state3, typesScopeOnly, cache, redirectedReference) {
+    function loadModuleFromImmediateNodeModulesDirectory(extensions, moduleName, directory, state2, typesScopeOnly, cache, redirectedReference) {
       const nodeModulesFolder = combinePaths(directory, "node_modules");
-      const nodeModulesFolderExists = directoryProbablyExists(nodeModulesFolder, state3.host);
-      if (!nodeModulesFolderExists && state3.traceEnabled) {
-        trace(state3.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, nodeModulesFolder);
+      const nodeModulesFolderExists = directoryProbablyExists(nodeModulesFolder, state2.host);
+      if (!nodeModulesFolderExists && state2.traceEnabled) {
+        trace(state2.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, nodeModulesFolder);
       }
       if (!typesScopeOnly) {
-        const packageResult = loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesFolder, nodeModulesFolderExists, state3, cache, redirectedReference);
+        const packageResult = loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesFolder, nodeModulesFolderExists, state2, cache, redirectedReference);
         if (packageResult) {
           return packageResult;
         }
@@ -65701,29 +65701,29 @@ ${lanes.join(`
       if (extensions & 4) {
         const nodeModulesAtTypes2 = combinePaths(nodeModulesFolder, "@types");
         let nodeModulesAtTypesExists = nodeModulesFolderExists;
-        if (nodeModulesFolderExists && !directoryProbablyExists(nodeModulesAtTypes2, state3.host)) {
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, nodeModulesAtTypes2);
+        if (nodeModulesFolderExists && !directoryProbablyExists(nodeModulesAtTypes2, state2.host)) {
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, nodeModulesAtTypes2);
           }
           nodeModulesAtTypesExists = false;
         }
-        return loadModuleFromSpecificNodeModulesDirectory(4, mangleScopedPackageNameWithTrace(moduleName, state3), nodeModulesAtTypes2, nodeModulesAtTypesExists, state3, cache, redirectedReference);
+        return loadModuleFromSpecificNodeModulesDirectory(4, mangleScopedPackageNameWithTrace(moduleName, state2), nodeModulesAtTypes2, nodeModulesAtTypesExists, state2, cache, redirectedReference);
       }
     }
-    function loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesDirectory, nodeModulesDirectoryExists, state3, cache, redirectedReference) {
+    function loadModuleFromSpecificNodeModulesDirectory(extensions, moduleName, nodeModulesDirectory, nodeModulesDirectoryExists, state2, cache, redirectedReference) {
       var _a3, _b;
       const candidate = normalizePath(combinePaths(nodeModulesDirectory, moduleName));
       const { packageName, rest } = parsePackageName(moduleName);
       const packageDirectory = combinePaths(nodeModulesDirectory, packageName);
       let rootPackageInfo;
-      let packageInfo = getPackageJsonInfo(candidate, !nodeModulesDirectoryExists, state3);
-      if (rest !== "" && packageInfo && (!(state3.features & 8) || !hasProperty(((_a3 = rootPackageInfo = getPackageJsonInfo(packageDirectory, !nodeModulesDirectoryExists, state3)) == null ? undefined : _a3.contents.packageJsonContent) ?? emptyArray, "exports"))) {
-        const fromFile = loadModuleFromFile(extensions, candidate, !nodeModulesDirectoryExists, state3);
+      let packageInfo = getPackageJsonInfo(candidate, !nodeModulesDirectoryExists, state2);
+      if (rest !== "" && packageInfo && (!(state2.features & 8) || !hasProperty(((_a3 = rootPackageInfo = getPackageJsonInfo(packageDirectory, !nodeModulesDirectoryExists, state2)) == null ? undefined : _a3.contents.packageJsonContent) ?? emptyArray, "exports"))) {
+        const fromFile = loadModuleFromFile(extensions, candidate, !nodeModulesDirectoryExists, state2);
         if (fromFile) {
           return noPackageId(fromFile);
         }
-        const fromDirectory = loadNodeModuleFromDirectoryWorker(extensions, candidate, !nodeModulesDirectoryExists, state3, packageInfo);
-        return withPackageId(packageInfo, fromDirectory, state3);
+        const fromDirectory = loadNodeModuleFromDirectoryWorker(extensions, candidate, !nodeModulesDirectoryExists, state2, packageInfo);
+        return withPackageId(packageInfo, fromDirectory, state2);
       }
       const loader = (extensions2, candidate2, onlyRecordFailures, state22) => {
         let pathAndExtension = (rest || !(state22.features & 32)) && loadModuleFromFile(extensions2, candidate2, onlyRecordFailures, state22) || loadNodeModuleFromDirectoryWorker(extensions2, candidate2, onlyRecordFailures, state22, packageInfo);
@@ -65733,59 +65733,59 @@ ${lanes.join(`
         return withPackageId(packageInfo, pathAndExtension, state22);
       };
       if (rest !== "") {
-        packageInfo = rootPackageInfo ?? getPackageJsonInfo(packageDirectory, !nodeModulesDirectoryExists, state3);
+        packageInfo = rootPackageInfo ?? getPackageJsonInfo(packageDirectory, !nodeModulesDirectoryExists, state2);
       }
       if (packageInfo) {
-        state3.resolvedPackageDirectory = true;
+        state2.resolvedPackageDirectory = true;
       }
-      if (packageInfo && packageInfo.contents.packageJsonContent.exports && state3.features & 8) {
-        return (_b = loadModuleFromExports(packageInfo, extensions, combinePaths(".", rest), state3, cache, redirectedReference)) == null ? undefined : _b.value;
+      if (packageInfo && packageInfo.contents.packageJsonContent.exports && state2.features & 8) {
+        return (_b = loadModuleFromExports(packageInfo, extensions, combinePaths(".", rest), state2, cache, redirectedReference)) == null ? undefined : _b.value;
       }
-      const versionPaths = rest !== "" && packageInfo ? getVersionPathsOfPackageJsonInfo(packageInfo, state3) : undefined;
+      const versionPaths = rest !== "" && packageInfo ? getVersionPathsOfPackageJsonInfo(packageInfo, state2) : undefined;
       if (versionPaths) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2, versionPaths.version, version3, rest);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.package_json_has_a_typesVersions_entry_0_that_matches_compiler_version_1_looking_for_a_pattern_to_match_module_name_2, versionPaths.version, version3, rest);
         }
-        const packageDirectoryExists = nodeModulesDirectoryExists && directoryProbablyExists(packageDirectory, state3.host);
+        const packageDirectoryExists = nodeModulesDirectoryExists && directoryProbablyExists(packageDirectory, state2.host);
         const pathPatterns = tryParsePatterns(versionPaths.paths);
-        const fromPaths = tryLoadModuleUsingPaths(extensions, rest, packageDirectory, versionPaths.paths, pathPatterns, loader, !packageDirectoryExists, state3);
+        const fromPaths = tryLoadModuleUsingPaths(extensions, rest, packageDirectory, versionPaths.paths, pathPatterns, loader, !packageDirectoryExists, state2);
         if (fromPaths) {
           return fromPaths.value;
         }
       }
-      return loader(extensions, candidate, !nodeModulesDirectoryExists, state3);
+      return loader(extensions, candidate, !nodeModulesDirectoryExists, state2);
     }
-    function tryLoadModuleUsingPaths(extensions, moduleName, baseDirectory, paths, pathPatterns, loader, onlyRecordFailures, state3) {
+    function tryLoadModuleUsingPaths(extensions, moduleName, baseDirectory, paths, pathPatterns, loader, onlyRecordFailures, state2) {
       const matchedPattern = matchPatternOrExact(pathPatterns, moduleName);
       if (matchedPattern) {
         const matchedStar = isString(matchedPattern) ? undefined : matchedText(matchedPattern, moduleName);
         const matchedPatternText = isString(matchedPattern) ? matchedPattern : patternText(matchedPattern);
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Module_name_0_matched_pattern_1, moduleName, matchedPatternText);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Module_name_0_matched_pattern_1, moduleName, matchedPatternText);
         }
         const resolved = forEach(paths[matchedPatternText], (subst) => {
           const path13 = matchedStar ? replaceFirstStar(subst, matchedStar) : subst;
           const candidate = normalizePath(combinePaths(baseDirectory, path13));
-          if (state3.traceEnabled) {
-            trace(state3.host, Diagnostics.Trying_substitution_0_candidate_module_location_Colon_1, subst, path13);
+          if (state2.traceEnabled) {
+            trace(state2.host, Diagnostics.Trying_substitution_0_candidate_module_location_Colon_1, subst, path13);
           }
           const extension = tryGetExtensionFromPath2(subst);
           if (extension !== undefined) {
-            const path22 = tryFile(candidate, onlyRecordFailures, state3);
+            const path22 = tryFile(candidate, onlyRecordFailures, state2);
             if (path22 !== undefined) {
               return noPackageId({ path: path22, ext: extension, resolvedUsingTsExtension: undefined });
             }
           }
-          return loader(extensions, candidate, onlyRecordFailures || !directoryProbablyExists(getDirectoryPath(candidate), state3.host), state3);
+          return loader(extensions, candidate, onlyRecordFailures || !directoryProbablyExists(getDirectoryPath(candidate), state2.host), state2);
         });
         return { value: resolved };
       }
     }
     var mangledScopedPackageSeparator = "__";
-    function mangleScopedPackageNameWithTrace(packageName, state3) {
+    function mangleScopedPackageNameWithTrace(packageName, state2) {
       const mangled = mangleScopedPackageName(packageName);
-      if (state3.traceEnabled && mangled !== packageName) {
-        trace(state3.host, Diagnostics.Scoped_package_detected_looking_in_0, mangled);
+      if (state2.traceEnabled && mangled !== packageName) {
+        trace(state2.host, Diagnostics.Scoped_package_detected_looking_in_0, mangled);
       }
       return mangled;
     }
@@ -65811,13 +65811,13 @@ ${lanes.join(`
     function unmangleScopedPackageName(typesPackageName) {
       return typesPackageName.includes(mangledScopedPackageSeparator) ? "@" + typesPackageName.replace(mangledScopedPackageSeparator, directorySeparator) : typesPackageName;
     }
-    function tryFindNonRelativeModuleNameInCache(cache, moduleName, mode, containingDirectory, redirectedReference, state3) {
+    function tryFindNonRelativeModuleNameInCache(cache, moduleName, mode, containingDirectory, redirectedReference, state2) {
       const result = cache && cache.getFromNonRelativeNameCache(moduleName, mode, containingDirectory, redirectedReference);
       if (result) {
-        if (state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Resolution_for_module_0_was_found_in_cache_from_location_1, moduleName, containingDirectory);
+        if (state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Resolution_for_module_0_was_found_in_cache_from_location_1, moduleName, containingDirectory);
         }
-        state3.resultFromCache = result;
+        state2.resultFromCache = result;
         return {
           value: result.resolvedModule && {
             path: result.resolvedModule.resolvedFileName,
@@ -65835,7 +65835,7 @@ ${lanes.join(`
       const affectingLocations = [];
       const containingDirectory = getDirectoryPath(containingFile);
       const diagnostics = [];
-      const state3 = {
+      const state2 = {
         compilerOptions,
         host,
         traceEnabled,
@@ -65851,51 +65851,51 @@ ${lanes.join(`
         resolvedPackageDirectory: false
       };
       const resolved = tryResolve(1 | 4) || tryResolve(2 | (compilerOptions.resolveJsonModule ? 8 : 0));
-      return createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved && resolved.value, (resolved == null ? undefined : resolved.value) && pathContainsNodeModules(resolved.value.path), failedLookupLocations, affectingLocations, diagnostics, state3, cache);
+      return createResolvedModuleWithFailedLookupLocationsHandlingSymlink(moduleName, resolved && resolved.value, (resolved == null ? undefined : resolved.value) && pathContainsNodeModules(resolved.value.path), failedLookupLocations, affectingLocations, diagnostics, state2, cache);
       function tryResolve(extensions) {
-        const resolvedUsingSettings = tryLoadModuleUsingOptionalResolutionSettings(extensions, moduleName, containingDirectory, loadModuleFromFileNoPackageId, state3);
+        const resolvedUsingSettings = tryLoadModuleUsingOptionalResolutionSettings(extensions, moduleName, containingDirectory, loadModuleFromFileNoPackageId, state2);
         if (resolvedUsingSettings) {
           return { value: resolvedUsingSettings };
         }
         if (!isExternalModuleNameRelative(moduleName)) {
-          const resolved2 = forEachAncestorDirectoryStoppingAtGlobalCache(state3.host, containingDirectory, (directory) => {
-            const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache, moduleName, undefined, directory, redirectedReference, state3);
+          const resolved2 = forEachAncestorDirectoryStoppingAtGlobalCache(state2.host, containingDirectory, (directory) => {
+            const resolutionFromCache = tryFindNonRelativeModuleNameInCache(cache, moduleName, undefined, directory, redirectedReference, state2);
             if (resolutionFromCache) {
               return resolutionFromCache;
             }
             const searchName = normalizePath(combinePaths(directory, moduleName));
-            return toSearchResult(loadModuleFromFileNoPackageId(extensions, searchName, false, state3));
+            return toSearchResult(loadModuleFromFileNoPackageId(extensions, searchName, false, state2));
           });
           if (resolved2)
             return resolved2;
           if (extensions & (1 | 4)) {
-            let resolved3 = loadModuleFromNearestNodeModulesDirectoryTypesScope(moduleName, containingDirectory, state3);
+            let resolved3 = loadModuleFromNearestNodeModulesDirectoryTypesScope(moduleName, containingDirectory, state2);
             if (extensions & 4)
-              resolved3 ?? (resolved3 = resolveFromTypeRoot(moduleName, state3));
+              resolved3 ?? (resolved3 = resolveFromTypeRoot(moduleName, state2));
             return resolved3;
           }
         } else {
           const candidate = normalizePath(combinePaths(containingDirectory, moduleName));
-          return toSearchResult(loadModuleFromFileNoPackageId(extensions, candidate, false, state3));
+          return toSearchResult(loadModuleFromFileNoPackageId(extensions, candidate, false, state2));
         }
       }
     }
-    function resolveFromTypeRoot(moduleName, state3) {
-      if (!state3.compilerOptions.typeRoots)
+    function resolveFromTypeRoot(moduleName, state2) {
+      if (!state2.compilerOptions.typeRoots)
         return;
-      for (const typeRoot of state3.compilerOptions.typeRoots) {
-        const candidate = getCandidateFromTypeRoot(typeRoot, moduleName, state3);
-        const directoryExists = directoryProbablyExists(typeRoot, state3.host);
-        if (!directoryExists && state3.traceEnabled) {
-          trace(state3.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, typeRoot);
+      for (const typeRoot of state2.compilerOptions.typeRoots) {
+        const candidate = getCandidateFromTypeRoot(typeRoot, moduleName, state2);
+        const directoryExists = directoryProbablyExists(typeRoot, state2.host);
+        if (!directoryExists && state2.traceEnabled) {
+          trace(state2.host, Diagnostics.Directory_0_does_not_exist_skipping_all_lookups_in_it, typeRoot);
         }
-        const resolvedFromFile = loadModuleFromFile(4, candidate, !directoryExists, state3);
+        const resolvedFromFile = loadModuleFromFile(4, candidate, !directoryExists, state2);
         if (resolvedFromFile) {
           const packageDirectory = parseNodeModuleFromPath(resolvedFromFile.path);
-          const packageInfo = packageDirectory ? getPackageJsonInfo(packageDirectory, false, state3) : undefined;
-          return toSearchResult(withPackageId(packageInfo, resolvedFromFile, state3));
+          const packageInfo = packageDirectory ? getPackageJsonInfo(packageDirectory, false, state2) : undefined;
+          return toSearchResult(withPackageId(packageInfo, resolvedFromFile, state2));
         }
-        const resolved = loadNodeModuleFromDirectory(4, candidate, !directoryExists, state3);
+        const resolved = loadNodeModuleFromDirectory(4, candidate, !directoryExists, state2);
         if (resolved)
           return toSearchResult(resolved);
       }
@@ -65911,7 +65911,7 @@ ${lanes.join(`
       const failedLookupLocations = [];
       const affectingLocations = [];
       const diagnostics = [];
-      const state3 = {
+      const state2 = {
         compilerOptions,
         host,
         traceEnabled,
@@ -65926,19 +65926,19 @@ ${lanes.join(`
         candidateIsFromPackageJsonField: false,
         resolvedPackageDirectory: false
       };
-      const resolved = loadModuleFromImmediateNodeModulesDirectory(4, moduleName, globalCache, state3, false, undefined, undefined);
-      return createResolvedModuleWithFailedLookupLocations(resolved, true, failedLookupLocations, affectingLocations, diagnostics, state3.resultFromCache, undefined);
+      const resolved = loadModuleFromImmediateNodeModulesDirectory(4, moduleName, globalCache, state2, false, undefined, undefined);
+      return createResolvedModuleWithFailedLookupLocations(resolved, true, failedLookupLocations, affectingLocations, diagnostics, state2.resultFromCache, undefined);
     }
     function toSearchResult(value) {
       return value !== undefined ? { value } : undefined;
     }
-    function traceIfEnabled(state3, diagnostic, ...args) {
-      if (state3.traceEnabled) {
-        trace(state3.host, diagnostic, ...args);
+    function traceIfEnabled(state2, diagnostic, ...args) {
+      if (state2.traceEnabled) {
+        trace(state2.host, diagnostic, ...args);
       }
     }
-    function useCaseSensitiveFileNames(state3) {
-      return !state3.host.useCaseSensitiveFileNames ? true : typeof state3.host.useCaseSensitiveFileNames === "boolean" ? state3.host.useCaseSensitiveFileNames : state3.host.useCaseSensitiveFileNames();
+    function useCaseSensitiveFileNames(state2) {
+      return !state2.host.useCaseSensitiveFileNames ? true : typeof state2.host.useCaseSensitiveFileNames === "boolean" ? state2.host.useCaseSensitiveFileNames : state2.host.useCaseSensitiveFileNames();
     }
     var ModuleInstanceState = /* @__PURE__ */ ((ModuleInstanceState2) => {
       ModuleInstanceState2[ModuleInstanceState2["NonInstantiated"] = 0] = "NonInstantiated";
@@ -65982,37 +65982,37 @@ ${lanes.join(`
         case 279:
           const exportDeclaration = node;
           if (!exportDeclaration.moduleSpecifier && exportDeclaration.exportClause && exportDeclaration.exportClause.kind === 280) {
-            let state3 = 0;
+            let state2 = 0;
             for (const specifier of exportDeclaration.exportClause.elements) {
               const specifierState = getModuleInstanceStateForAliasTarget(specifier, visited);
-              if (specifierState > state3) {
-                state3 = specifierState;
+              if (specifierState > state2) {
+                state2 = specifierState;
               }
-              if (state3 === 1) {
-                return state3;
+              if (state2 === 1) {
+                return state2;
               }
             }
-            return state3;
+            return state2;
           }
           break;
         case 269: {
-          let state3 = 0;
+          let state2 = 0;
           forEachChild(node, (n) => {
             const childState = getModuleInstanceStateCached(n, visited);
             switch (childState) {
               case 0:
                 return;
               case 2:
-                state3 = 2;
+                state2 = 2;
                 return;
               case 1:
-                state3 = 1;
+                state2 = 1;
                 return true;
               default:
                 Debug.assertNever(childState);
             }
           });
-          return state3;
+          return state2;
         }
         case 268:
           return getModuleInstanceState(node, visited);
@@ -66039,9 +66039,9 @@ ${lanes.join(`
                 setParent(statement, p);
                 setParentRecursive(statement, false);
               }
-              const state3 = getModuleInstanceStateCached(statement, visited);
-              if (found === undefined || state3 > found) {
-                found = state3;
+              const state2 = getModuleInstanceStateCached(statement, visited);
+              if (found === undefined || state2 > found) {
+                found = state2;
               }
               if (found === 1) {
                 return found;
@@ -67163,19 +67163,19 @@ ${lanes.join(`
       }
       function createBindBinaryExpressionFlow() {
         return createBinaryExpressionTrampoline(onEnter, onLeft, onOperator, onRight, onExit, undefined);
-        function onEnter(node, state3) {
-          if (state3) {
-            state3.stackIndex++;
+        function onEnter(node, state2) {
+          if (state2) {
+            state2.stackIndex++;
             setParent(node, parent2);
             const saveInStrictMode = inStrictMode;
             bindWorker(node);
             const saveParent = parent2;
             parent2 = node;
-            state3.skip = false;
-            state3.inStrictModeStack[state3.stackIndex] = saveInStrictMode;
-            state3.parentStack[state3.stackIndex] = saveParent;
+            state2.skip = false;
+            state2.inStrictModeStack[state2.stackIndex] = saveInStrictMode;
+            state2.parentStack[state2.stackIndex] = saveParent;
           } else {
-            state3 = {
+            state2 = {
               stackIndex: 0,
               skip: false,
               inStrictModeStack: [undefined],
@@ -67195,12 +67195,12 @@ ${lanes.join(`
             } else {
               bindLogicalLikeExpression(node, currentTrueTarget, currentFalseTarget);
             }
-            state3.skip = true;
+            state2.skip = true;
           }
-          return state3;
+          return state2;
         }
-        function onLeft(left, state3, node) {
-          if (!state3.skip) {
+        function onLeft(left, state2, node) {
+          if (!state2.skip) {
             const maybeBound = maybeBind2(left);
             if (node.operatorToken.kind === 28) {
               maybeBindExpressionFlowIfCall(left);
@@ -67208,13 +67208,13 @@ ${lanes.join(`
             return maybeBound;
           }
         }
-        function onOperator(operatorToken, state3, _node) {
-          if (!state3.skip) {
+        function onOperator(operatorToken, state2, _node) {
+          if (!state2.skip) {
             bind(operatorToken);
           }
         }
-        function onRight(right, state3, node) {
-          if (!state3.skip) {
+        function onRight(right, state2, node) {
+          if (!state2.skip) {
             const maybeBound = maybeBind2(right);
             if (node.operatorToken.kind === 28) {
               maybeBindExpressionFlowIfCall(right);
@@ -67222,8 +67222,8 @@ ${lanes.join(`
             return maybeBound;
           }
         }
-        function onExit(node, state3) {
-          if (!state3.skip) {
+        function onExit(node, state2) {
+          if (!state2.skip) {
             const operator = node.operatorToken.kind;
             if (isAssignmentOperator(operator) && !isAssignmentTarget(node)) {
               bindAssignmentTargetFlow(node.left);
@@ -67235,16 +67235,16 @@ ${lanes.join(`
               }
             }
           }
-          const savedInStrictMode = state3.inStrictModeStack[state3.stackIndex];
-          const savedParent = state3.parentStack[state3.stackIndex];
+          const savedInStrictMode = state2.inStrictModeStack[state2.stackIndex];
+          const savedParent = state2.parentStack[state2.stackIndex];
           if (savedInStrictMode !== undefined) {
             inStrictMode = savedInStrictMode;
           }
           if (savedParent !== undefined) {
             parent2 = savedParent;
           }
-          state3.skip = false;
-          state3.stackIndex--;
+          state2.skip = false;
+          state2.stackIndex--;
         }
         function maybeBind2(node) {
           if (node && isBinaryExpression(node) && !isDestructuringAssignment(node)) {
@@ -67522,18 +67522,18 @@ ${lanes.join(`
             file3.patternAmbientModules = append(file3.patternAmbientModules, pattern && !isString(pattern) ? { pattern, symbol: symbol3 } : undefined);
           }
         } else {
-          const state3 = declareModuleSymbol(node);
-          if (state3 !== 0) {
+          const state2 = declareModuleSymbol(node);
+          if (state2 !== 0) {
             const { symbol: symbol3 } = node;
-            symbol3.constEnumOnlyModule = !(symbol3.flags & (16 | 32 | 256)) && state3 === 2 && symbol3.constEnumOnlyModule !== false;
+            symbol3.constEnumOnlyModule = !(symbol3.flags & (16 | 32 | 256)) && state2 === 2 && symbol3.constEnumOnlyModule !== false;
           }
         }
       }
       function declareModuleSymbol(node) {
-        const state3 = getModuleInstanceState(node);
-        const instantiated = state3 !== 0;
+        const state2 = getModuleInstanceState(node);
+        const instantiated = state2 !== 0;
         declareSymbolAndAddToSymbolTable(node, instantiated ? 512 : 1024, instantiated ? 110735 : 0);
-        return state3;
+        return state2;
       }
       function bindFunctionOrConstructorType(node) {
         const symbol3 = createSymbol(131072, getDeclarationName(node));
@@ -69165,8 +69165,8 @@ ${lanes.join(`
       const links = (_b = host.getSymlinkCache) == null ? undefined : _b.call(host);
       if (cache && links && host.readFile && !pathContainsNodeModules(info.importingSourceFileName)) {
         Debug.type(host);
-        const state3 = getTemporaryModuleResolutionState(cache.getPackageJsonInfoCache(), host, {});
-        const packageJson = getPackageScopeForPath(getDirectoryPath(info.importingSourceFileName), state3);
+        const state2 = getTemporaryModuleResolutionState(cache.getPackageJsonInfoCache(), host, {});
+        const packageJson = getPackageScopeForPath(getDirectoryPath(info.importingSourceFileName), state2);
         if (packageJson) {
           const toResolve = getAllRuntimeDependencies(packageJson.contents.packageJsonContent);
           for (const depName of toResolve || emptyArray) {
@@ -74281,13 +74281,13 @@ ${lanes.join(`
             }
           }
           function getAccessStack(ref) {
-            let state3 = ref.typeName;
+            let state2 = ref.typeName;
             const ids = [];
-            while (!isIdentifier(state3)) {
-              ids.unshift(state3.right);
-              state3 = state3.left;
+            while (!isIdentifier(state2)) {
+              ids.unshift(state2.right);
+              state2 = state2.left;
             }
-            ids.unshift(state3);
+            ids.unshift(state2);
             return ids;
           }
           function indexInfoToObjectComputedNamesOrSignatureDeclaration(indexInfo, context2, typeNode) {
@@ -83940,8 +83940,8 @@ ${lanes.join(`
           return t;
         }
       }
-      function getModifiedReadonlyState(state3, modifiers) {
-        return modifiers & 1 ? true : modifiers & 2 ? false : state3;
+      function getModifiedReadonlyState(state2, modifiers) {
+        return modifiers & 1 ? true : modifiers & 2 ? false : state2;
       }
       function instantiateMappedTupleType(tupleType, mappedType, typeVariable, mapper) {
         const elementFlags = tupleType.target.elementFlags;
@@ -97835,14 +97835,14 @@ ${lanes.join(`
           Debug.assertIsDefined(result);
           return result;
         };
-        function onEnter(node, state3, checkMode) {
-          if (state3) {
-            state3.stackIndex++;
-            state3.skip = false;
-            setLeftType(state3, undefined);
-            setLastResult(state3, undefined);
+        function onEnter(node, state2, checkMode) {
+          if (state2) {
+            state2.stackIndex++;
+            state2.skip = false;
+            setLeftType(state2, undefined);
+            setLastResult(state2, undefined);
           } else {
-            state3 = {
+            state2 = {
               checkMode,
               skip: false,
               stackIndex: 0,
@@ -97850,30 +97850,30 @@ ${lanes.join(`
             };
           }
           if (isInJSFile(node) && getAssignedExpandoInitializer(node)) {
-            state3.skip = true;
-            setLastResult(state3, checkExpression(node.right, checkMode));
-            return state3;
+            state2.skip = true;
+            setLastResult(state2, checkExpression(node.right, checkMode));
+            return state2;
           }
           checkNullishCoalesceOperands(node);
           const operator = node.operatorToken.kind;
           if (operator === 64 && (node.left.kind === 211 || node.left.kind === 210)) {
-            state3.skip = true;
-            setLastResult(state3, checkDestructuringAssignment(node.left, checkExpression(node.right, checkMode), checkMode, node.right.kind === 110));
-            return state3;
+            state2.skip = true;
+            setLastResult(state2, checkDestructuringAssignment(node.left, checkExpression(node.right, checkMode), checkMode, node.right.kind === 110));
+            return state2;
           }
-          return state3;
+          return state2;
         }
-        function onLeft(left, state3, _node) {
-          if (!state3.skip) {
-            return maybeCheckExpression(state3, left);
+        function onLeft(left, state2, _node) {
+          if (!state2.skip) {
+            return maybeCheckExpression(state2, left);
           }
         }
-        function onOperator(operatorToken, state3, node) {
-          if (!state3.skip) {
-            const leftType = getLastResult(state3);
+        function onOperator(operatorToken, state2, node) {
+          if (!state2.skip) {
+            const leftType = getLastResult(state2);
             Debug.assertIsDefined(leftType);
-            setLeftType(state3, leftType);
-            setLastResult(state3, undefined);
+            setLeftType(state2, leftType);
+            setLastResult(state2, undefined);
             const operator = operatorToken.kind;
             if (isLogicalOrCoalescingBinaryOperator(operator)) {
               let parent2 = node.parent;
@@ -97889,49 +97889,49 @@ ${lanes.join(`
             }
           }
         }
-        function onRight(right, state3, _node) {
-          if (!state3.skip) {
-            return maybeCheckExpression(state3, right);
+        function onRight(right, state2, _node) {
+          if (!state2.skip) {
+            return maybeCheckExpression(state2, right);
           }
         }
-        function onExit(node, state3) {
+        function onExit(node, state2) {
           let result;
-          if (state3.skip) {
-            result = getLastResult(state3);
+          if (state2.skip) {
+            result = getLastResult(state2);
           } else {
-            const leftType = getLeftType(state3);
+            const leftType = getLeftType(state2);
             Debug.assertIsDefined(leftType);
-            const rightType = getLastResult(state3);
+            const rightType = getLastResult(state2);
             Debug.assertIsDefined(rightType);
-            result = checkBinaryLikeExpressionWorker(node.left, node.operatorToken, node.right, leftType, rightType, state3.checkMode, node);
+            result = checkBinaryLikeExpressionWorker(node.left, node.operatorToken, node.right, leftType, rightType, state2.checkMode, node);
           }
-          state3.skip = false;
-          setLeftType(state3, undefined);
-          setLastResult(state3, undefined);
-          state3.stackIndex--;
+          state2.skip = false;
+          setLeftType(state2, undefined);
+          setLastResult(state2, undefined);
+          state2.stackIndex--;
           return result;
         }
-        function foldState(state3, result, _side) {
-          setLastResult(state3, result);
-          return state3;
+        function foldState(state2, result, _side) {
+          setLastResult(state2, result);
+          return state2;
         }
-        function maybeCheckExpression(state3, node) {
+        function maybeCheckExpression(state2, node) {
           if (isBinaryExpression(node)) {
             return node;
           }
-          setLastResult(state3, checkExpression(node, state3.checkMode));
+          setLastResult(state2, checkExpression(node, state2.checkMode));
         }
-        function getLeftType(state3) {
-          return state3.typeStack[state3.stackIndex];
+        function getLeftType(state2) {
+          return state2.typeStack[state2.stackIndex];
         }
-        function setLeftType(state3, type) {
-          state3.typeStack[state3.stackIndex] = type;
+        function setLeftType(state2, type) {
+          state2.typeStack[state2.stackIndex] = type;
         }
-        function getLastResult(state3) {
-          return state3.typeStack[state3.stackIndex + 1];
+        function getLastResult(state2) {
+          return state2.typeStack[state2.stackIndex + 1];
         }
-        function setLastResult(state3, type) {
-          state3.typeStack[state3.stackIndex + 1] = type;
+        function setLastResult(state2, type) {
+          state2.typeStack[state2.stackIndex + 1] = type;
         }
       }
       function checkNullishCoalesceOperands(node) {
@@ -118887,14 +118887,14 @@ ${lanes.join(`
       function shouldConvertBodyOfIterationStatement(node) {
         return resolver.hasNodeCheckFlag(node, 4096);
       }
-      function hoistVariableDeclarationDeclaredInConvertedLoop(state3, node) {
-        if (!state3.hoistedLocalVariables) {
-          state3.hoistedLocalVariables = [];
+      function hoistVariableDeclarationDeclaredInConvertedLoop(state2, node) {
+        if (!state2.hoistedLocalVariables) {
+          state2.hoistedLocalVariables = [];
         }
         visit(node.name);
         function visit(node2) {
           if (node2.kind === 80) {
-            state3.hoistedLocalVariables.push(node2);
+            state2.hoistedLocalVariables.push(node2);
           } else {
             for (const element of node2.elements) {
               if (!isOmittedExpression(element)) {
@@ -119014,47 +119014,47 @@ ${lanes.join(`
         }
         return currentState;
       }
-      function addExtraDeclarationsForConvertedLoop(statements, state3, outerState) {
+      function addExtraDeclarationsForConvertedLoop(statements, state2, outerState) {
         let extraVariableDeclarations;
-        if (state3.argumentsName) {
+        if (state2.argumentsName) {
           if (outerState) {
-            outerState.argumentsName = state3.argumentsName;
+            outerState.argumentsName = state2.argumentsName;
           } else {
-            (extraVariableDeclarations || (extraVariableDeclarations = [])).push(factory2.createVariableDeclaration(state3.argumentsName, undefined, undefined, factory2.createIdentifier("arguments")));
+            (extraVariableDeclarations || (extraVariableDeclarations = [])).push(factory2.createVariableDeclaration(state2.argumentsName, undefined, undefined, factory2.createIdentifier("arguments")));
           }
         }
-        if (state3.thisName) {
+        if (state2.thisName) {
           if (outerState) {
-            outerState.thisName = state3.thisName;
+            outerState.thisName = state2.thisName;
           } else {
-            (extraVariableDeclarations || (extraVariableDeclarations = [])).push(factory2.createVariableDeclaration(state3.thisName, undefined, undefined, factory2.createIdentifier("this")));
+            (extraVariableDeclarations || (extraVariableDeclarations = [])).push(factory2.createVariableDeclaration(state2.thisName, undefined, undefined, factory2.createIdentifier("this")));
           }
         }
-        if (state3.hoistedLocalVariables) {
+        if (state2.hoistedLocalVariables) {
           if (outerState) {
-            outerState.hoistedLocalVariables = state3.hoistedLocalVariables;
+            outerState.hoistedLocalVariables = state2.hoistedLocalVariables;
           } else {
             if (!extraVariableDeclarations) {
               extraVariableDeclarations = [];
             }
-            for (const identifier of state3.hoistedLocalVariables) {
+            for (const identifier of state2.hoistedLocalVariables) {
               extraVariableDeclarations.push(factory2.createVariableDeclaration(identifier));
             }
           }
         }
-        if (state3.loopOutParameters.length) {
+        if (state2.loopOutParameters.length) {
           if (!extraVariableDeclarations) {
             extraVariableDeclarations = [];
           }
-          for (const outParam of state3.loopOutParameters) {
+          for (const outParam of state2.loopOutParameters) {
             extraVariableDeclarations.push(factory2.createVariableDeclaration(outParam.outParamName));
           }
         }
-        if (state3.conditionVariable) {
+        if (state2.conditionVariable) {
           if (!extraVariableDeclarations) {
             extraVariableDeclarations = [];
           }
-          extraVariableDeclarations.push(factory2.createVariableDeclaration(state3.conditionVariable, undefined, undefined, factory2.createFalse()));
+          extraVariableDeclarations.push(factory2.createVariableDeclaration(state2.conditionVariable, undefined, undefined, factory2.createFalse()));
         }
         if (extraVariableDeclarations) {
           statements.push(factory2.createVariableStatement(undefined, factory2.createVariableDeclarationList(extraVariableDeclarations)));
@@ -119137,20 +119137,20 @@ ${lanes.join(`
         const callResult = containsYield ? factory2.createYieldExpression(factory2.createToken(42), setEmitFlags(call, 8388608)) : call;
         return factory2.createExpressionStatement(callResult);
       }
-      function generateCallToConvertedLoop(loopFunctionExpressionName, state3, outerState, containsYield) {
+      function generateCallToConvertedLoop(loopFunctionExpressionName, state2, outerState, containsYield) {
         const statements = [];
-        const isSimpleLoop = !(state3.nonLocalJumps & ~4) && !state3.labeledNonLocalBreaks && !state3.labeledNonLocalContinues;
-        const call = factory2.createCallExpression(loopFunctionExpressionName, undefined, map3(state3.loopParameters, (p) => p.name));
+        const isSimpleLoop = !(state2.nonLocalJumps & ~4) && !state2.labeledNonLocalBreaks && !state2.labeledNonLocalContinues;
+        const call = factory2.createCallExpression(loopFunctionExpressionName, undefined, map3(state2.loopParameters, (p) => p.name));
         const callResult = containsYield ? factory2.createYieldExpression(factory2.createToken(42), setEmitFlags(call, 8388608)) : call;
         if (isSimpleLoop) {
           statements.push(factory2.createExpressionStatement(callResult));
-          copyOutParameters(state3.loopOutParameters, 1, 0, statements);
+          copyOutParameters(state2.loopOutParameters, 1, 0, statements);
         } else {
           const loopResultName = factory2.createUniqueName("state");
           const stateVariable = factory2.createVariableStatement(undefined, factory2.createVariableDeclarationList([factory2.createVariableDeclaration(loopResultName, undefined, undefined, callResult)]));
           statements.push(stateVariable);
-          copyOutParameters(state3.loopOutParameters, 1, 0, statements);
-          if (state3.nonLocalJumps & 8) {
+          copyOutParameters(state2.loopOutParameters, 1, 0, statements);
+          if (state2.nonLocalJumps & 8) {
             let returnStatement;
             if (outerState) {
               outerState.nonLocalJumps |= 8;
@@ -119160,29 +119160,29 @@ ${lanes.join(`
             }
             statements.push(factory2.createIfStatement(factory2.createTypeCheck(loopResultName, "object"), returnStatement));
           }
-          if (state3.nonLocalJumps & 2) {
+          if (state2.nonLocalJumps & 2) {
             statements.push(factory2.createIfStatement(factory2.createStrictEquality(loopResultName, factory2.createStringLiteral("break")), factory2.createBreakStatement()));
           }
-          if (state3.labeledNonLocalBreaks || state3.labeledNonLocalContinues) {
+          if (state2.labeledNonLocalBreaks || state2.labeledNonLocalContinues) {
             const caseClauses = [];
-            processLabeledJumps(state3.labeledNonLocalBreaks, true, loopResultName, outerState, caseClauses);
-            processLabeledJumps(state3.labeledNonLocalContinues, false, loopResultName, outerState, caseClauses);
+            processLabeledJumps(state2.labeledNonLocalBreaks, true, loopResultName, outerState, caseClauses);
+            processLabeledJumps(state2.labeledNonLocalContinues, false, loopResultName, outerState, caseClauses);
             statements.push(factory2.createSwitchStatement(loopResultName, factory2.createCaseBlock(caseClauses)));
           }
         }
         return statements;
       }
-      function setLabeledJump(state3, isBreak, labelText, labelMarker) {
+      function setLabeledJump(state2, isBreak, labelText, labelMarker) {
         if (isBreak) {
-          if (!state3.labeledNonLocalBreaks) {
-            state3.labeledNonLocalBreaks = /* @__PURE__ */ new Map;
+          if (!state2.labeledNonLocalBreaks) {
+            state2.labeledNonLocalBreaks = /* @__PURE__ */ new Map;
           }
-          state3.labeledNonLocalBreaks.set(labelText, labelMarker);
+          state2.labeledNonLocalBreaks.set(labelText, labelMarker);
         } else {
-          if (!state3.labeledNonLocalContinues) {
-            state3.labeledNonLocalContinues = /* @__PURE__ */ new Map;
+          if (!state2.labeledNonLocalContinues) {
+            state2.labeledNonLocalContinues = /* @__PURE__ */ new Map;
           }
-          state3.labeledNonLocalContinues.set(labelText, labelMarker);
+          state2.labeledNonLocalContinues.set(labelText, labelMarker);
         }
       }
       function processLabeledJumps(table, isBreak, loopResultName, outerLoop, caseClauses) {
@@ -119694,7 +119694,7 @@ ${lanes.join(`
       let operations;
       let operationArguments;
       let operationLocations;
-      let state3;
+      let state2;
       let blockIndex = 0;
       let labelNumber = 0;
       let labelNumbers;
@@ -119864,7 +119864,7 @@ ${lanes.join(`
         const savedOperations = operations;
         const savedOperationArguments = operationArguments;
         const savedOperationLocations = operationLocations;
-        const savedState = state3;
+        const savedState = state2;
         inGeneratorFunctionBody = true;
         inStatementContainingYield = false;
         blocks = undefined;
@@ -119877,7 +119877,7 @@ ${lanes.join(`
         operations = undefined;
         operationArguments = undefined;
         operationLocations = undefined;
-        state3 = factory2.createTempVariable(undefined);
+        state2 = factory2.createTempVariable(undefined);
         resumeLexicalEnvironment();
         const statementOffset = factory2.copyPrologue(body.statements, statements2, false, visitor);
         transformAndEmitStatements(body.statements, statementOffset);
@@ -119896,7 +119896,7 @@ ${lanes.join(`
         operations = savedOperations;
         operationArguments = savedOperationArguments;
         operationLocations = savedOperationLocations;
-        state3 = savedState;
+        state2 = savedState;
         return setTextRange(factory2.createBlock(statements2, body.multiLine), body);
       }
       function visitVariableStatement(node) {
@@ -120686,7 +120686,7 @@ ${lanes.join(`
         exception.state = 1;
         exception.catchVariable = name;
         exception.catchLabel = catchLabel;
-        emitAssignment(name, factory2.createCallExpression(factory2.createPropertyAccessExpression(state3, "sent"), undefined, []));
+        emitAssignment(name, factory2.createCallExpression(factory2.createPropertyAccessExpression(state2, "sent"), undefined, []));
         emitNop();
       }
       function beginFinallyBlock() {
@@ -120882,7 +120882,7 @@ ${lanes.join(`
         return setTextRange(factory2.createReturnStatement(factory2.createArrayLiteralExpression(expression ? [createInstruction(2), expression] : [createInstruction(2)])), location);
       }
       function createGeneratorResume(location) {
-        return setTextRange(factory2.createCallExpression(factory2.createPropertyAccessExpression(state3, "sent"), undefined, []), location);
+        return setTextRange(factory2.createCallExpression(factory2.createPropertyAccessExpression(state2, "sent"), undefined, []), location);
       }
       function emitNop() {
         emitWorker(0);
@@ -120947,7 +120947,7 @@ ${lanes.join(`
         currentExceptionBlock = undefined;
         withBlockStack = undefined;
         const buildResult = buildStatements();
-        return emitHelpers().createGeneratorHelper(setEmitFlags(factory2.createFunctionExpression(undefined, undefined, undefined, undefined, [factory2.createParameterDeclaration(undefined, undefined, state3)], undefined, factory2.createBlock(buildResult, buildResult.length > 0)), 1048576));
+        return emitHelpers().createGeneratorHelper(setEmitFlags(factory2.createFunctionExpression(undefined, undefined, undefined, undefined, [factory2.createParameterDeclaration(undefined, undefined, state2)], undefined, factory2.createBlock(buildResult, buildResult.length > 0)), 1048576));
       }
       function buildStatements() {
         if (operations) {
@@ -120959,7 +120959,7 @@ ${lanes.join(`
           flushFinalLabel(0);
         }
         if (clauses) {
-          const labelExpression = factory2.createPropertyAccessExpression(state3, "label");
+          const labelExpression = factory2.createPropertyAccessExpression(state2, "label");
           const switchStatement = factory2.createSwitchStatement(labelExpression, factory2.createCaseBlock(clauses));
           return [startOnNewLine(switchStatement)];
         }
@@ -121015,7 +121015,7 @@ ${lanes.join(`
           }
           if (currentExceptionBlock) {
             const { startLabel, catchLabel, finallyLabel, endLabel } = currentExceptionBlock;
-            statements.unshift(factory2.createExpressionStatement(factory2.createCallExpression(factory2.createPropertyAccessExpression(factory2.createPropertyAccessExpression(state3, "trys"), "push"), undefined, [
+            statements.unshift(factory2.createExpressionStatement(factory2.createCallExpression(factory2.createPropertyAccessExpression(factory2.createPropertyAccessExpression(state2, "trys"), "push"), undefined, [
               factory2.createArrayLiteralExpression([
                 createLabel(startLabel),
                 createLabel(catchLabel),
@@ -121026,7 +121026,7 @@ ${lanes.join(`
             currentExceptionBlock = undefined;
           }
           if (markLabelEnd) {
-            statements.push(factory2.createExpressionStatement(factory2.createAssignment(factory2.createPropertyAccessExpression(state3, "label"), factory2.createNumericLiteral(labelNumber + 1))));
+            statements.push(factory2.createExpressionStatement(factory2.createAssignment(factory2.createPropertyAccessExpression(state2, "label"), factory2.createNumericLiteral(labelNumber + 1))));
           }
         }
         clauses.push(factory2.createCaseClause(factory2.createNumericLiteral(labelNumber), statements || []));
@@ -125105,7 +125105,7 @@ ${lanes.join(`
       let emitHelpers;
       let onSubstituteNode = noEmitSubstitution;
       let onEmitNode = noEmitNotification;
-      let state3 = 0;
+      let state2 = 0;
       const diagnostics = [];
       const context = {
         factory: factory2,
@@ -125135,7 +125135,7 @@ ${lanes.join(`
           return onSubstituteNode;
         },
         set onSubstituteNode(value) {
-          Debug.assert(state3 < 1, "Cannot modify transformation hooks after initialization has completed.");
+          Debug.assert(state2 < 1, "Cannot modify transformation hooks after initialization has completed.");
           Debug.assert(value !== undefined, "Value must not be 'undefined'");
           onSubstituteNode = value;
         },
@@ -125143,7 +125143,7 @@ ${lanes.join(`
           return onEmitNode;
         },
         set onEmitNode(value) {
-          Debug.assert(state3 < 1, "Cannot modify transformation hooks after initialization has completed.");
+          Debug.assert(state2 < 1, "Cannot modify transformation hooks after initialization has completed.");
           Debug.assert(value !== undefined, "Value must not be 'undefined'");
           onEmitNode = value;
         },
@@ -125162,14 +125162,14 @@ ${lanes.join(`
         }
         return node;
       };
-      state3 = 1;
+      state2 = 1;
       const transformed = [];
       for (const node of nodes) {
         (_a3 = tracing) == null || _a3.push(tracing.Phase.Emit, "transformNodes", node.kind === 308 ? { path: node.path } : { kind: node.kind, pos: node.pos, end: node.end });
         transformed.push((allowDtsFiles ? transformation : transformRoot)(node));
         (_b = tracing) == null || _b.pop();
       }
-      state3 = 2;
+      state2 = 2;
       mark("afterTransform");
       measure("transformTime", "beforeTransform", "afterTransform");
       return {
@@ -125184,25 +125184,25 @@ ${lanes.join(`
         return node && (!isSourceFile(node) || !node.isDeclarationFile) ? transformation(node) : node;
       }
       function enableSubstitution(kind) {
-        Debug.assert(state3 < 2, "Cannot modify the transformation context after transformation has completed.");
+        Debug.assert(state2 < 2, "Cannot modify the transformation context after transformation has completed.");
         enabledSyntaxKindFeatures[kind] |= 1;
       }
       function isSubstitutionEnabled(node) {
         return (enabledSyntaxKindFeatures[node.kind] & 1) !== 0 && (getEmitFlags(node) & 8) === 0;
       }
       function substituteNode(hint, node) {
-        Debug.assert(state3 < 3, "Cannot substitute a node after the result is disposed.");
+        Debug.assert(state2 < 3, "Cannot substitute a node after the result is disposed.");
         return node && isSubstitutionEnabled(node) && onSubstituteNode(hint, node) || node;
       }
       function enableEmitNotification(kind) {
-        Debug.assert(state3 < 2, "Cannot modify the transformation context after transformation has completed.");
+        Debug.assert(state2 < 2, "Cannot modify the transformation context after transformation has completed.");
         enabledSyntaxKindFeatures[kind] |= 2;
       }
       function isEmitNotificationEnabled(node) {
         return (enabledSyntaxKindFeatures[node.kind] & 2) !== 0 || (getEmitFlags(node) & 4) !== 0;
       }
       function emitNodeWithNotification(hint, node, emitCallback) {
-        Debug.assert(state3 < 3, "Cannot invoke TransformationResult callbacks after the result is disposed.");
+        Debug.assert(state2 < 3, "Cannot invoke TransformationResult callbacks after the result is disposed.");
         if (node) {
           if (isEmitNotificationEnabled(node)) {
             onEmitNode(hint, node, emitCallback);
@@ -125212,8 +125212,8 @@ ${lanes.join(`
         }
       }
       function hoistVariableDeclaration(name) {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         const decl = setEmitFlags(factory2.createVariableDeclaration(name), 128);
         if (!lexicalEnvironmentVariableDeclarations) {
           lexicalEnvironmentVariableDeclarations = [decl];
@@ -125225,8 +125225,8 @@ ${lanes.join(`
         }
       }
       function hoistFunctionDeclaration(func) {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         setEmitFlags(func, 2097152);
         if (!lexicalEnvironmentFunctionDeclarations) {
           lexicalEnvironmentFunctionDeclarations = [func];
@@ -125235,8 +125235,8 @@ ${lanes.join(`
         }
       }
       function addInitializationStatement(node) {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         setEmitFlags(node, 2097152);
         if (!lexicalEnvironmentStatements) {
           lexicalEnvironmentStatements = [node];
@@ -125245,8 +125245,8 @@ ${lanes.join(`
         }
       }
       function startLexicalEnvironment() {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         Debug.assert(!lexicalEnvironmentSuspended, "Lexical environment is suspended.");
         lexicalEnvironmentVariableDeclarationsStack[lexicalEnvironmentStackOffset] = lexicalEnvironmentVariableDeclarations;
         lexicalEnvironmentFunctionDeclarationsStack[lexicalEnvironmentStackOffset] = lexicalEnvironmentFunctionDeclarations;
@@ -125259,20 +125259,20 @@ ${lanes.join(`
         lexicalEnvironmentFlags = 0;
       }
       function suspendLexicalEnvironment() {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         Debug.assert(!lexicalEnvironmentSuspended, "Lexical environment is already suspended.");
         lexicalEnvironmentSuspended = true;
       }
       function resumeLexicalEnvironment() {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         Debug.assert(lexicalEnvironmentSuspended, "Lexical environment is not suspended.");
         lexicalEnvironmentSuspended = false;
       }
       function endLexicalEnvironment() {
-        Debug.assert(state3 > 0, "Cannot modify the lexical environment during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the lexical environment after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the lexical environment during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the lexical environment after transformation has completed.");
         Debug.assert(!lexicalEnvironmentSuspended, "Lexical environment is suspended.");
         let statements;
         if (lexicalEnvironmentVariableDeclarations || lexicalEnvironmentFunctionDeclarations || lexicalEnvironmentStatements) {
@@ -125316,15 +125316,15 @@ ${lanes.join(`
         return lexicalEnvironmentFlags;
       }
       function startBlockScope() {
-        Debug.assert(state3 > 0, "Cannot start a block scope during initialization.");
-        Debug.assert(state3 < 2, "Cannot start a block scope after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot start a block scope during initialization.");
+        Debug.assert(state2 < 2, "Cannot start a block scope after transformation has completed.");
         blockScopedVariableDeclarationsStack[blockScopeStackOffset] = blockScopedVariableDeclarations;
         blockScopeStackOffset++;
         blockScopedVariableDeclarations = undefined;
       }
       function endBlockScope() {
-        Debug.assert(state3 > 0, "Cannot end a block scope during initialization.");
-        Debug.assert(state3 < 2, "Cannot end a block scope after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot end a block scope during initialization.");
+        Debug.assert(state2 < 2, "Cannot end a block scope after transformation has completed.");
         const statements = some(blockScopedVariableDeclarations) ? [
           factory2.createVariableStatement(undefined, factory2.createVariableDeclarationList(blockScopedVariableDeclarations.map((identifier) => factory2.createVariableDeclaration(identifier)), 1))
         ] : undefined;
@@ -125340,8 +125340,8 @@ ${lanes.join(`
         (blockScopedVariableDeclarations || (blockScopedVariableDeclarations = [])).push(name);
       }
       function requestEmitHelper(helper) {
-        Debug.assert(state3 > 0, "Cannot modify the transformation context during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the transformation context after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the transformation context during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the transformation context after transformation has completed.");
         Debug.assert(!helper.scoped, "Cannot request a scoped emit helper.");
         if (helper.dependencies) {
           for (const h of helper.dependencies) {
@@ -125351,14 +125351,14 @@ ${lanes.join(`
         emitHelpers = append(emitHelpers, helper);
       }
       function readEmitHelpers() {
-        Debug.assert(state3 > 0, "Cannot modify the transformation context during initialization.");
-        Debug.assert(state3 < 2, "Cannot modify the transformation context after transformation has completed.");
+        Debug.assert(state2 > 0, "Cannot modify the transformation context during initialization.");
+        Debug.assert(state2 < 2, "Cannot modify the transformation context after transformation has completed.");
         const helpers = emitHelpers;
         emitHelpers = undefined;
         return helpers;
       }
       function dispose() {
-        if (state3 < 3) {
+        if (state2 < 3) {
           for (const node of nodes) {
             disposeEmitNodes(getSourceFileOfNode(getParseTreeNode(node)));
           }
@@ -125369,7 +125369,7 @@ ${lanes.join(`
           onSubstituteNode = undefined;
           onEmitNode = undefined;
           emitHelpers = undefined;
-          state3 = 3;
+          state2 = 3;
         }
       }
     }
@@ -127244,15 +127244,15 @@ ${lanes.join(`
       }
       function createEmitBinaryExpression() {
         return createBinaryExpressionTrampoline(onEnter, onLeft, onOperator, onRight, onExit, undefined);
-        function onEnter(node, state3) {
-          if (state3) {
-            state3.stackIndex++;
-            state3.preserveSourceNewlinesStack[state3.stackIndex] = preserveSourceNewlines;
-            state3.containerPosStack[state3.stackIndex] = containerPos;
-            state3.containerEndStack[state3.stackIndex] = containerEnd;
-            state3.declarationListContainerEndStack[state3.stackIndex] = declarationListContainerEnd;
-            const emitComments2 = state3.shouldEmitCommentsStack[state3.stackIndex] = shouldEmitComments(node);
-            const emitSourceMaps = state3.shouldEmitSourceMapsStack[state3.stackIndex] = shouldEmitSourceMaps(node);
+        function onEnter(node, state2) {
+          if (state2) {
+            state2.stackIndex++;
+            state2.preserveSourceNewlinesStack[state2.stackIndex] = preserveSourceNewlines;
+            state2.containerPosStack[state2.stackIndex] = containerPos;
+            state2.containerEndStack[state2.stackIndex] = containerEnd;
+            state2.declarationListContainerEndStack[state2.stackIndex] = declarationListContainerEnd;
+            const emitComments2 = state2.shouldEmitCommentsStack[state2.stackIndex] = shouldEmitComments(node);
+            const emitSourceMaps = state2.shouldEmitSourceMapsStack[state2.stackIndex] = shouldEmitSourceMaps(node);
             onBeforeEmitNode == null || onBeforeEmitNode(node);
             if (emitComments2)
               emitCommentsBeforeNode(node);
@@ -127260,7 +127260,7 @@ ${lanes.join(`
               emitSourceMapsBeforeNode(node);
             beforeEmitNode(node);
           } else {
-            state3 = {
+            state2 = {
               stackIndex: 0,
               preserveSourceNewlinesStack: [undefined],
               containerPosStack: [-1],
@@ -127270,7 +127270,7 @@ ${lanes.join(`
               shouldEmitSourceMapsStack: [false]
             };
           }
-          return state3;
+          return state2;
         }
         function onLeft(next, _workArea, parent2) {
           return maybeEmitExpression(next, parent2, "left");
@@ -127288,24 +127288,24 @@ ${lanes.join(`
         function onRight(next, _workArea, parent2) {
           return maybeEmitExpression(next, parent2, "right");
         }
-        function onExit(node, state3) {
+        function onExit(node, state2) {
           const linesBeforeOperator = getLinesBetweenNodes(node, node.left, node.operatorToken);
           const linesAfterOperator = getLinesBetweenNodes(node, node.operatorToken, node.right);
           decreaseIndentIf(linesBeforeOperator, linesAfterOperator);
-          if (state3.stackIndex > 0) {
-            const savedPreserveSourceNewlines = state3.preserveSourceNewlinesStack[state3.stackIndex];
-            const savedContainerPos = state3.containerPosStack[state3.stackIndex];
-            const savedContainerEnd = state3.containerEndStack[state3.stackIndex];
-            const savedDeclarationListContainerEnd = state3.declarationListContainerEndStack[state3.stackIndex];
-            const shouldEmitComments2 = state3.shouldEmitCommentsStack[state3.stackIndex];
-            const shouldEmitSourceMaps2 = state3.shouldEmitSourceMapsStack[state3.stackIndex];
+          if (state2.stackIndex > 0) {
+            const savedPreserveSourceNewlines = state2.preserveSourceNewlinesStack[state2.stackIndex];
+            const savedContainerPos = state2.containerPosStack[state2.stackIndex];
+            const savedContainerEnd = state2.containerEndStack[state2.stackIndex];
+            const savedDeclarationListContainerEnd = state2.declarationListContainerEndStack[state2.stackIndex];
+            const shouldEmitComments2 = state2.shouldEmitCommentsStack[state2.stackIndex];
+            const shouldEmitSourceMaps2 = state2.shouldEmitSourceMapsStack[state2.stackIndex];
             afterEmitNode(savedPreserveSourceNewlines);
             if (shouldEmitSourceMaps2)
               emitSourceMapsAfterNode(node);
             if (shouldEmitComments2)
               emitCommentsAfterNode(node, savedContainerPos, savedContainerEnd, savedDeclarationListContainerEnd);
             onAfterEmitNode == null || onAfterEmitNode(node);
-            state3.stackIndex--;
+            state2.stackIndex--;
           }
         }
         function maybeEmitExpression(next, parent2, side) {
@@ -130911,11 +130911,11 @@ ${lanes.join(`
       const shouldLookupFromPackageJson = 3 <= moduleResolution && moduleResolution <= 99 || pathContainsNodeModules(fileName);
       return fileExtensionIsOneOf(fileName, [".d.mts", ".mts", ".mjs"]) ? 99 : fileExtensionIsOneOf(fileName, [".d.cts", ".cts", ".cjs"]) ? 1 : shouldLookupFromPackageJson && fileExtensionIsOneOf(fileName, [".d.ts", ".ts", ".tsx", ".js", ".jsx"]) ? lookupFromPackageJson() : undefined;
       function lookupFromPackageJson() {
-        const state3 = getTemporaryModuleResolutionState(packageJsonInfoCache, host, options2);
+        const state2 = getTemporaryModuleResolutionState(packageJsonInfoCache, host, options2);
         const packageJsonLocations = [];
-        state3.failedLookupLocations = packageJsonLocations;
-        state3.affectingLocations = packageJsonLocations;
-        const packageJsonScope = getPackageScopeForPath(getDirectoryPath(fileName), state3);
+        state2.failedLookupLocations = packageJsonLocations;
+        state2.affectingLocations = packageJsonLocations;
+        const packageJsonScope = getPackageScopeForPath(getDirectoryPath(fileName), state2);
         const impliedNodeFormat = (packageJsonScope == null ? undefined : packageJsonScope.contents.packageJsonContent.type) === "module" ? 99 : 1;
         return { impliedNodeFormat, packageJsonLocations, packageJsonScope };
       }
@@ -134041,32 +134041,32 @@ ${lanes.join(`
         };
       }
       BuilderState2.create = create;
-      function releaseCache2(state3) {
-        state3.allFilesExcludingDefaultLibraryFile = undefined;
-        state3.allFileNames = undefined;
+      function releaseCache2(state2) {
+        state2.allFilesExcludingDefaultLibraryFile = undefined;
+        state2.allFileNames = undefined;
       }
       BuilderState2.releaseCache = releaseCache2;
-      function getFilesAffectedBy(state3, programOfThisState, path13, cancellationToken, host) {
+      function getFilesAffectedBy(state2, programOfThisState, path13, cancellationToken, host) {
         var _a3;
-        const result = getFilesAffectedByWithOldState(state3, programOfThisState, path13, cancellationToken, host);
-        (_a3 = state3.oldSignatures) == null || _a3.clear();
+        const result = getFilesAffectedByWithOldState(state2, programOfThisState, path13, cancellationToken, host);
+        (_a3 = state2.oldSignatures) == null || _a3.clear();
         return result;
       }
       BuilderState2.getFilesAffectedBy = getFilesAffectedBy;
-      function getFilesAffectedByWithOldState(state3, programOfThisState, path13, cancellationToken, host) {
+      function getFilesAffectedByWithOldState(state2, programOfThisState, path13, cancellationToken, host) {
         const sourceFile = programOfThisState.getSourceFileByPath(path13);
         if (!sourceFile) {
           return emptyArray;
         }
-        if (!updateShapeSignature(state3, programOfThisState, sourceFile, cancellationToken, host)) {
+        if (!updateShapeSignature(state2, programOfThisState, sourceFile, cancellationToken, host)) {
           return [sourceFile];
         }
-        return (state3.referencedMap ? getFilesAffectedByUpdatedShapeWhenModuleEmit : getFilesAffectedByUpdatedShapeWhenNonModuleEmit)(state3, programOfThisState, sourceFile, cancellationToken, host);
+        return (state2.referencedMap ? getFilesAffectedByUpdatedShapeWhenModuleEmit : getFilesAffectedByUpdatedShapeWhenNonModuleEmit)(state2, programOfThisState, sourceFile, cancellationToken, host);
       }
       BuilderState2.getFilesAffectedByWithOldState = getFilesAffectedByWithOldState;
-      function updateSignatureOfFile(state3, signature, path13) {
-        state3.fileInfos.get(path13).signature = signature;
-        (state3.hasCalledUpdateShapeSignature || (state3.hasCalledUpdateShapeSignature = /* @__PURE__ */ new Set)).add(path13);
+      function updateSignatureOfFile(state2, signature, path13) {
+        state2.fileInfos.get(path13).signature = signature;
+        (state2.hasCalledUpdateShapeSignature || (state2.hasCalledUpdateShapeSignature = /* @__PURE__ */ new Set)).add(path13);
       }
       BuilderState2.updateSignatureOfFile = updateSignatureOfFile;
       function computeDtsSignature(programOfThisState, sourceFile, cancellationToken, host, onNewSignature) {
@@ -134076,38 +134076,38 @@ ${lanes.join(`
         }, cancellationToken, 2, undefined, true);
       }
       BuilderState2.computeDtsSignature = computeDtsSignature;
-      function updateShapeSignature(state3, programOfThisState, sourceFile, cancellationToken, host, useFileVersionAsSignature = state3.useFileVersionAsSignature) {
+      function updateShapeSignature(state2, programOfThisState, sourceFile, cancellationToken, host, useFileVersionAsSignature = state2.useFileVersionAsSignature) {
         var _a3;
-        if ((_a3 = state3.hasCalledUpdateShapeSignature) == null ? undefined : _a3.has(sourceFile.resolvedPath))
+        if ((_a3 = state2.hasCalledUpdateShapeSignature) == null ? undefined : _a3.has(sourceFile.resolvedPath))
           return false;
-        const info = state3.fileInfos.get(sourceFile.resolvedPath);
+        const info = state2.fileInfos.get(sourceFile.resolvedPath);
         const prevSignature = info.signature;
         let latestSignature;
         if (!sourceFile.isDeclarationFile && !useFileVersionAsSignature) {
           computeDtsSignature(programOfThisState, sourceFile, cancellationToken, host, (signature) => {
             latestSignature = signature;
             if (host.storeSignatureInfo)
-              (state3.signatureInfo ?? (state3.signatureInfo = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, 0);
+              (state2.signatureInfo ?? (state2.signatureInfo = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, 0);
           });
         }
         if (latestSignature === undefined) {
           latestSignature = sourceFile.version;
           if (host.storeSignatureInfo)
-            (state3.signatureInfo ?? (state3.signatureInfo = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, 2);
+            (state2.signatureInfo ?? (state2.signatureInfo = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, 2);
         }
-        (state3.oldSignatures || (state3.oldSignatures = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, prevSignature || false);
-        (state3.hasCalledUpdateShapeSignature || (state3.hasCalledUpdateShapeSignature = /* @__PURE__ */ new Set)).add(sourceFile.resolvedPath);
+        (state2.oldSignatures || (state2.oldSignatures = /* @__PURE__ */ new Map)).set(sourceFile.resolvedPath, prevSignature || false);
+        (state2.hasCalledUpdateShapeSignature || (state2.hasCalledUpdateShapeSignature = /* @__PURE__ */ new Set)).add(sourceFile.resolvedPath);
         info.signature = latestSignature;
         return latestSignature !== prevSignature;
       }
       BuilderState2.updateShapeSignature = updateShapeSignature;
-      function getAllDependencies(state3, programOfThisState, sourceFile) {
+      function getAllDependencies(state2, programOfThisState, sourceFile) {
         const compilerOptions = programOfThisState.getCompilerOptions();
         if (compilerOptions.outFile) {
-          return getAllFileNames(state3, programOfThisState);
+          return getAllFileNames(state2, programOfThisState);
         }
-        if (!state3.referencedMap || isFileAffectingGlobalScope(sourceFile)) {
-          return getAllFileNames(state3, programOfThisState);
+        if (!state2.referencedMap || isFileAffectingGlobalScope(sourceFile)) {
+          return getAllFileNames(state2, programOfThisState);
         }
         const seenMap = /* @__PURE__ */ new Set;
         const queue = [sourceFile.resolvedPath];
@@ -134115,7 +134115,7 @@ ${lanes.join(`
           const path13 = queue.pop();
           if (!seenMap.has(path13)) {
             seenMap.add(path13);
-            const references = state3.referencedMap.getValues(path13);
+            const references = state2.referencedMap.getValues(path13);
             if (references) {
               for (const key of references.keys()) {
                 queue.push(key);
@@ -134129,15 +134129,15 @@ ${lanes.join(`
         }));
       }
       BuilderState2.getAllDependencies = getAllDependencies;
-      function getAllFileNames(state3, programOfThisState) {
-        if (!state3.allFileNames) {
+      function getAllFileNames(state2, programOfThisState) {
+        if (!state2.allFileNames) {
           const sourceFiles = programOfThisState.getSourceFiles();
-          state3.allFileNames = sourceFiles === emptyArray ? emptyArray : sourceFiles.map((file3) => file3.fileName);
+          state2.allFileNames = sourceFiles === emptyArray ? emptyArray : sourceFiles.map((file3) => file3.fileName);
         }
-        return state3.allFileNames;
+        return state2.allFileNames;
       }
-      function getReferencedByPaths(state3, referencedFilePath) {
-        const keys = state3.referencedMap.getKeys(referencedFilePath);
+      function getReferencedByPaths(state2, referencedFilePath) {
+        const keys = state2.referencedMap.getKeys(referencedFilePath);
         return keys ? arrayFrom(keys.keys()) : [];
       }
       BuilderState2.getReferencedByPaths = getReferencedByPaths;
@@ -134155,9 +134155,9 @@ ${lanes.join(`
       function isFileAffectingGlobalScope(sourceFile) {
         return containsGlobalScopeAugmentation(sourceFile) || !isExternalOrCommonJsModule(sourceFile) && !isJsonSourceFile(sourceFile) && !containsOnlyAmbientModules(sourceFile);
       }
-      function getAllFilesExcludingDefaultLibraryFile(state3, programOfThisState, firstSourceFile) {
-        if (state3.allFilesExcludingDefaultLibraryFile) {
-          return state3.allFilesExcludingDefaultLibraryFile;
+      function getAllFilesExcludingDefaultLibraryFile(state2, programOfThisState, firstSourceFile) {
+        if (state2.allFilesExcludingDefaultLibraryFile) {
+          return state2.allFilesExcludingDefaultLibraryFile;
         }
         let result;
         if (firstSourceFile)
@@ -134167,8 +134167,8 @@ ${lanes.join(`
             addSourceFile(sourceFile);
           }
         }
-        state3.allFilesExcludingDefaultLibraryFile = result || emptyArray;
-        return state3.allFilesExcludingDefaultLibraryFile;
+        state2.allFilesExcludingDefaultLibraryFile = result || emptyArray;
+        return state2.allFilesExcludingDefaultLibraryFile;
         function addSourceFile(sourceFile) {
           if (!programOfThisState.isSourceFileDefaultLibrary(sourceFile)) {
             (result || (result = [])).push(sourceFile);
@@ -134176,16 +134176,16 @@ ${lanes.join(`
         }
       }
       BuilderState2.getAllFilesExcludingDefaultLibraryFile = getAllFilesExcludingDefaultLibraryFile;
-      function getFilesAffectedByUpdatedShapeWhenNonModuleEmit(state3, programOfThisState, sourceFileWithUpdatedShape) {
+      function getFilesAffectedByUpdatedShapeWhenNonModuleEmit(state2, programOfThisState, sourceFileWithUpdatedShape) {
         const compilerOptions = programOfThisState.getCompilerOptions();
         if (compilerOptions && compilerOptions.outFile) {
           return [sourceFileWithUpdatedShape];
         }
-        return getAllFilesExcludingDefaultLibraryFile(state3, programOfThisState, sourceFileWithUpdatedShape);
+        return getAllFilesExcludingDefaultLibraryFile(state2, programOfThisState, sourceFileWithUpdatedShape);
       }
-      function getFilesAffectedByUpdatedShapeWhenModuleEmit(state3, programOfThisState, sourceFileWithUpdatedShape, cancellationToken, host) {
+      function getFilesAffectedByUpdatedShapeWhenModuleEmit(state2, programOfThisState, sourceFileWithUpdatedShape, cancellationToken, host) {
         if (isFileAffectingGlobalScope(sourceFileWithUpdatedShape)) {
-          return getAllFilesExcludingDefaultLibraryFile(state3, programOfThisState, sourceFileWithUpdatedShape);
+          return getAllFilesExcludingDefaultLibraryFile(state2, programOfThisState, sourceFileWithUpdatedShape);
         }
         const compilerOptions = programOfThisState.getCompilerOptions();
         if (compilerOptions && (getIsolatedModules(compilerOptions) || compilerOptions.outFile)) {
@@ -134193,14 +134193,14 @@ ${lanes.join(`
         }
         const seenFileNamesMap = /* @__PURE__ */ new Map;
         seenFileNamesMap.set(sourceFileWithUpdatedShape.resolvedPath, sourceFileWithUpdatedShape);
-        const queue = getReferencedByPaths(state3, sourceFileWithUpdatedShape.resolvedPath);
+        const queue = getReferencedByPaths(state2, sourceFileWithUpdatedShape.resolvedPath);
         while (queue.length > 0) {
           const currentPath = queue.pop();
           if (!seenFileNamesMap.has(currentPath)) {
             const currentSourceFile = programOfThisState.getSourceFileByPath(currentPath);
             seenFileNamesMap.set(currentPath, currentSourceFile);
-            if (currentSourceFile && updateShapeSignature(state3, programOfThisState, currentSourceFile, cancellationToken, host)) {
-              queue.push(...getReferencedByPaths(state3, currentSourceFile.resolvedPath));
+            if (currentSourceFile && updateShapeSignature(state2, programOfThisState, currentSourceFile, cancellationToken, host)) {
+              queue.push(...getReferencedByPaths(state2, currentSourceFile.resolvedPath));
             }
           }
         }
@@ -134222,12 +134222,12 @@ ${lanes.join(`
       BuilderFileEmit2[BuilderFileEmit2["All"] = 63] = "All";
       return BuilderFileEmit2;
     })(BuilderFileEmit || {});
-    function isBuilderProgramStateWithDefinedProgram(state3) {
-      return state3.program !== undefined;
+    function isBuilderProgramStateWithDefinedProgram(state2) {
+      return state2.program !== undefined;
     }
-    function toBuilderProgramStateWithDefinedProgram(state3) {
-      Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
-      return state3;
+    function toBuilderProgramStateWithDefinedProgram(state2) {
+      Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
+      return state2;
     }
     function getBuilderFileEmit(options2) {
       let result = 1;
@@ -134265,53 +134265,53 @@ ${lanes.join(`
     }
     function createBuilderProgramState(newProgram, oldState) {
       var _a3, _b;
-      const state3 = BuilderState.create(newProgram, oldState, false);
-      state3.program = newProgram;
+      const state2 = BuilderState.create(newProgram, oldState, false);
+      state2.program = newProgram;
       const compilerOptions = newProgram.getCompilerOptions();
-      state3.compilerOptions = compilerOptions;
+      state2.compilerOptions = compilerOptions;
       const outFilePath = compilerOptions.outFile;
-      state3.semanticDiagnosticsPerFile = /* @__PURE__ */ new Map;
+      state2.semanticDiagnosticsPerFile = /* @__PURE__ */ new Map;
       if (outFilePath && compilerOptions.composite && (oldState == null ? undefined : oldState.outSignature) && outFilePath === oldState.compilerOptions.outFile) {
-        state3.outSignature = oldState.outSignature && getEmitSignatureFromOldSignature(compilerOptions, oldState.compilerOptions, oldState.outSignature);
+        state2.outSignature = oldState.outSignature && getEmitSignatureFromOldSignature(compilerOptions, oldState.compilerOptions, oldState.outSignature);
       }
-      state3.changedFilesSet = /* @__PURE__ */ new Set;
-      state3.latestChangedDtsFile = compilerOptions.composite ? oldState == null ? undefined : oldState.latestChangedDtsFile : undefined;
-      state3.checkPending = state3.compilerOptions.noCheck ? true : undefined;
-      const useOldState = BuilderState.canReuseOldState(state3.referencedMap, oldState);
+      state2.changedFilesSet = /* @__PURE__ */ new Set;
+      state2.latestChangedDtsFile = compilerOptions.composite ? oldState == null ? undefined : oldState.latestChangedDtsFile : undefined;
+      state2.checkPending = state2.compilerOptions.noCheck ? true : undefined;
+      const useOldState = BuilderState.canReuseOldState(state2.referencedMap, oldState);
       const oldCompilerOptions = useOldState ? oldState.compilerOptions : undefined;
       let canCopySemanticDiagnostics = useOldState && !compilerOptionsAffectSemanticDiagnostics(compilerOptions, oldCompilerOptions);
       const canCopyEmitSignatures = compilerOptions.composite && (oldState == null ? undefined : oldState.emitSignatures) && !outFilePath && !compilerOptionsAffectDeclarationPath(compilerOptions, oldState.compilerOptions);
       let canCopyEmitDiagnostics = true;
       if (useOldState) {
-        (_a3 = oldState.changedFilesSet) == null || _a3.forEach((value) => state3.changedFilesSet.add(value));
+        (_a3 = oldState.changedFilesSet) == null || _a3.forEach((value) => state2.changedFilesSet.add(value));
         if (!outFilePath && ((_b = oldState.affectedFilesPendingEmit) == null ? undefined : _b.size)) {
-          state3.affectedFilesPendingEmit = new Map(oldState.affectedFilesPendingEmit);
-          state3.seenAffectedFiles = /* @__PURE__ */ new Set;
+          state2.affectedFilesPendingEmit = new Map(oldState.affectedFilesPendingEmit);
+          state2.seenAffectedFiles = /* @__PURE__ */ new Set;
         }
-        state3.programEmitPending = oldState.programEmitPending;
-        if (outFilePath && state3.changedFilesSet.size) {
+        state2.programEmitPending = oldState.programEmitPending;
+        if (outFilePath && state2.changedFilesSet.size) {
           canCopySemanticDiagnostics = false;
           canCopyEmitDiagnostics = false;
         }
-        state3.hasErrorsFromOldState = oldState.hasErrors;
+        state2.hasErrorsFromOldState = oldState.hasErrors;
       } else {
-        state3.buildInfoEmitPending = isIncrementalCompilation(compilerOptions);
+        state2.buildInfoEmitPending = isIncrementalCompilation(compilerOptions);
       }
-      const referencedMap = state3.referencedMap;
+      const referencedMap = state2.referencedMap;
       const oldReferencedMap = useOldState ? oldState.referencedMap : undefined;
       const copyDeclarationFileDiagnostics = canCopySemanticDiagnostics && !compilerOptions.skipLibCheck === !oldCompilerOptions.skipLibCheck;
       const copyLibFileDiagnostics = copyDeclarationFileDiagnostics && !compilerOptions.skipDefaultLibCheck === !oldCompilerOptions.skipDefaultLibCheck;
-      state3.fileInfos.forEach((info, sourceFilePath) => {
+      state2.fileInfos.forEach((info, sourceFilePath) => {
         var _a22;
         let oldInfo;
         let newReferences;
-        if (!useOldState || !(oldInfo = oldState.fileInfos.get(sourceFilePath)) || oldInfo.version !== info.version || oldInfo.impliedFormat !== info.impliedFormat || !hasSameKeys(newReferences = referencedMap && referencedMap.getValues(sourceFilePath), oldReferencedMap && oldReferencedMap.getValues(sourceFilePath)) || newReferences && forEachKey(newReferences, (path13) => !state3.fileInfos.has(path13) && oldState.fileInfos.has(path13))) {
+        if (!useOldState || !(oldInfo = oldState.fileInfos.get(sourceFilePath)) || oldInfo.version !== info.version || oldInfo.impliedFormat !== info.impliedFormat || !hasSameKeys(newReferences = referencedMap && referencedMap.getValues(sourceFilePath), oldReferencedMap && oldReferencedMap.getValues(sourceFilePath)) || newReferences && forEachKey(newReferences, (path13) => !state2.fileInfos.has(path13) && oldState.fileInfos.has(path13))) {
           addFileToChangeSet(sourceFilePath);
         } else {
           const sourceFile = newProgram.getSourceFileByPath(sourceFilePath);
           const emitDiagnostics = canCopyEmitDiagnostics ? (_a22 = oldState.emitDiagnosticsPerFile) == null ? undefined : _a22.get(sourceFilePath) : undefined;
           if (emitDiagnostics) {
-            (state3.emitDiagnosticsPerFile ?? (state3.emitDiagnosticsPerFile = /* @__PURE__ */ new Map)).set(sourceFilePath, oldState.hasReusableDiagnostic ? convertToDiagnostics(emitDiagnostics, sourceFilePath, newProgram) : repopulateDiagnostics(emitDiagnostics, newProgram));
+            (state2.emitDiagnosticsPerFile ?? (state2.emitDiagnosticsPerFile = /* @__PURE__ */ new Map)).set(sourceFilePath, oldState.hasReusableDiagnostic ? convertToDiagnostics(emitDiagnostics, sourceFilePath, newProgram) : repopulateDiagnostics(emitDiagnostics, newProgram));
           }
           if (canCopySemanticDiagnostics) {
             if (sourceFile.isDeclarationFile && !copyDeclarationFileDiagnostics)
@@ -134320,58 +134320,58 @@ ${lanes.join(`
               return;
             const diagnostics = oldState.semanticDiagnosticsPerFile.get(sourceFilePath);
             if (diagnostics) {
-              state3.semanticDiagnosticsPerFile.set(sourceFilePath, oldState.hasReusableDiagnostic ? convertToDiagnostics(diagnostics, sourceFilePath, newProgram) : repopulateDiagnostics(diagnostics, newProgram));
-              (state3.semanticDiagnosticsFromOldState ?? (state3.semanticDiagnosticsFromOldState = /* @__PURE__ */ new Set)).add(sourceFilePath);
+              state2.semanticDiagnosticsPerFile.set(sourceFilePath, oldState.hasReusableDiagnostic ? convertToDiagnostics(diagnostics, sourceFilePath, newProgram) : repopulateDiagnostics(diagnostics, newProgram));
+              (state2.semanticDiagnosticsFromOldState ?? (state2.semanticDiagnosticsFromOldState = /* @__PURE__ */ new Set)).add(sourceFilePath);
             }
           }
         }
         if (canCopyEmitSignatures) {
           const oldEmitSignature = oldState.emitSignatures.get(sourceFilePath);
           if (oldEmitSignature) {
-            (state3.emitSignatures ?? (state3.emitSignatures = /* @__PURE__ */ new Map)).set(sourceFilePath, getEmitSignatureFromOldSignature(compilerOptions, oldState.compilerOptions, oldEmitSignature));
+            (state2.emitSignatures ?? (state2.emitSignatures = /* @__PURE__ */ new Map)).set(sourceFilePath, getEmitSignatureFromOldSignature(compilerOptions, oldState.compilerOptions, oldEmitSignature));
           }
         }
       });
       if (useOldState && forEachEntry(oldState.fileInfos, (info, sourceFilePath) => {
-        if (state3.fileInfos.has(sourceFilePath))
+        if (state2.fileInfos.has(sourceFilePath))
           return false;
         if (info.affectsGlobalScope)
           return true;
-        state3.buildInfoEmitPending = true;
+        state2.buildInfoEmitPending = true;
         return !!outFilePath;
       })) {
-        BuilderState.getAllFilesExcludingDefaultLibraryFile(state3, newProgram, undefined).forEach((file3) => addFileToChangeSet(file3.resolvedPath));
+        BuilderState.getAllFilesExcludingDefaultLibraryFile(state2, newProgram, undefined).forEach((file3) => addFileToChangeSet(file3.resolvedPath));
       } else if (oldCompilerOptions) {
         const pendingEmitKind = compilerOptionsAffectEmit(compilerOptions, oldCompilerOptions) ? getBuilderFileEmit(compilerOptions) : getPendingEmitKind(compilerOptions, oldCompilerOptions);
         if (pendingEmitKind !== 0) {
           if (!outFilePath) {
             newProgram.getSourceFiles().forEach((f) => {
-              if (!state3.changedFilesSet.has(f.resolvedPath)) {
-                addToAffectedFilesPendingEmit(state3, f.resolvedPath, pendingEmitKind);
+              if (!state2.changedFilesSet.has(f.resolvedPath)) {
+                addToAffectedFilesPendingEmit(state2, f.resolvedPath, pendingEmitKind);
               }
             });
-            Debug.assert(!state3.seenAffectedFiles || !state3.seenAffectedFiles.size);
-            state3.seenAffectedFiles = state3.seenAffectedFiles || /* @__PURE__ */ new Set;
-          } else if (!state3.changedFilesSet.size) {
-            state3.programEmitPending = state3.programEmitPending ? state3.programEmitPending | pendingEmitKind : pendingEmitKind;
+            Debug.assert(!state2.seenAffectedFiles || !state2.seenAffectedFiles.size);
+            state2.seenAffectedFiles = state2.seenAffectedFiles || /* @__PURE__ */ new Set;
+          } else if (!state2.changedFilesSet.size) {
+            state2.programEmitPending = state2.programEmitPending ? state2.programEmitPending | pendingEmitKind : pendingEmitKind;
           }
-          state3.buildInfoEmitPending = true;
+          state2.buildInfoEmitPending = true;
         }
       }
-      if (useOldState && state3.semanticDiagnosticsPerFile.size !== state3.fileInfos.size && oldState.checkPending !== state3.checkPending)
-        state3.buildInfoEmitPending = true;
-      return state3;
+      if (useOldState && state2.semanticDiagnosticsPerFile.size !== state2.fileInfos.size && oldState.checkPending !== state2.checkPending)
+        state2.buildInfoEmitPending = true;
+      return state2;
       function addFileToChangeSet(path13) {
-        state3.changedFilesSet.add(path13);
+        state2.changedFilesSet.add(path13);
         if (outFilePath) {
           canCopySemanticDiagnostics = false;
           canCopyEmitDiagnostics = false;
-          state3.semanticDiagnosticsFromOldState = undefined;
-          state3.semanticDiagnosticsPerFile.clear();
-          state3.emitDiagnosticsPerFile = undefined;
+          state2.semanticDiagnosticsFromOldState = undefined;
+          state2.semanticDiagnosticsPerFile.clear();
+          state2.emitDiagnosticsPerFile = undefined;
         }
-        state3.buildInfoEmitPending = true;
-        state3.programEmitPending = undefined;
+        state2.buildInfoEmitPending = true;
+        state2.programEmitPending = undefined;
       }
     }
     function getEmitSignatureFromOldSignature(options2, oldOptions, oldEmitSignature) {
@@ -134437,70 +134437,70 @@ ${lanes.join(`
         messageText: isString(diagnostic.messageText) ? diagnostic.messageText : convertOrRepopulateDiagnosticMessageChain(diagnostic.messageText, sourceFile, newProgram, (chain) => chain.info)
       };
     }
-    function releaseCache(state3) {
-      BuilderState.releaseCache(state3);
-      state3.program = undefined;
+    function releaseCache(state2) {
+      BuilderState.releaseCache(state2);
+      state2.program = undefined;
     }
-    function assertSourceFileOkWithoutNextAffectedCall(state3, sourceFile) {
-      Debug.assert(!sourceFile || !state3.affectedFiles || state3.affectedFiles[state3.affectedFilesIndex - 1] !== sourceFile || !state3.semanticDiagnosticsPerFile.has(sourceFile.resolvedPath));
+    function assertSourceFileOkWithoutNextAffectedCall(state2, sourceFile) {
+      Debug.assert(!sourceFile || !state2.affectedFiles || state2.affectedFiles[state2.affectedFilesIndex - 1] !== sourceFile || !state2.semanticDiagnosticsPerFile.has(sourceFile.resolvedPath));
     }
-    function getNextAffectedFile(state3, cancellationToken, host) {
+    function getNextAffectedFile(state2, cancellationToken, host) {
       var _a3;
       while (true) {
-        const { affectedFiles } = state3;
+        const { affectedFiles } = state2;
         if (affectedFiles) {
-          const seenAffectedFiles = state3.seenAffectedFiles;
-          let affectedFilesIndex = state3.affectedFilesIndex;
+          const seenAffectedFiles = state2.seenAffectedFiles;
+          let affectedFilesIndex = state2.affectedFilesIndex;
           while (affectedFilesIndex < affectedFiles.length) {
             const affectedFile = affectedFiles[affectedFilesIndex];
             if (!seenAffectedFiles.has(affectedFile.resolvedPath)) {
-              state3.affectedFilesIndex = affectedFilesIndex;
-              addToAffectedFilesPendingEmit(state3, affectedFile.resolvedPath, getBuilderFileEmit(state3.compilerOptions));
-              handleDtsMayChangeOfAffectedFile(state3, affectedFile, cancellationToken, host);
+              state2.affectedFilesIndex = affectedFilesIndex;
+              addToAffectedFilesPendingEmit(state2, affectedFile.resolvedPath, getBuilderFileEmit(state2.compilerOptions));
+              handleDtsMayChangeOfAffectedFile(state2, affectedFile, cancellationToken, host);
               return affectedFile;
             }
             affectedFilesIndex++;
           }
-          state3.changedFilesSet.delete(state3.currentChangedFilePath);
-          state3.currentChangedFilePath = undefined;
-          (_a3 = state3.oldSignatures) == null || _a3.clear();
-          state3.affectedFiles = undefined;
+          state2.changedFilesSet.delete(state2.currentChangedFilePath);
+          state2.currentChangedFilePath = undefined;
+          (_a3 = state2.oldSignatures) == null || _a3.clear();
+          state2.affectedFiles = undefined;
         }
-        const nextKey = state3.changedFilesSet.keys().next();
+        const nextKey = state2.changedFilesSet.keys().next();
         if (nextKey.done) {
           return;
         }
-        const compilerOptions = state3.program.getCompilerOptions();
+        const compilerOptions = state2.program.getCompilerOptions();
         if (compilerOptions.outFile)
-          return state3.program;
-        state3.affectedFiles = BuilderState.getFilesAffectedByWithOldState(state3, state3.program, nextKey.value, cancellationToken, host);
-        state3.currentChangedFilePath = nextKey.value;
-        state3.affectedFilesIndex = 0;
-        if (!state3.seenAffectedFiles)
-          state3.seenAffectedFiles = /* @__PURE__ */ new Set;
+          return state2.program;
+        state2.affectedFiles = BuilderState.getFilesAffectedByWithOldState(state2, state2.program, nextKey.value, cancellationToken, host);
+        state2.currentChangedFilePath = nextKey.value;
+        state2.affectedFilesIndex = 0;
+        if (!state2.seenAffectedFiles)
+          state2.seenAffectedFiles = /* @__PURE__ */ new Set;
       }
     }
-    function clearAffectedFilesPendingEmit(state3, emitOnlyDtsFiles, isForDtsErrors) {
+    function clearAffectedFilesPendingEmit(state2, emitOnlyDtsFiles, isForDtsErrors) {
       var _a3, _b;
-      if (!((_a3 = state3.affectedFilesPendingEmit) == null ? undefined : _a3.size) && !state3.programEmitPending)
+      if (!((_a3 = state2.affectedFilesPendingEmit) == null ? undefined : _a3.size) && !state2.programEmitPending)
         return;
       if (!emitOnlyDtsFiles && !isForDtsErrors) {
-        state3.affectedFilesPendingEmit = undefined;
-        state3.programEmitPending = undefined;
+        state2.affectedFilesPendingEmit = undefined;
+        state2.programEmitPending = undefined;
       }
-      (_b = state3.affectedFilesPendingEmit) == null || _b.forEach((emitKind, path13) => {
+      (_b = state2.affectedFilesPendingEmit) == null || _b.forEach((emitKind, path13) => {
         const pending = !isForDtsErrors ? emitKind & 7 : emitKind & (7 | 48);
         if (!pending)
-          state3.affectedFilesPendingEmit.delete(path13);
+          state2.affectedFilesPendingEmit.delete(path13);
         else
-          state3.affectedFilesPendingEmit.set(path13, pending);
+          state2.affectedFilesPendingEmit.set(path13, pending);
       });
-      if (state3.programEmitPending) {
-        const pending = !isForDtsErrors ? state3.programEmitPending & 7 : state3.programEmitPending & (7 | 48);
+      if (state2.programEmitPending) {
+        const pending = !isForDtsErrors ? state2.programEmitPending & 7 : state2.programEmitPending & (7 | 48);
         if (!pending)
-          state3.programEmitPending = undefined;
+          state2.programEmitPending = undefined;
         else
-          state3.programEmitPending = pending;
+          state2.programEmitPending = pending;
       }
     }
     function getPendingEmitKindWithSeen(optionsOrEmitKind, seenOldOptionsOrEmitKind, emitOnlyDtsFiles, isForDtsErrors) {
@@ -134514,112 +134514,112 @@ ${lanes.join(`
     function getBuilderFileEmitAllDts(isForDtsErrors) {
       return !isForDtsErrors ? 56 : 8;
     }
-    function getNextAffectedFilePendingEmit(state3, emitOnlyDtsFiles, isForDtsErrors) {
+    function getNextAffectedFilePendingEmit(state2, emitOnlyDtsFiles, isForDtsErrors) {
       var _a3;
-      if (!((_a3 = state3.affectedFilesPendingEmit) == null ? undefined : _a3.size))
+      if (!((_a3 = state2.affectedFilesPendingEmit) == null ? undefined : _a3.size))
         return;
-      return forEachEntry(state3.affectedFilesPendingEmit, (emitKind, path13) => {
+      return forEachEntry(state2.affectedFilesPendingEmit, (emitKind, path13) => {
         var _a22;
-        const affectedFile = state3.program.getSourceFileByPath(path13);
-        if (!affectedFile || !sourceFileMayBeEmitted(affectedFile, state3.program)) {
-          state3.affectedFilesPendingEmit.delete(path13);
+        const affectedFile = state2.program.getSourceFileByPath(path13);
+        if (!affectedFile || !sourceFileMayBeEmitted(affectedFile, state2.program)) {
+          state2.affectedFilesPendingEmit.delete(path13);
           return;
         }
-        const seenKind = (_a22 = state3.seenEmittedFiles) == null ? undefined : _a22.get(affectedFile.resolvedPath);
+        const seenKind = (_a22 = state2.seenEmittedFiles) == null ? undefined : _a22.get(affectedFile.resolvedPath);
         const pendingKind = getPendingEmitKindWithSeen(emitKind, seenKind, emitOnlyDtsFiles, isForDtsErrors);
         if (pendingKind)
           return { affectedFile, emitKind: pendingKind };
       });
     }
-    function getNextPendingEmitDiagnosticsFile(state3, isForDtsErrors) {
+    function getNextPendingEmitDiagnosticsFile(state2, isForDtsErrors) {
       var _a3;
-      if (!((_a3 = state3.emitDiagnosticsPerFile) == null ? undefined : _a3.size))
+      if (!((_a3 = state2.emitDiagnosticsPerFile) == null ? undefined : _a3.size))
         return;
-      return forEachEntry(state3.emitDiagnosticsPerFile, (diagnostics, path13) => {
+      return forEachEntry(state2.emitDiagnosticsPerFile, (diagnostics, path13) => {
         var _a22;
-        const affectedFile = state3.program.getSourceFileByPath(path13);
-        if (!affectedFile || !sourceFileMayBeEmitted(affectedFile, state3.program)) {
-          state3.emitDiagnosticsPerFile.delete(path13);
+        const affectedFile = state2.program.getSourceFileByPath(path13);
+        if (!affectedFile || !sourceFileMayBeEmitted(affectedFile, state2.program)) {
+          state2.emitDiagnosticsPerFile.delete(path13);
           return;
         }
-        const seenKind = ((_a22 = state3.seenEmittedFiles) == null ? undefined : _a22.get(affectedFile.resolvedPath)) || 0;
+        const seenKind = ((_a22 = state2.seenEmittedFiles) == null ? undefined : _a22.get(affectedFile.resolvedPath)) || 0;
         if (!(seenKind & getBuilderFileEmitAllDts(isForDtsErrors)))
           return { affectedFile, diagnostics, seenKind };
       });
     }
-    function removeDiagnosticsOfLibraryFiles(state3) {
-      if (!state3.cleanedDiagnosticsOfLibFiles) {
-        state3.cleanedDiagnosticsOfLibFiles = true;
-        const options2 = state3.program.getCompilerOptions();
-        forEach(state3.program.getSourceFiles(), (f) => state3.program.isSourceFileDefaultLibrary(f) && !skipTypeCheckingIgnoringNoCheck(f, options2, state3.program) && removeSemanticDiagnosticsOf(state3, f.resolvedPath));
+    function removeDiagnosticsOfLibraryFiles(state2) {
+      if (!state2.cleanedDiagnosticsOfLibFiles) {
+        state2.cleanedDiagnosticsOfLibFiles = true;
+        const options2 = state2.program.getCompilerOptions();
+        forEach(state2.program.getSourceFiles(), (f) => state2.program.isSourceFileDefaultLibrary(f) && !skipTypeCheckingIgnoringNoCheck(f, options2, state2.program) && removeSemanticDiagnosticsOf(state2, f.resolvedPath));
       }
     }
-    function handleDtsMayChangeOfAffectedFile(state3, affectedFile, cancellationToken, host) {
-      removeSemanticDiagnosticsOf(state3, affectedFile.resolvedPath);
-      if (state3.allFilesExcludingDefaultLibraryFile === state3.affectedFiles) {
-        removeDiagnosticsOfLibraryFiles(state3);
-        BuilderState.updateShapeSignature(state3, state3.program, affectedFile, cancellationToken, host);
+    function handleDtsMayChangeOfAffectedFile(state2, affectedFile, cancellationToken, host) {
+      removeSemanticDiagnosticsOf(state2, affectedFile.resolvedPath);
+      if (state2.allFilesExcludingDefaultLibraryFile === state2.affectedFiles) {
+        removeDiagnosticsOfLibraryFiles(state2);
+        BuilderState.updateShapeSignature(state2, state2.program, affectedFile, cancellationToken, host);
         return;
       }
-      if (state3.compilerOptions.assumeChangesOnlyAffectDirectDependencies)
+      if (state2.compilerOptions.assumeChangesOnlyAffectDirectDependencies)
         return;
-      handleDtsMayChangeOfReferencingExportOfAffectedFile(state3, affectedFile, cancellationToken, host);
+      handleDtsMayChangeOfReferencingExportOfAffectedFile(state2, affectedFile, cancellationToken, host);
     }
-    function handleDtsMayChangeOf(state3, path13, invalidateJsFiles, cancellationToken, host) {
-      removeSemanticDiagnosticsOf(state3, path13);
-      if (!state3.changedFilesSet.has(path13)) {
-        const sourceFile = state3.program.getSourceFileByPath(path13);
+    function handleDtsMayChangeOf(state2, path13, invalidateJsFiles, cancellationToken, host) {
+      removeSemanticDiagnosticsOf(state2, path13);
+      if (!state2.changedFilesSet.has(path13)) {
+        const sourceFile = state2.program.getSourceFileByPath(path13);
         if (sourceFile) {
-          BuilderState.updateShapeSignature(state3, state3.program, sourceFile, cancellationToken, host, true);
+          BuilderState.updateShapeSignature(state2, state2.program, sourceFile, cancellationToken, host, true);
           if (invalidateJsFiles) {
-            addToAffectedFilesPendingEmit(state3, path13, getBuilderFileEmit(state3.compilerOptions));
-          } else if (getEmitDeclarations(state3.compilerOptions)) {
-            addToAffectedFilesPendingEmit(state3, path13, state3.compilerOptions.declarationMap ? 56 : 24);
+            addToAffectedFilesPendingEmit(state2, path13, getBuilderFileEmit(state2.compilerOptions));
+          } else if (getEmitDeclarations(state2.compilerOptions)) {
+            addToAffectedFilesPendingEmit(state2, path13, state2.compilerOptions.declarationMap ? 56 : 24);
           }
         }
       }
     }
-    function removeSemanticDiagnosticsOf(state3, path13) {
-      if (!state3.semanticDiagnosticsFromOldState) {
+    function removeSemanticDiagnosticsOf(state2, path13) {
+      if (!state2.semanticDiagnosticsFromOldState) {
         return true;
       }
-      state3.semanticDiagnosticsFromOldState.delete(path13);
-      state3.semanticDiagnosticsPerFile.delete(path13);
-      return !state3.semanticDiagnosticsFromOldState.size;
+      state2.semanticDiagnosticsFromOldState.delete(path13);
+      state2.semanticDiagnosticsPerFile.delete(path13);
+      return !state2.semanticDiagnosticsFromOldState.size;
     }
-    function isChangedSignature(state3, path13) {
-      const oldSignature = Debug.checkDefined(state3.oldSignatures).get(path13) || undefined;
-      const newSignature = Debug.checkDefined(state3.fileInfos.get(path13)).signature;
+    function isChangedSignature(state2, path13) {
+      const oldSignature = Debug.checkDefined(state2.oldSignatures).get(path13) || undefined;
+      const newSignature = Debug.checkDefined(state2.fileInfos.get(path13)).signature;
       return newSignature !== oldSignature;
     }
-    function handleDtsMayChangeOfGlobalScope(state3, filePath, invalidateJsFiles, cancellationToken, host) {
+    function handleDtsMayChangeOfGlobalScope(state2, filePath, invalidateJsFiles, cancellationToken, host) {
       var _a3;
-      if (!((_a3 = state3.fileInfos.get(filePath)) == null ? undefined : _a3.affectsGlobalScope))
+      if (!((_a3 = state2.fileInfos.get(filePath)) == null ? undefined : _a3.affectsGlobalScope))
         return false;
-      BuilderState.getAllFilesExcludingDefaultLibraryFile(state3, state3.program, undefined).forEach((file3) => handleDtsMayChangeOf(state3, file3.resolvedPath, invalidateJsFiles, cancellationToken, host));
-      removeDiagnosticsOfLibraryFiles(state3);
+      BuilderState.getAllFilesExcludingDefaultLibraryFile(state2, state2.program, undefined).forEach((file3) => handleDtsMayChangeOf(state2, file3.resolvedPath, invalidateJsFiles, cancellationToken, host));
+      removeDiagnosticsOfLibraryFiles(state2);
       return true;
     }
-    function handleDtsMayChangeOfReferencingExportOfAffectedFile(state3, affectedFile, cancellationToken, host) {
+    function handleDtsMayChangeOfReferencingExportOfAffectedFile(state2, affectedFile, cancellationToken, host) {
       var _a3, _b;
-      if (!state3.referencedMap || !state3.changedFilesSet.has(affectedFile.resolvedPath))
+      if (!state2.referencedMap || !state2.changedFilesSet.has(affectedFile.resolvedPath))
         return;
-      if (!isChangedSignature(state3, affectedFile.resolvedPath))
+      if (!isChangedSignature(state2, affectedFile.resolvedPath))
         return;
-      if (getIsolatedModules(state3.compilerOptions)) {
+      if (getIsolatedModules(state2.compilerOptions)) {
         const seenFileNamesMap = /* @__PURE__ */ new Map;
         seenFileNamesMap.set(affectedFile.resolvedPath, true);
-        const queue = BuilderState.getReferencedByPaths(state3, affectedFile.resolvedPath);
+        const queue = BuilderState.getReferencedByPaths(state2, affectedFile.resolvedPath);
         while (queue.length > 0) {
           const currentPath = queue.pop();
           if (!seenFileNamesMap.has(currentPath)) {
             seenFileNamesMap.set(currentPath, true);
-            if (handleDtsMayChangeOfGlobalScope(state3, currentPath, false, cancellationToken, host))
+            if (handleDtsMayChangeOfGlobalScope(state2, currentPath, false, cancellationToken, host))
               return;
-            handleDtsMayChangeOf(state3, currentPath, false, cancellationToken, host);
-            if (isChangedSignature(state3, currentPath)) {
-              const currentSourceFile = state3.program.getSourceFileByPath(currentPath);
-              queue.push(...BuilderState.getReferencedByPaths(state3, currentSourceFile.resolvedPath));
+            handleDtsMayChangeOf(state2, currentPath, false, cancellationToken, host);
+            if (isChangedSignature(state2, currentPath)) {
+              const currentSourceFile = state2.program.getSourceFileByPath(currentPath);
+              queue.push(...BuilderState.getReferencedByPaths(state2, currentSourceFile.resolvedPath));
             }
           }
         }
@@ -134628,44 +134628,44 @@ ${lanes.join(`
       const invalidateJsFiles = !!((_a3 = affectedFile.symbol) == null ? undefined : _a3.exports) && !!forEachEntry(affectedFile.symbol.exports, (exported) => {
         if ((exported.flags & 128) !== 0)
           return true;
-        const aliased = skipAlias(exported, state3.program.getTypeChecker());
+        const aliased = skipAlias(exported, state2.program.getTypeChecker());
         if (aliased === exported)
           return false;
         return (aliased.flags & 128) !== 0 && some(aliased.declarations, (d) => getSourceFileOfNode(d) === affectedFile);
       });
-      (_b = state3.referencedMap.getKeys(affectedFile.resolvedPath)) == null || _b.forEach((exportedFromPath) => {
-        if (handleDtsMayChangeOfGlobalScope(state3, exportedFromPath, invalidateJsFiles, cancellationToken, host))
+      (_b = state2.referencedMap.getKeys(affectedFile.resolvedPath)) == null || _b.forEach((exportedFromPath) => {
+        if (handleDtsMayChangeOfGlobalScope(state2, exportedFromPath, invalidateJsFiles, cancellationToken, host))
           return true;
-        const references = state3.referencedMap.getKeys(exportedFromPath);
-        return references && forEachKey(references, (filePath) => handleDtsMayChangeOfFileAndExportsOfFile(state3, filePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host));
+        const references = state2.referencedMap.getKeys(exportedFromPath);
+        return references && forEachKey(references, (filePath) => handleDtsMayChangeOfFileAndExportsOfFile(state2, filePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host));
       });
     }
-    function handleDtsMayChangeOfFileAndExportsOfFile(state3, filePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host) {
+    function handleDtsMayChangeOfFileAndExportsOfFile(state2, filePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host) {
       var _a3;
       if (!tryAddToSet(seenFileAndExportsOfFile, filePath))
         return;
-      if (handleDtsMayChangeOfGlobalScope(state3, filePath, invalidateJsFiles, cancellationToken, host))
+      if (handleDtsMayChangeOfGlobalScope(state2, filePath, invalidateJsFiles, cancellationToken, host))
         return true;
-      handleDtsMayChangeOf(state3, filePath, invalidateJsFiles, cancellationToken, host);
-      (_a3 = state3.referencedMap.getKeys(filePath)) == null || _a3.forEach((referencingFilePath) => handleDtsMayChangeOfFileAndExportsOfFile(state3, referencingFilePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host));
+      handleDtsMayChangeOf(state2, filePath, invalidateJsFiles, cancellationToken, host);
+      (_a3 = state2.referencedMap.getKeys(filePath)) == null || _a3.forEach((referencingFilePath) => handleDtsMayChangeOfFileAndExportsOfFile(state2, referencingFilePath, invalidateJsFiles, seenFileAndExportsOfFile, cancellationToken, host));
       return;
     }
-    function getSemanticDiagnosticsOfFile(state3, sourceFile, cancellationToken, semanticDiagnosticsPerFile) {
-      if (state3.compilerOptions.noCheck)
+    function getSemanticDiagnosticsOfFile(state2, sourceFile, cancellationToken, semanticDiagnosticsPerFile) {
+      if (state2.compilerOptions.noCheck)
         return emptyArray;
-      return concatenate(getBinderAndCheckerDiagnosticsOfFile(state3, sourceFile, cancellationToken, semanticDiagnosticsPerFile), state3.program.getProgramDiagnostics(sourceFile));
+      return concatenate(getBinderAndCheckerDiagnosticsOfFile(state2, sourceFile, cancellationToken, semanticDiagnosticsPerFile), state2.program.getProgramDiagnostics(sourceFile));
     }
-    function getBinderAndCheckerDiagnosticsOfFile(state3, sourceFile, cancellationToken, semanticDiagnosticsPerFile) {
-      semanticDiagnosticsPerFile ?? (semanticDiagnosticsPerFile = state3.semanticDiagnosticsPerFile);
+    function getBinderAndCheckerDiagnosticsOfFile(state2, sourceFile, cancellationToken, semanticDiagnosticsPerFile) {
+      semanticDiagnosticsPerFile ?? (semanticDiagnosticsPerFile = state2.semanticDiagnosticsPerFile);
       const path13 = sourceFile.resolvedPath;
       const cachedDiagnostics = semanticDiagnosticsPerFile.get(path13);
       if (cachedDiagnostics) {
-        return filterSemanticDiagnostics(cachedDiagnostics, state3.compilerOptions);
+        return filterSemanticDiagnostics(cachedDiagnostics, state2.compilerOptions);
       }
-      const diagnostics = state3.program.getBindAndCheckDiagnostics(sourceFile, cancellationToken);
+      const diagnostics = state2.program.getBindAndCheckDiagnostics(sourceFile, cancellationToken);
       semanticDiagnosticsPerFile.set(path13, diagnostics);
-      state3.buildInfoEmitPending = true;
-      return filterSemanticDiagnostics(diagnostics, state3.compilerOptions);
+      state2.buildInfoEmitPending = true;
+      return filterSemanticDiagnostics(diagnostics, state2.compilerOptions);
     }
     function isIncrementalBundleEmitBuildInfo(info) {
       var _a3;
@@ -134677,51 +134677,51 @@ ${lanes.join(`
     function isNonIncrementalBuildInfo(info) {
       return !isIncrementalBuildInfo(info) && !!info.root;
     }
-    function ensureHasErrorsForState(state3) {
-      if (state3.hasErrors !== undefined)
+    function ensureHasErrorsForState(state2) {
+      if (state2.hasErrors !== undefined)
         return;
-      if (isIncrementalCompilation(state3.compilerOptions)) {
-        state3.hasErrors = !some(state3.program.getSourceFiles(), (f) => {
+      if (isIncrementalCompilation(state2.compilerOptions)) {
+        state2.hasErrors = !some(state2.program.getSourceFiles(), (f) => {
           var _a3, _b;
-          const bindAndCheckDiagnostics = state3.semanticDiagnosticsPerFile.get(f.resolvedPath);
-          return bindAndCheckDiagnostics === undefined || !!bindAndCheckDiagnostics.length || !!((_b = (_a3 = state3.emitDiagnosticsPerFile) == null ? undefined : _a3.get(f.resolvedPath)) == null ? undefined : _b.length);
-        }) && (hasSyntaxOrGlobalErrors(state3) || some(state3.program.getSourceFiles(), (f) => !!state3.program.getProgramDiagnostics(f).length));
+          const bindAndCheckDiagnostics = state2.semanticDiagnosticsPerFile.get(f.resolvedPath);
+          return bindAndCheckDiagnostics === undefined || !!bindAndCheckDiagnostics.length || !!((_b = (_a3 = state2.emitDiagnosticsPerFile) == null ? undefined : _a3.get(f.resolvedPath)) == null ? undefined : _b.length);
+        }) && (hasSyntaxOrGlobalErrors(state2) || some(state2.program.getSourceFiles(), (f) => !!state2.program.getProgramDiagnostics(f).length));
       } else {
-        state3.hasErrors = some(state3.program.getSourceFiles(), (f) => {
+        state2.hasErrors = some(state2.program.getSourceFiles(), (f) => {
           var _a3, _b;
-          const bindAndCheckDiagnostics = state3.semanticDiagnosticsPerFile.get(f.resolvedPath);
-          return !!(bindAndCheckDiagnostics == null ? undefined : bindAndCheckDiagnostics.length) || !!((_b = (_a3 = state3.emitDiagnosticsPerFile) == null ? undefined : _a3.get(f.resolvedPath)) == null ? undefined : _b.length);
-        }) || hasSyntaxOrGlobalErrors(state3);
+          const bindAndCheckDiagnostics = state2.semanticDiagnosticsPerFile.get(f.resolvedPath);
+          return !!(bindAndCheckDiagnostics == null ? undefined : bindAndCheckDiagnostics.length) || !!((_b = (_a3 = state2.emitDiagnosticsPerFile) == null ? undefined : _a3.get(f.resolvedPath)) == null ? undefined : _b.length);
+        }) || hasSyntaxOrGlobalErrors(state2);
       }
     }
-    function hasSyntaxOrGlobalErrors(state3) {
-      return !!state3.program.getConfigFileParsingDiagnostics().length || !!state3.program.getSyntacticDiagnostics().length || !!state3.program.getOptionsDiagnostics().length || !!state3.program.getGlobalDiagnostics().length;
+    function hasSyntaxOrGlobalErrors(state2) {
+      return !!state2.program.getConfigFileParsingDiagnostics().length || !!state2.program.getSyntacticDiagnostics().length || !!state2.program.getOptionsDiagnostics().length || !!state2.program.getGlobalDiagnostics().length;
     }
-    function getBuildInfoEmitPending(state3) {
-      ensureHasErrorsForState(state3);
-      return state3.buildInfoEmitPending ?? (state3.buildInfoEmitPending = !!state3.hasErrorsFromOldState !== !!state3.hasErrors);
+    function getBuildInfoEmitPending(state2) {
+      ensureHasErrorsForState(state2);
+      return state2.buildInfoEmitPending ?? (state2.buildInfoEmitPending = !!state2.hasErrorsFromOldState !== !!state2.hasErrors);
     }
-    function getBuildInfo2(state3) {
+    function getBuildInfo2(state2) {
       var _a3, _b;
-      const currentDirectory = state3.program.getCurrentDirectory();
-      const buildInfoDirectory = getDirectoryPath(getNormalizedAbsolutePath(getTsBuildInfoEmitOutputFilePath(state3.compilerOptions), currentDirectory));
-      const latestChangedDtsFile = state3.latestChangedDtsFile ? relativeToBuildInfoEnsuringAbsolutePath(state3.latestChangedDtsFile) : undefined;
+      const currentDirectory = state2.program.getCurrentDirectory();
+      const buildInfoDirectory = getDirectoryPath(getNormalizedAbsolutePath(getTsBuildInfoEmitOutputFilePath(state2.compilerOptions), currentDirectory));
+      const latestChangedDtsFile = state2.latestChangedDtsFile ? relativeToBuildInfoEnsuringAbsolutePath(state2.latestChangedDtsFile) : undefined;
       const fileNames = [];
       const fileNameToFileId = /* @__PURE__ */ new Map;
-      const rootFileNames = new Set(state3.program.getRootFileNames().map((f) => toPath(f, currentDirectory, state3.program.getCanonicalFileName)));
-      ensureHasErrorsForState(state3);
-      if (!isIncrementalCompilation(state3.compilerOptions)) {
+      const rootFileNames = new Set(state2.program.getRootFileNames().map((f) => toPath(f, currentDirectory, state2.program.getCanonicalFileName)));
+      ensureHasErrorsForState(state2);
+      if (!isIncrementalCompilation(state2.compilerOptions)) {
         const buildInfo2 = {
           root: arrayFrom(rootFileNames, (r) => relativeToBuildInfo(r)),
-          errors: state3.hasErrors ? true : undefined,
-          checkPending: state3.checkPending,
+          errors: state2.hasErrors ? true : undefined,
+          checkPending: state2.checkPending,
           version: version3
         };
         return buildInfo2;
       }
       const root = [];
-      if (state3.compilerOptions.outFile) {
-        const fileInfos2 = arrayFrom(state3.fileInfos.entries(), ([key, value]) => {
+      if (state2.compilerOptions.outFile) {
+        const fileInfos2 = arrayFrom(state2.fileInfos.entries(), ([key, value]) => {
           const fileId = toFileId(key);
           tryAddRoot(key, fileId);
           return value.impliedFormat ? { version: value.version, impliedFormat: value.impliedFormat, signature: undefined, affectsGlobalScope: undefined } : value.version;
@@ -134731,15 +134731,15 @@ ${lanes.join(`
           fileInfos: fileInfos2,
           root,
           resolvedRoot: toResolvedRoot(),
-          options: toIncrementalBuildInfoCompilerOptions(state3.compilerOptions),
-          semanticDiagnosticsPerFile: !state3.changedFilesSet.size ? toIncrementalBuildInfoDiagnostics() : undefined,
+          options: toIncrementalBuildInfoCompilerOptions(state2.compilerOptions),
+          semanticDiagnosticsPerFile: !state2.changedFilesSet.size ? toIncrementalBuildInfoDiagnostics() : undefined,
           emitDiagnosticsPerFile: toIncrementalBuildInfoEmitDiagnostics(),
           changeFileSet: toChangeFileSet(),
-          outSignature: state3.outSignature,
+          outSignature: state2.outSignature,
           latestChangedDtsFile,
-          pendingEmit: !state3.programEmitPending ? undefined : state3.programEmitPending === getBuilderFileEmit(state3.compilerOptions) ? false : state3.programEmitPending,
-          errors: state3.hasErrors ? true : undefined,
-          checkPending: state3.checkPending,
+          pendingEmit: !state2.programEmitPending ? undefined : state2.programEmitPending === getBuilderFileEmit(state2.compilerOptions) ? false : state2.programEmitPending,
+          errors: state2.hasErrors ? true : undefined,
+          checkPending: state2.checkPending,
           version: version3
         };
         return buildInfo2;
@@ -134747,17 +134747,17 @@ ${lanes.join(`
       let fileIdsList;
       let fileNamesToFileIdListId;
       let emitSignatures;
-      const fileInfos = arrayFrom(state3.fileInfos.entries(), ([key, value]) => {
+      const fileInfos = arrayFrom(state2.fileInfos.entries(), ([key, value]) => {
         var _a22, _b2;
         const fileId = toFileId(key);
         tryAddRoot(key, fileId);
         Debug.assert(fileNames[fileId - 1] === relativeToBuildInfo(key));
-        const oldSignature = (_a22 = state3.oldSignatures) == null ? undefined : _a22.get(key);
+        const oldSignature = (_a22 = state2.oldSignatures) == null ? undefined : _a22.get(key);
         const actualSignature = oldSignature !== undefined ? oldSignature || undefined : value.signature;
-        if (state3.compilerOptions.composite) {
-          const file3 = state3.program.getSourceFileByPath(key);
-          if (!isJsonSourceFile(file3) && sourceFileMayBeEmitted(file3, state3.program)) {
-            const emitSignature = (_b2 = state3.emitSignatures) == null ? undefined : _b2.get(key);
+        if (state2.compilerOptions.composite) {
+          const file3 = state2.program.getSourceFileByPath(key);
+          if (!isJsonSourceFile(file3) && sourceFileMayBeEmitted(file3, state2.program)) {
+            const emitSignature = (_b2 = state2.emitSignatures) == null ? undefined : _b2.get(key);
             if (emitSignature !== actualSignature) {
               emitSignatures = append(emitSignatures, emitSignature === undefined ? fileId : [fileId, !isString(emitSignature) && emitSignature[0] === actualSignature ? emptyArray : emitSignature]);
             }
@@ -134766,23 +134766,23 @@ ${lanes.join(`
         return value.version === actualSignature ? value.affectsGlobalScope || value.impliedFormat ? { version: value.version, signature: undefined, affectsGlobalScope: value.affectsGlobalScope, impliedFormat: value.impliedFormat } : value.version : actualSignature !== undefined ? oldSignature === undefined ? value : { version: value.version, signature: actualSignature, affectsGlobalScope: value.affectsGlobalScope, impliedFormat: value.impliedFormat } : { version: value.version, signature: false, affectsGlobalScope: value.affectsGlobalScope, impliedFormat: value.impliedFormat };
       });
       let referencedMap;
-      if ((_a3 = state3.referencedMap) == null ? undefined : _a3.size()) {
-        referencedMap = arrayFrom(state3.referencedMap.keys()).sort(compareStringsCaseSensitive).map((key) => [
+      if ((_a3 = state2.referencedMap) == null ? undefined : _a3.size()) {
+        referencedMap = arrayFrom(state2.referencedMap.keys()).sort(compareStringsCaseSensitive).map((key) => [
           toFileId(key),
-          toFileIdListId(state3.referencedMap.getValues(key))
+          toFileIdListId(state2.referencedMap.getValues(key))
         ]);
       }
       const semanticDiagnosticsPerFile = toIncrementalBuildInfoDiagnostics();
       let affectedFilesPendingEmit;
-      if ((_b = state3.affectedFilesPendingEmit) == null ? undefined : _b.size) {
-        const fullEmitForOptions = getBuilderFileEmit(state3.compilerOptions);
+      if ((_b = state2.affectedFilesPendingEmit) == null ? undefined : _b.size) {
+        const fullEmitForOptions = getBuilderFileEmit(state2.compilerOptions);
         const seenFiles = /* @__PURE__ */ new Set;
-        for (const path13 of arrayFrom(state3.affectedFilesPendingEmit.keys()).sort(compareStringsCaseSensitive)) {
+        for (const path13 of arrayFrom(state2.affectedFilesPendingEmit.keys()).sort(compareStringsCaseSensitive)) {
           if (tryAddToSet(seenFiles, path13)) {
-            const file3 = state3.program.getSourceFileByPath(path13);
-            if (!file3 || !sourceFileMayBeEmitted(file3, state3.program))
+            const file3 = state2.program.getSourceFileByPath(path13);
+            if (!file3 || !sourceFileMayBeEmitted(file3, state2.program))
               continue;
-            const fileId = toFileId(path13), pendingEmit = state3.affectedFilesPendingEmit.get(path13);
+            const fileId = toFileId(path13), pendingEmit = state2.affectedFilesPendingEmit.get(path13);
             affectedFilesPendingEmit = append(affectedFilesPendingEmit, pendingEmit === fullEmitForOptions ? fileId : pendingEmit === 24 ? [fileId] : [fileId, pendingEmit]);
           }
         }
@@ -134793,7 +134793,7 @@ ${lanes.join(`
         fileInfos,
         root,
         resolvedRoot: toResolvedRoot(),
-        options: toIncrementalBuildInfoCompilerOptions(state3.compilerOptions),
+        options: toIncrementalBuildInfoCompilerOptions(state2.compilerOptions),
         referencedMap,
         semanticDiagnosticsPerFile,
         emitDiagnosticsPerFile: toIncrementalBuildInfoEmitDiagnostics(),
@@ -134801,8 +134801,8 @@ ${lanes.join(`
         affectedFilesPendingEmit,
         emitSignatures,
         latestChangedDtsFile,
-        errors: state3.hasErrors ? true : undefined,
-        checkPending: state3.checkPending,
+        errors: state2.hasErrors ? true : undefined,
+        checkPending: state2.checkPending,
         version: version3
       };
       return buildInfo;
@@ -134810,7 +134810,7 @@ ${lanes.join(`
         return relativeToBuildInfo(getNormalizedAbsolutePath(path13, currentDirectory));
       }
       function relativeToBuildInfo(path13) {
-        return ensurePathIsNonModuleName(getRelativePathFromDirectory(buildInfoDirectory, path13, state3.program.getCanonicalFileName));
+        return ensurePathIsNonModuleName(getRelativePathFromDirectory(buildInfoDirectory, path13, state2.program.getCanonicalFileName));
       }
       function toFileId(path13) {
         let fileId = fileNameToFileId.get(path13);
@@ -134831,8 +134831,8 @@ ${lanes.join(`
         return fileIdListId;
       }
       function tryAddRoot(path13, fileId) {
-        const file3 = state3.program.getSourceFile(path13);
-        if (!state3.program.getFileIncludeReasons().get(file3.path).some((r) => r.kind === 0))
+        const file3 = state2.program.getSourceFile(path13);
+        if (!state2.program.getFileIncludeReasons().get(file3.path).some((r) => r.kind === 0))
           return;
         if (!root.length)
           return root.push(fileId);
@@ -134851,7 +134851,7 @@ ${lanes.join(`
       function toResolvedRoot() {
         let result;
         rootFileNames.forEach((path13) => {
-          const file3 = state3.program.getSourceFileByPath(path13);
+          const file3 = state2.program.getSourceFileByPath(path13);
           if (file3 && path13 !== file3.resolvedPath) {
             result = append(result, [toFileId(file3.resolvedPath), toFileId(path13)]);
           }
@@ -134885,10 +134885,10 @@ ${lanes.join(`
       }
       function toIncrementalBuildInfoDiagnostics() {
         let result;
-        state3.fileInfos.forEach((_value, key) => {
-          const value = state3.semanticDiagnosticsPerFile.get(key);
+        state2.fileInfos.forEach((_value, key) => {
+          const value = state2.semanticDiagnosticsPerFile.get(key);
           if (!value) {
-            if (!state3.changedFilesSet.has(key))
+            if (!state2.changedFilesSet.has(key))
               result = append(result, toFileId(key));
           } else if (value.length) {
             result = append(result, [
@@ -134902,10 +134902,10 @@ ${lanes.join(`
       function toIncrementalBuildInfoEmitDiagnostics() {
         var _a22;
         let result;
-        if (!((_a22 = state3.emitDiagnosticsPerFile) == null ? undefined : _a22.size))
+        if (!((_a22 = state2.emitDiagnosticsPerFile) == null ? undefined : _a22.size))
           return result;
-        for (const key of arrayFrom(state3.emitDiagnosticsPerFile.keys()).sort(compareStringsCaseSensitive)) {
-          const value = state3.emitDiagnosticsPerFile.get(key);
+        for (const key of arrayFrom(state2.emitDiagnosticsPerFile.keys()).sort(compareStringsCaseSensitive)) {
+          const value = state2.emitDiagnosticsPerFile.get(key);
           result = append(result, [
             toFileId(key),
             toReusableDiagnostic(value, key)
@@ -134961,8 +134961,8 @@ ${lanes.join(`
       }
       function toChangeFileSet() {
         let changeFileSet;
-        if (state3.changedFilesSet.size) {
-          for (const path13 of arrayFrom(state3.changedFilesSet.keys()).sort(compareStringsCaseSensitive)) {
+        if (state2.changedFilesSet.size) {
+          for (const path13 of arrayFrom(state2.changedFilesSet.keys()).sort(compareStringsCaseSensitive)) {
             changeFileSet = append(changeFileSet, toFileId(path13));
           }
         }
@@ -135037,19 +135037,19 @@ ${lanes.join(`
         oldState = undefined;
         return oldProgram;
       }
-      const state3 = createBuilderProgramState(newProgram, oldState);
-      newProgram.getBuildInfo = () => getBuildInfo2(toBuilderProgramStateWithDefinedProgram(state3));
+      const state2 = createBuilderProgramState(newProgram, oldState);
+      newProgram.getBuildInfo = () => getBuildInfo2(toBuilderProgramStateWithDefinedProgram(state2));
       newProgram = undefined;
       oldProgram = undefined;
       oldState = undefined;
-      const builderProgram = createRedirectedBuilderProgram(state3, configFileParsingDiagnostics);
-      builderProgram.state = state3;
-      builderProgram.hasChangedEmitSignature = () => !!state3.hasChangedEmitSignature;
-      builderProgram.getAllDependencies = (sourceFile) => BuilderState.getAllDependencies(state3, Debug.checkDefined(state3.program), sourceFile);
+      const builderProgram = createRedirectedBuilderProgram(state2, configFileParsingDiagnostics);
+      builderProgram.state = state2;
+      builderProgram.hasChangedEmitSignature = () => !!state2.hasChangedEmitSignature;
+      builderProgram.getAllDependencies = (sourceFile) => BuilderState.getAllDependencies(state2, Debug.checkDefined(state2.program), sourceFile);
       builderProgram.getSemanticDiagnostics = getSemanticDiagnostics;
       builderProgram.getDeclarationDiagnostics = getDeclarationDiagnostics2;
       builderProgram.emit = emit2;
-      builderProgram.releaseProgram = () => releaseCache(state3);
+      builderProgram.releaseProgram = () => releaseCache(state2);
       if (kind === 0) {
         builderProgram.getSemanticDiagnosticsOfNextAffectedFile = getSemanticDiagnosticsOfNextAffectedFile;
       } else if (kind === 1) {
@@ -135061,29 +135061,29 @@ ${lanes.join(`
       }
       return builderProgram;
       function emitBuildInfo(writeFile2, cancellationToken) {
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
-        if (getBuildInfoEmitPending(state3)) {
-          const result = state3.program.emitBuildInfo(writeFile2 || maybeBind(host, host.writeFile), cancellationToken);
-          state3.buildInfoEmitPending = false;
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
+        if (getBuildInfoEmitPending(state2)) {
+          const result = state2.program.emitBuildInfo(writeFile2 || maybeBind(host, host.writeFile), cancellationToken);
+          state2.buildInfoEmitPending = false;
           return result;
         }
         return emitSkippedWithNoDiagnostics;
       }
       function emitNextAffectedFileOrDtsErrors(writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers, isForDtsErrors) {
         var _a3, _b, _c, _d;
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
-        let affected = getNextAffectedFile(state3, cancellationToken, host);
-        const programEmitKind = getBuilderFileEmit(state3.compilerOptions);
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
+        let affected = getNextAffectedFile(state2, cancellationToken, host);
+        const programEmitKind = getBuilderFileEmit(state2.compilerOptions);
         let emitKind = !isForDtsErrors ? emitOnlyDtsFiles ? programEmitKind & 56 : programEmitKind : 8;
         if (!affected) {
-          if (!state3.compilerOptions.outFile) {
-            const pendingAffectedFile = getNextAffectedFilePendingEmit(state3, emitOnlyDtsFiles, isForDtsErrors);
+          if (!state2.compilerOptions.outFile) {
+            const pendingAffectedFile = getNextAffectedFilePendingEmit(state2, emitOnlyDtsFiles, isForDtsErrors);
             if (pendingAffectedFile) {
               ({ affectedFile: affected, emitKind } = pendingAffectedFile);
             } else {
-              const pendingForDiagnostics = getNextPendingEmitDiagnosticsFile(state3, isForDtsErrors);
+              const pendingForDiagnostics = getNextPendingEmitDiagnosticsFile(state2, isForDtsErrors);
               if (pendingForDiagnostics) {
-                (state3.seenEmittedFiles ?? (state3.seenEmittedFiles = /* @__PURE__ */ new Map)).set(pendingForDiagnostics.affectedFile.resolvedPath, pendingForDiagnostics.seenKind | getBuilderFileEmitAllDts(isForDtsErrors));
+                (state2.seenEmittedFiles ?? (state2.seenEmittedFiles = /* @__PURE__ */ new Map)).set(pendingForDiagnostics.affectedFile.resolvedPath, pendingForDiagnostics.seenKind | getBuilderFileEmitAllDts(isForDtsErrors));
                 return {
                   result: { emitSkipped: true, diagnostics: pendingForDiagnostics.diagnostics },
                   affected: pendingForDiagnostics.affectedFile
@@ -135091,30 +135091,30 @@ ${lanes.join(`
               }
             }
           } else {
-            if (state3.programEmitPending) {
-              emitKind = getPendingEmitKindWithSeen(state3.programEmitPending, state3.seenProgramEmit, emitOnlyDtsFiles, isForDtsErrors);
+            if (state2.programEmitPending) {
+              emitKind = getPendingEmitKindWithSeen(state2.programEmitPending, state2.seenProgramEmit, emitOnlyDtsFiles, isForDtsErrors);
               if (emitKind)
-                affected = state3.program;
+                affected = state2.program;
             }
-            if (!affected && ((_a3 = state3.emitDiagnosticsPerFile) == null ? undefined : _a3.size)) {
-              const seenKind = state3.seenProgramEmit || 0;
+            if (!affected && ((_a3 = state2.emitDiagnosticsPerFile) == null ? undefined : _a3.size)) {
+              const seenKind = state2.seenProgramEmit || 0;
               if (!(seenKind & getBuilderFileEmitAllDts(isForDtsErrors))) {
-                state3.seenProgramEmit = getBuilderFileEmitAllDts(isForDtsErrors) | seenKind;
+                state2.seenProgramEmit = getBuilderFileEmitAllDts(isForDtsErrors) | seenKind;
                 const diagnostics = [];
-                state3.emitDiagnosticsPerFile.forEach((d) => addRange(diagnostics, d));
+                state2.emitDiagnosticsPerFile.forEach((d) => addRange(diagnostics, d));
                 return {
                   result: { emitSkipped: true, diagnostics },
-                  affected: state3.program
+                  affected: state2.program
                 };
               }
             }
           }
           if (!affected) {
-            if (isForDtsErrors || !getBuildInfoEmitPending(state3))
+            if (isForDtsErrors || !getBuildInfoEmitPending(state2))
               return;
-            const affected2 = state3.program;
+            const affected2 = state2.program;
             const result2 = affected2.emitBuildInfo(writeFile2 || maybeBind(host, host.writeFile), cancellationToken);
-            state3.buildInfoEmitPending = false;
+            state2.buildInfoEmitPending = false;
             return { result: result2, affected: affected2 };
           }
         }
@@ -135123,32 +135123,32 @@ ${lanes.join(`
           emitOnly = 0;
         if (emitKind & 56)
           emitOnly = emitOnly === undefined ? 1 : undefined;
-        const result = !isForDtsErrors ? state3.program.emit(affected === state3.program ? undefined : affected, getWriteFileCallback(writeFile2, customTransformers), cancellationToken, emitOnly, customTransformers, undefined, true) : {
+        const result = !isForDtsErrors ? state2.program.emit(affected === state2.program ? undefined : affected, getWriteFileCallback(writeFile2, customTransformers), cancellationToken, emitOnly, customTransformers, undefined, true) : {
           emitSkipped: true,
-          diagnostics: state3.program.getDeclarationDiagnostics(affected === state3.program ? undefined : affected, cancellationToken)
+          diagnostics: state2.program.getDeclarationDiagnostics(affected === state2.program ? undefined : affected, cancellationToken)
         };
-        if (affected !== state3.program) {
+        if (affected !== state2.program) {
           const affectedSourceFile = affected;
-          state3.seenAffectedFiles.add(affectedSourceFile.resolvedPath);
-          if (state3.affectedFilesIndex !== undefined)
-            state3.affectedFilesIndex++;
-          state3.buildInfoEmitPending = true;
-          const existing = ((_b = state3.seenEmittedFiles) == null ? undefined : _b.get(affectedSourceFile.resolvedPath)) || 0;
-          (state3.seenEmittedFiles ?? (state3.seenEmittedFiles = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, emitKind | existing);
-          const existingPending = ((_c = state3.affectedFilesPendingEmit) == null ? undefined : _c.get(affectedSourceFile.resolvedPath)) || programEmitKind;
+          state2.seenAffectedFiles.add(affectedSourceFile.resolvedPath);
+          if (state2.affectedFilesIndex !== undefined)
+            state2.affectedFilesIndex++;
+          state2.buildInfoEmitPending = true;
+          const existing = ((_b = state2.seenEmittedFiles) == null ? undefined : _b.get(affectedSourceFile.resolvedPath)) || 0;
+          (state2.seenEmittedFiles ?? (state2.seenEmittedFiles = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, emitKind | existing);
+          const existingPending = ((_c = state2.affectedFilesPendingEmit) == null ? undefined : _c.get(affectedSourceFile.resolvedPath)) || programEmitKind;
           const pendingKind = getPendingEmitKind(existingPending, emitKind | existing);
           if (pendingKind)
-            (state3.affectedFilesPendingEmit ?? (state3.affectedFilesPendingEmit = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, pendingKind);
+            (state2.affectedFilesPendingEmit ?? (state2.affectedFilesPendingEmit = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, pendingKind);
           else
-            (_d = state3.affectedFilesPendingEmit) == null || _d.delete(affectedSourceFile.resolvedPath);
+            (_d = state2.affectedFilesPendingEmit) == null || _d.delete(affectedSourceFile.resolvedPath);
           if (result.diagnostics.length)
-            (state3.emitDiagnosticsPerFile ?? (state3.emitDiagnosticsPerFile = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, result.diagnostics);
+            (state2.emitDiagnosticsPerFile ?? (state2.emitDiagnosticsPerFile = /* @__PURE__ */ new Map)).set(affectedSourceFile.resolvedPath, result.diagnostics);
         } else {
-          state3.changedFilesSet.clear();
-          state3.programEmitPending = state3.changedFilesSet.size ? getPendingEmitKind(programEmitKind, emitKind) : state3.programEmitPending ? getPendingEmitKind(state3.programEmitPending, emitKind) : undefined;
-          state3.seenProgramEmit = emitKind | (state3.seenProgramEmit || 0);
+          state2.changedFilesSet.clear();
+          state2.programEmitPending = state2.changedFilesSet.size ? getPendingEmitKind(programEmitKind, emitKind) : state2.programEmitPending ? getPendingEmitKind(state2.programEmitPending, emitKind) : undefined;
+          state2.seenProgramEmit = emitKind | (state2.seenProgramEmit || 0);
           setEmitDiagnosticsPerFile(result.diagnostics);
-          state3.buildInfoEmitPending = true;
+          state2.buildInfoEmitPending = true;
         }
         return { result, affected };
       }
@@ -135163,35 +135163,35 @@ ${lanes.join(`
           diagnostics2.push(d);
         });
         if (emitDiagnosticsPerFile)
-          state3.emitDiagnosticsPerFile = emitDiagnosticsPerFile;
+          state2.emitDiagnosticsPerFile = emitDiagnosticsPerFile;
       }
       function emitNextAffectedFile(writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers) {
         return emitNextAffectedFileOrDtsErrors(writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers, false);
       }
       function getWriteFileCallback(writeFile2, customTransformers) {
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
-        if (!getEmitDeclarations(state3.compilerOptions))
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
+        if (!getEmitDeclarations(state2.compilerOptions))
           return writeFile2 || maybeBind(host, host.writeFile);
         return (fileName, text, writeByteOrderMark, onError, sourceFiles, data) => {
           var _a3, _b, _c;
           if (isDeclarationFileName(fileName)) {
-            if (!state3.compilerOptions.outFile) {
+            if (!state2.compilerOptions.outFile) {
               Debug.assert((sourceFiles == null ? undefined : sourceFiles.length) === 1);
               let emitSignature;
               if (!customTransformers) {
                 const file3 = sourceFiles[0];
-                const info = state3.fileInfos.get(file3.resolvedPath);
+                const info = state2.fileInfos.get(file3.resolvedPath);
                 if (info.signature === file3.version) {
-                  const signature = computeSignatureWithDiagnostics(state3.program, file3, text, host, data);
+                  const signature = computeSignatureWithDiagnostics(state2.program, file3, text, host, data);
                   if (!((_a3 = data == null ? undefined : data.diagnostics) == null ? undefined : _a3.length))
                     emitSignature = signature;
                   if (signature !== file3.version) {
                     if (host.storeSignatureInfo)
-                      (state3.signatureInfo ?? (state3.signatureInfo = /* @__PURE__ */ new Map)).set(file3.resolvedPath, 1);
-                    if (state3.affectedFiles) {
-                      const existing = (_b = state3.oldSignatures) == null ? undefined : _b.get(file3.resolvedPath);
+                      (state2.signatureInfo ?? (state2.signatureInfo = /* @__PURE__ */ new Map)).set(file3.resolvedPath, 1);
+                    if (state2.affectedFiles) {
+                      const existing = (_b = state2.oldSignatures) == null ? undefined : _b.get(file3.resolvedPath);
                       if (existing === undefined)
-                        (state3.oldSignatures ?? (state3.oldSignatures = /* @__PURE__ */ new Map)).set(file3.resolvedPath, info.signature || false);
+                        (state2.oldSignatures ?? (state2.oldSignatures = /* @__PURE__ */ new Map)).set(file3.resolvedPath, info.signature || false);
                       info.signature = signature;
                     } else {
                       info.signature = signature;
@@ -135199,18 +135199,18 @@ ${lanes.join(`
                   }
                 }
               }
-              if (state3.compilerOptions.composite) {
+              if (state2.compilerOptions.composite) {
                 const filePath = sourceFiles[0].resolvedPath;
-                emitSignature = handleNewSignature((_c = state3.emitSignatures) == null ? undefined : _c.get(filePath), emitSignature);
+                emitSignature = handleNewSignature((_c = state2.emitSignatures) == null ? undefined : _c.get(filePath), emitSignature);
                 if (!emitSignature)
                   return data.skippedDtsWrite = true;
-                (state3.emitSignatures ?? (state3.emitSignatures = /* @__PURE__ */ new Map)).set(filePath, emitSignature);
+                (state2.emitSignatures ?? (state2.emitSignatures = /* @__PURE__ */ new Map)).set(filePath, emitSignature);
               }
-            } else if (state3.compilerOptions.composite) {
-              const newSignature = handleNewSignature(state3.outSignature, undefined);
+            } else if (state2.compilerOptions.composite) {
+              const newSignature = handleNewSignature(state2.outSignature, undefined);
               if (!newSignature)
                 return data.skippedDtsWrite = true;
-              state3.outSignature = newSignature;
+              state2.outSignature = newSignature;
             }
           }
           if (writeFile2)
@@ -135218,7 +135218,7 @@ ${lanes.join(`
           else if (host.writeFile)
             host.writeFile(fileName, text, writeByteOrderMark, onError, sourceFiles, data);
           else
-            state3.program.writeFile(fileName, text, writeByteOrderMark, onError, sourceFiles, data);
+            state2.program.writeFile(fileName, text, writeByteOrderMark, onError, sourceFiles, data);
           function handleNewSignature(oldSignatureFormat, newSignature) {
             const oldSignature = !oldSignatureFormat || isString(oldSignatureFormat) ? oldSignatureFormat : oldSignatureFormat[0];
             newSignature ?? (newSignature = computeSignature(text, host, data));
@@ -135230,17 +135230,17 @@ ${lanes.join(`
               else
                 data = { differsOnlyInMap: true };
             } else {
-              state3.hasChangedEmitSignature = true;
-              state3.latestChangedDtsFile = fileName;
+              state2.hasChangedEmitSignature = true;
+              state2.latestChangedDtsFile = fileName;
             }
             return newSignature;
           }
         };
       }
       function emit2(targetSourceFile, writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers) {
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
         if (kind === 1) {
-          assertSourceFileOkWithoutNextAffectedCall(state3, targetSourceFile);
+          assertSourceFileOkWithoutNextAffectedCall(state2, targetSourceFile);
         }
         const result = handleNoEmitOptions(builderProgram, targetSourceFile, writeFile2, cancellationToken);
         if (result)
@@ -135265,102 +135265,102 @@ ${lanes.join(`
               sourceMaps
             };
           } else {
-            clearAffectedFilesPendingEmit(state3, emitOnlyDtsFiles, false);
+            clearAffectedFilesPendingEmit(state2, emitOnlyDtsFiles, false);
           }
         }
-        const emitResult = state3.program.emit(targetSourceFile, getWriteFileCallback(writeFile2, customTransformers), cancellationToken, emitOnlyDtsFiles, customTransformers);
+        const emitResult = state2.program.emit(targetSourceFile, getWriteFileCallback(writeFile2, customTransformers), cancellationToken, emitOnlyDtsFiles, customTransformers);
         handleNonEmitBuilderWithEmitOrDtsErrors(targetSourceFile, emitOnlyDtsFiles, false, emitResult.diagnostics);
         return emitResult;
       }
       function handleNonEmitBuilderWithEmitOrDtsErrors(targetSourceFile, emitOnlyDtsFiles, isForDtsErrors, diagnostics) {
         if (!targetSourceFile && kind !== 1) {
-          clearAffectedFilesPendingEmit(state3, emitOnlyDtsFiles, isForDtsErrors);
+          clearAffectedFilesPendingEmit(state2, emitOnlyDtsFiles, isForDtsErrors);
           setEmitDiagnosticsPerFile(diagnostics);
         }
       }
       function getDeclarationDiagnostics2(sourceFile, cancellationToken) {
         var _a3;
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
         if (kind === 1) {
-          assertSourceFileOkWithoutNextAffectedCall(state3, sourceFile);
+          assertSourceFileOkWithoutNextAffectedCall(state2, sourceFile);
           let affectedEmitResult;
           let diagnostics;
           while (affectedEmitResult = emitNextAffectedFileOrDtsErrors(undefined, cancellationToken, undefined, undefined, true)) {
             if (!sourceFile)
               diagnostics = addRange(diagnostics, affectedEmitResult.result.diagnostics);
           }
-          return (!sourceFile ? diagnostics : (_a3 = state3.emitDiagnosticsPerFile) == null ? undefined : _a3.get(sourceFile.resolvedPath)) || emptyArray;
+          return (!sourceFile ? diagnostics : (_a3 = state2.emitDiagnosticsPerFile) == null ? undefined : _a3.get(sourceFile.resolvedPath)) || emptyArray;
         } else {
-          const result = state3.program.getDeclarationDiagnostics(sourceFile, cancellationToken);
+          const result = state2.program.getDeclarationDiagnostics(sourceFile, cancellationToken);
           handleNonEmitBuilderWithEmitOrDtsErrors(sourceFile, undefined, true, result);
           return result;
         }
       }
       function getSemanticDiagnosticsOfNextAffectedFile(cancellationToken, ignoreSourceFile) {
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
         while (true) {
-          const affected = getNextAffectedFile(state3, cancellationToken, host);
+          const affected = getNextAffectedFile(state2, cancellationToken, host);
           let result;
           if (!affected) {
-            if (state3.checkPending && !state3.compilerOptions.noCheck) {
-              state3.checkPending = undefined;
-              state3.buildInfoEmitPending = true;
+            if (state2.checkPending && !state2.compilerOptions.noCheck) {
+              state2.checkPending = undefined;
+              state2.buildInfoEmitPending = true;
             }
             return;
-          } else if (affected !== state3.program) {
+          } else if (affected !== state2.program) {
             const affectedSourceFile = affected;
             if (!ignoreSourceFile || !ignoreSourceFile(affectedSourceFile)) {
-              result = getSemanticDiagnosticsOfFile(state3, affectedSourceFile, cancellationToken);
+              result = getSemanticDiagnosticsOfFile(state2, affectedSourceFile, cancellationToken);
             }
-            state3.seenAffectedFiles.add(affectedSourceFile.resolvedPath);
-            state3.affectedFilesIndex++;
-            state3.buildInfoEmitPending = true;
+            state2.seenAffectedFiles.add(affectedSourceFile.resolvedPath);
+            state2.affectedFilesIndex++;
+            state2.buildInfoEmitPending = true;
             if (!result)
               continue;
           } else {
             let diagnostics;
             const semanticDiagnosticsPerFile = /* @__PURE__ */ new Map;
-            state3.program.getSourceFiles().forEach((sourceFile) => diagnostics = addRange(diagnostics, getSemanticDiagnosticsOfFile(state3, sourceFile, cancellationToken, semanticDiagnosticsPerFile)));
-            state3.semanticDiagnosticsPerFile = semanticDiagnosticsPerFile;
+            state2.program.getSourceFiles().forEach((sourceFile) => diagnostics = addRange(diagnostics, getSemanticDiagnosticsOfFile(state2, sourceFile, cancellationToken, semanticDiagnosticsPerFile)));
+            state2.semanticDiagnosticsPerFile = semanticDiagnosticsPerFile;
             result = diagnostics || emptyArray;
-            state3.changedFilesSet.clear();
-            state3.programEmitPending = getBuilderFileEmit(state3.compilerOptions);
-            if (!state3.compilerOptions.noCheck)
-              state3.checkPending = undefined;
-            state3.buildInfoEmitPending = true;
+            state2.changedFilesSet.clear();
+            state2.programEmitPending = getBuilderFileEmit(state2.compilerOptions);
+            if (!state2.compilerOptions.noCheck)
+              state2.checkPending = undefined;
+            state2.buildInfoEmitPending = true;
           }
           return { result, affected };
         }
       }
       function getSemanticDiagnostics(sourceFile, cancellationToken) {
-        Debug.assert(isBuilderProgramStateWithDefinedProgram(state3));
-        assertSourceFileOkWithoutNextAffectedCall(state3, sourceFile);
+        Debug.assert(isBuilderProgramStateWithDefinedProgram(state2));
+        assertSourceFileOkWithoutNextAffectedCall(state2, sourceFile);
         if (sourceFile) {
-          return getSemanticDiagnosticsOfFile(state3, sourceFile, cancellationToken);
+          return getSemanticDiagnosticsOfFile(state2, sourceFile, cancellationToken);
         }
         while (true) {
           const affectedResult = getSemanticDiagnosticsOfNextAffectedFile(cancellationToken);
           if (!affectedResult)
             break;
-          if (affectedResult.affected === state3.program)
+          if (affectedResult.affected === state2.program)
             return affectedResult.result;
         }
         let diagnostics;
-        for (const sourceFile2 of state3.program.getSourceFiles()) {
-          diagnostics = addRange(diagnostics, getSemanticDiagnosticsOfFile(state3, sourceFile2, cancellationToken));
+        for (const sourceFile2 of state2.program.getSourceFiles()) {
+          diagnostics = addRange(diagnostics, getSemanticDiagnosticsOfFile(state2, sourceFile2, cancellationToken));
         }
-        if (state3.checkPending && !state3.compilerOptions.noCheck) {
-          state3.checkPending = undefined;
-          state3.buildInfoEmitPending = true;
+        if (state2.checkPending && !state2.compilerOptions.noCheck) {
+          state2.checkPending = undefined;
+          state2.buildInfoEmitPending = true;
         }
         return diagnostics || emptyArray;
       }
     }
-    function addToAffectedFilesPendingEmit(state3, affectedFilePendingEmit, kind) {
+    function addToAffectedFilesPendingEmit(state2, affectedFilePendingEmit, kind) {
       var _a3, _b;
-      const existingKind = ((_a3 = state3.affectedFilesPendingEmit) == null ? undefined : _a3.get(affectedFilePendingEmit)) || 0;
-      (state3.affectedFilesPendingEmit ?? (state3.affectedFilesPendingEmit = /* @__PURE__ */ new Map)).set(affectedFilePendingEmit, existingKind | kind);
-      (_b = state3.emitDiagnosticsPerFile) == null || _b.delete(affectedFilePendingEmit);
+      const existingKind = ((_a3 = state2.affectedFilesPendingEmit) == null ? undefined : _a3.get(affectedFilePendingEmit)) || 0;
+      (state2.affectedFilesPendingEmit ?? (state2.affectedFilesPendingEmit = /* @__PURE__ */ new Map)).set(affectedFilePendingEmit, existingKind | kind);
+      (_b = state2.emitDiagnosticsPerFile) == null || _b.delete(affectedFilePendingEmit);
     }
     function toBuilderStateFileInfoForMultiEmit(fileInfo) {
       return isString(fileInfo) ? { version: fileInfo, signature: fileInfo, affectsGlobalScope: undefined, impliedFormat: undefined } : isString(fileInfo.signature) ? fileInfo : { version: fileInfo.version, signature: fileInfo.signature === false ? undefined : fileInfo.version, affectsGlobalScope: fileInfo.affectsGlobalScope, impliedFormat: fileInfo.impliedFormat };
@@ -135375,7 +135375,7 @@ ${lanes.join(`
       var _a3, _b, _c, _d;
       const buildInfoDirectory = getDirectoryPath(getNormalizedAbsolutePath(buildInfoPath, host.getCurrentDirectory()));
       const getCanonicalFileName = createGetCanonicalFileName(host.useCaseSensitiveFileNames());
-      let state3;
+      let state2;
       const filePaths = (_a3 = buildInfo.fileNames) == null ? undefined : _a3.map(toPathInBuildInfoDirectory);
       let filePathsSetList;
       const latestChangedDtsFile = buildInfo.latestChangedDtsFile ? toAbsolutePath(buildInfo.latestChangedDtsFile) : undefined;
@@ -135386,7 +135386,7 @@ ${lanes.join(`
           const path13 = toFilePath(index + 1);
           fileInfos.set(path13, isString(fileInfo) ? { version: fileInfo, signature: undefined, affectsGlobalScope: undefined, impliedFormat: undefined } : fileInfo);
         });
-        state3 = {
+        state2 = {
           fileInfos,
           compilerOptions: buildInfo.options ? convertToOptionsWithAbsolutePaths(buildInfo.options, toAbsolutePath) : {},
           semanticDiagnosticsPerFile: toPerFileSemanticDiagnostics(buildInfo.semanticDiagnosticsPerFile),
@@ -135418,7 +135418,7 @@ ${lanes.join(`
           }
         });
         const fullEmitForOptions = buildInfo.affectedFilesPendingEmit ? getBuilderFileEmit(buildInfo.options || {}) : undefined;
-        state3 = {
+        state2 = {
           fileInfos,
           compilerOptions: buildInfo.options ? convertToOptionsWithAbsolutePaths(buildInfo.options, toAbsolutePath) : {},
           referencedMap: toManyToManyPathMap(buildInfo.referencedMap, buildInfo.options ?? {}),
@@ -135434,11 +135434,11 @@ ${lanes.join(`
         };
       }
       return {
-        state: state3,
+        state: state2,
         getProgram: notImplemented,
         getProgramOrUndefined: returnUndefined,
         releaseProgram: noop,
-        getCompilerOptions: () => state3.compilerOptions,
+        getCompilerOptions: () => state2.compilerOptions,
         getSourceFile: notImplemented,
         getSourceFiles: notImplemented,
         getOptionsDiagnostics: notImplemented,
@@ -135532,13 +135532,13 @@ ${lanes.join(`
       const getCanonicalFileName = createGetCanonicalFileName(host.useCaseSensitiveFileNames());
       return buildInfo.root.map((r) => toPath(r, buildInfoDirectory, getCanonicalFileName));
     }
-    function createRedirectedBuilderProgram(state3, configFileParsingDiagnostics) {
+    function createRedirectedBuilderProgram(state2, configFileParsingDiagnostics) {
       return {
         state: undefined,
         getProgram,
-        getProgramOrUndefined: () => state3.program,
-        releaseProgram: () => state3.program = undefined,
-        getCompilerOptions: () => state3.compilerOptions,
+        getProgramOrUndefined: () => state2.program,
+        releaseProgram: () => state2.program = undefined,
+        getCompilerOptions: () => state2.compilerOptions,
         getSourceFile: (fileName) => getProgram().getSourceFile(fileName),
         getSourceFiles: () => getProgram().getSourceFiles(),
         getOptionsDiagnostics: (cancellationToken) => getProgram().getOptionsDiagnostics(cancellationToken),
@@ -135554,7 +135554,7 @@ ${lanes.join(`
         close: noop
       };
       function getProgram() {
-        return Debug.checkDefined(state3.program);
+        return Debug.checkDefined(state2.program);
       }
     }
     function createSemanticDiagnosticsBuilderProgram(newProgramOrRootNames, hostOrOptions, oldProgramOrHost, configFileParsingDiagnosticsOrOldProgram, configFileParsingDiagnostics, projectReferences) {
@@ -137807,9 +137807,9 @@ ${lanes.join(`
       const host = hostOrHostWithWatch;
       const hostWithWatch = hostOrHostWithWatch;
       const baseCompilerOptions = getCompilerOptionsOfBuildOptions(options2);
-      const compilerHost = createCompilerHostFromProgramHost(host, () => state3.projectCompilerOptions);
+      const compilerHost = createCompilerHostFromProgramHost(host, () => state2.projectCompilerOptions);
       setGetSourceFileAsHashVersioned(compilerHost);
-      compilerHost.getParsedCommandLine = (fileName) => parseConfigFile(state3, fileName, toResolvedConfigFilePath(state3, fileName));
+      compilerHost.getParsedCommandLine = (fileName) => parseConfigFile(state2, fileName, toResolvedConfigFilePath(state2, fileName));
       compilerHost.resolveModuleNameLiterals = maybeBind(host, host.resolveModuleNameLiterals);
       compilerHost.resolveTypeReferenceDirectiveReferences = maybeBind(host, host.resolveTypeReferenceDirectiveReferences);
       compilerHost.resolveLibrary = maybeBind(host, host.resolveLibrary);
@@ -137831,9 +137831,9 @@ ${lanes.join(`
         libraryResolutionCache = createModuleResolutionCache(compilerHost.getCurrentDirectory(), compilerHost.getCanonicalFileName, undefined, moduleResolutionCache == null ? undefined : moduleResolutionCache.getPackageJsonInfoCache());
         compilerHost.resolveLibrary = (libraryName, resolveFrom, options22) => resolveLibrary(libraryName, resolveFrom, options22, host, libraryResolutionCache);
       }
-      compilerHost.getBuildInfo = (fileName, configFilePath) => getBuildInfo3(state3, fileName, toResolvedConfigFilePath(state3, configFilePath), undefined);
+      compilerHost.getBuildInfo = (fileName, configFilePath) => getBuildInfo3(state2, fileName, toResolvedConfigFilePath(state2, configFilePath), undefined);
       const { watchFile: watchFile2, watchDirectory, writeLog } = createWatchFactory(hostWithWatch, options2);
-      const state3 = {
+      const state2 = {
         host,
         hostWithWatch,
         parseConfigFileHost: parseConfigHostFromCompilerHostLike(host),
@@ -137877,36 +137877,36 @@ ${lanes.join(`
         watchDirectory,
         writeLog
       };
-      return state3;
+      return state2;
     }
-    function toPath2(state3, fileName) {
-      return toPath(fileName, state3.compilerHost.getCurrentDirectory(), state3.compilerHost.getCanonicalFileName);
+    function toPath2(state2, fileName) {
+      return toPath(fileName, state2.compilerHost.getCurrentDirectory(), state2.compilerHost.getCanonicalFileName);
     }
-    function toResolvedConfigFilePath(state3, fileName) {
-      const { resolvedConfigFilePaths } = state3;
+    function toResolvedConfigFilePath(state2, fileName) {
+      const { resolvedConfigFilePaths } = state2;
       const path13 = resolvedConfigFilePaths.get(fileName);
       if (path13 !== undefined)
         return path13;
-      const resolvedPath = toPath2(state3, fileName);
+      const resolvedPath = toPath2(state2, fileName);
       resolvedConfigFilePaths.set(fileName, resolvedPath);
       return resolvedPath;
     }
     function isParsedCommandLine(entry) {
       return !!entry.options;
     }
-    function getCachedParsedConfigFile(state3, configFilePath) {
-      const value = state3.configFileCache.get(configFilePath);
+    function getCachedParsedConfigFile(state2, configFilePath) {
+      const value = state2.configFileCache.get(configFilePath);
       return value && isParsedCommandLine(value) ? value : undefined;
     }
-    function parseConfigFile(state3, configFileName, configFilePath) {
-      const { configFileCache } = state3;
+    function parseConfigFile(state2, configFileName, configFilePath) {
+      const { configFileCache } = state2;
       const value = configFileCache.get(configFilePath);
       if (value) {
         return isParsedCommandLine(value) ? value : undefined;
       }
       mark("SolutionBuilder::beforeConfigFileParsing");
       let diagnostic;
-      const { parseConfigFileHost, baseCompilerOptions, baseWatchOptions, extendedConfigCache, host } = state3;
+      const { parseConfigFileHost, baseCompilerOptions, baseWatchOptions, extendedConfigCache, host } = state2;
       let parsed;
       if (host.getParsedCommandLine) {
         parsed = host.getParsedCommandLine(configFileName);
@@ -137922,10 +137922,10 @@ ${lanes.join(`
       measure("SolutionBuilder::Config file parsing", "SolutionBuilder::beforeConfigFileParsing", "SolutionBuilder::afterConfigFileParsing");
       return parsed;
     }
-    function resolveProjectName(state3, name) {
-      return resolveConfigFileProjectName(resolvePath(state3.compilerHost.getCurrentDirectory(), name));
+    function resolveProjectName(state2, name) {
+      return resolveConfigFileProjectName(resolvePath(state2.compilerHost.getCurrentDirectory(), name));
     }
-    function createBuildOrder(state3, roots) {
+    function createBuildOrder(state2, roots) {
       const temporaryMarks = /* @__PURE__ */ new Map;
       const permanentMarks = /* @__PURE__ */ new Map;
       const circularityReportStack = [];
@@ -137936,7 +137936,7 @@ ${lanes.join(`
       }
       return circularDiagnostics ? { buildOrder: buildOrder || emptyArray, circularDiagnostics } : buildOrder || emptyArray;
       function visit(configFileName, inCircularContext) {
-        const projPath = toResolvedConfigFilePath(state3, configFileName);
+        const projPath = toResolvedConfigFilePath(state2, configFileName);
         if (permanentMarks.has(projPath))
           return;
         if (temporaryMarks.has(projPath)) {
@@ -137948,10 +137948,10 @@ ${lanes.join(`
         }
         temporaryMarks.set(projPath, true);
         circularityReportStack.push(configFileName);
-        const parsed = parseConfigFile(state3, configFileName, projPath);
+        const parsed = parseConfigFile(state2, configFileName, projPath);
         if (parsed && parsed.projectReferences) {
           for (const ref of parsed.projectReferences) {
-            const resolvedRefPath = resolveProjectName(state3, ref.path);
+            const resolvedRefPath = resolveProjectName(state2, ref.path);
             visit(resolvedRefPath, inCircularContext || ref.circular);
           }
         }
@@ -137960,26 +137960,26 @@ ${lanes.join(`
         (buildOrder || (buildOrder = [])).push(configFileName);
       }
     }
-    function getBuildOrder(state3) {
-      return state3.buildOrder || createStateBuildOrder(state3);
+    function getBuildOrder(state2) {
+      return state2.buildOrder || createStateBuildOrder(state2);
     }
-    function createStateBuildOrder(state3) {
-      const buildOrder = createBuildOrder(state3, state3.rootNames.map((f) => resolveProjectName(state3, f)));
-      state3.resolvedConfigFilePaths.clear();
-      const currentProjects = new Set(getBuildOrderFromAnyBuildOrder(buildOrder).map((resolved) => toResolvedConfigFilePath(state3, resolved)));
+    function createStateBuildOrder(state2) {
+      const buildOrder = createBuildOrder(state2, state2.rootNames.map((f) => resolveProjectName(state2, f)));
+      state2.resolvedConfigFilePaths.clear();
+      const currentProjects = new Set(getBuildOrderFromAnyBuildOrder(buildOrder).map((resolved) => toResolvedConfigFilePath(state2, resolved)));
       const noopOnDelete = { onDeleteValue: noop };
-      mutateMapSkippingNewValues(state3.configFileCache, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.projectStatus, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.builderPrograms, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.diagnostics, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.projectPendingBuild, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.projectErrorsReported, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.buildInfoCache, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.outputTimeStamps, currentProjects, noopOnDelete);
-      mutateMapSkippingNewValues(state3.lastCachedPackageJsonLookups, currentProjects, noopOnDelete);
-      if (state3.watch) {
-        mutateMapSkippingNewValues(state3.allWatchedConfigFiles, currentProjects, { onDeleteValue: closeFileWatcher });
-        state3.allWatchedExtendedConfigFiles.forEach((watcher) => {
+      mutateMapSkippingNewValues(state2.configFileCache, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.projectStatus, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.builderPrograms, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.diagnostics, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.projectPendingBuild, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.projectErrorsReported, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.buildInfoCache, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.outputTimeStamps, currentProjects, noopOnDelete);
+      mutateMapSkippingNewValues(state2.lastCachedPackageJsonLookups, currentProjects, noopOnDelete);
+      if (state2.watch) {
+        mutateMapSkippingNewValues(state2.allWatchedConfigFiles, currentProjects, { onDeleteValue: closeFileWatcher });
+        state2.allWatchedExtendedConfigFiles.forEach((watcher) => {
           watcher.projects.forEach((project) => {
             if (!currentProjects.has(project)) {
               watcher.projects.delete(project);
@@ -137987,35 +137987,35 @@ ${lanes.join(`
           });
           watcher.close();
         });
-        mutateMapSkippingNewValues(state3.allWatchedWildcardDirectories, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcherOf) });
-        mutateMapSkippingNewValues(state3.allWatchedInputFiles, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcher) });
-        mutateMapSkippingNewValues(state3.allWatchedPackageJsonFiles, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcher) });
+        mutateMapSkippingNewValues(state2.allWatchedWildcardDirectories, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcherOf) });
+        mutateMapSkippingNewValues(state2.allWatchedInputFiles, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcher) });
+        mutateMapSkippingNewValues(state2.allWatchedPackageJsonFiles, currentProjects, { onDeleteValue: (existingMap) => existingMap.forEach(closeFileWatcher) });
       }
-      return state3.buildOrder = buildOrder;
+      return state2.buildOrder = buildOrder;
     }
-    function getBuildOrderFor(state3, project, onlyReferences) {
-      const resolvedProject = project && resolveProjectName(state3, project);
-      const buildOrderFromState = getBuildOrder(state3);
+    function getBuildOrderFor(state2, project, onlyReferences) {
+      const resolvedProject = project && resolveProjectName(state2, project);
+      const buildOrderFromState = getBuildOrder(state2);
       if (isCircularBuildOrder(buildOrderFromState))
         return buildOrderFromState;
       if (resolvedProject) {
-        const projectPath = toResolvedConfigFilePath(state3, resolvedProject);
-        const projectIndex = findIndex(buildOrderFromState, (configFileName) => toResolvedConfigFilePath(state3, configFileName) === projectPath);
+        const projectPath = toResolvedConfigFilePath(state2, resolvedProject);
+        const projectIndex = findIndex(buildOrderFromState, (configFileName) => toResolvedConfigFilePath(state2, configFileName) === projectPath);
         if (projectIndex === -1)
           return;
       }
-      const buildOrder = resolvedProject ? createBuildOrder(state3, [resolvedProject]) : buildOrderFromState;
+      const buildOrder = resolvedProject ? createBuildOrder(state2, [resolvedProject]) : buildOrderFromState;
       Debug.assert(!isCircularBuildOrder(buildOrder));
       Debug.assert(!onlyReferences || resolvedProject !== undefined);
       Debug.assert(!onlyReferences || buildOrder[buildOrder.length - 1] === resolvedProject);
       return onlyReferences ? buildOrder.slice(0, buildOrder.length - 1) : buildOrder;
     }
-    function enableCache(state3) {
-      if (state3.cache) {
-        disableCache(state3);
+    function enableCache(state2) {
+      if (state2.cache) {
+        disableCache(state2);
       }
-      const { compilerHost, host } = state3;
-      const originalReadFileWithCache = state3.readFileWithCache;
+      const { compilerHost, host } = state2;
+      const originalReadFileWithCache = state2.readFileWithCache;
       const originalGetSourceFile = compilerHost.getSourceFile;
       const {
         originalReadFile,
@@ -138025,10 +138025,10 @@ ${lanes.join(`
         originalWriteFile,
         getSourceFileWithCache,
         readFileWithCache
-      } = changeCompilerHostLikeToUseCache(host, (fileName) => toPath2(state3, fileName), (...args) => originalGetSourceFile.call(compilerHost, ...args));
-      state3.readFileWithCache = readFileWithCache;
+      } = changeCompilerHostLikeToUseCache(host, (fileName) => toPath2(state2, fileName), (...args) => originalGetSourceFile.call(compilerHost, ...args));
+      state2.readFileWithCache = readFileWithCache;
       compilerHost.getSourceFile = getSourceFileWithCache;
-      state3.cache = {
+      state2.cache = {
         originalReadFile,
         originalFileExists,
         originalDirectoryExists,
@@ -138038,26 +138038,26 @@ ${lanes.join(`
         originalGetSourceFile
       };
     }
-    function disableCache(state3) {
-      if (!state3.cache)
+    function disableCache(state2) {
+      if (!state2.cache)
         return;
-      const { cache, host, compilerHost, extendedConfigCache, moduleResolutionCache, typeReferenceDirectiveResolutionCache, libraryResolutionCache } = state3;
+      const { cache, host, compilerHost, extendedConfigCache, moduleResolutionCache, typeReferenceDirectiveResolutionCache, libraryResolutionCache } = state2;
       host.readFile = cache.originalReadFile;
       host.fileExists = cache.originalFileExists;
       host.directoryExists = cache.originalDirectoryExists;
       host.createDirectory = cache.originalCreateDirectory;
       host.writeFile = cache.originalWriteFile;
       compilerHost.getSourceFile = cache.originalGetSourceFile;
-      state3.readFileWithCache = cache.originalReadFileWithCache;
+      state2.readFileWithCache = cache.originalReadFileWithCache;
       extendedConfigCache.clear();
       moduleResolutionCache == null || moduleResolutionCache.clear();
       typeReferenceDirectiveResolutionCache == null || typeReferenceDirectiveResolutionCache.clear();
       libraryResolutionCache == null || libraryResolutionCache.clear();
-      state3.cache = undefined;
+      state2.cache = undefined;
     }
-    function clearProjectStatus(state3, resolved) {
-      state3.projectStatus.delete(resolved);
-      state3.diagnostics.delete(resolved);
+    function clearProjectStatus(state2, resolved) {
+      state2.projectStatus.delete(resolved);
+      state2.diagnostics.delete(resolved);
     }
     function addProjToQueue({ projectPendingBuild }, proj, updateLevel) {
       const value = projectPendingBuild.get(proj);
@@ -138067,15 +138067,15 @@ ${lanes.join(`
         projectPendingBuild.set(proj, updateLevel);
       }
     }
-    function setupInitialBuild(state3, cancellationToken) {
-      if (!state3.allProjectBuildPending)
+    function setupInitialBuild(state2, cancellationToken) {
+      if (!state2.allProjectBuildPending)
         return;
-      state3.allProjectBuildPending = false;
-      if (state3.options.watch)
-        reportWatchStatus(state3, Diagnostics.Starting_compilation_in_watch_mode);
-      enableCache(state3);
-      const buildOrder = getBuildOrderFromAnyBuildOrder(getBuildOrder(state3));
-      buildOrder.forEach((configFileName) => state3.projectPendingBuild.set(toResolvedConfigFilePath(state3, configFileName), 0));
+      state2.allProjectBuildPending = false;
+      if (state2.options.watch)
+        reportWatchStatus(state2, Diagnostics.Starting_compilation_in_watch_mode);
+      enableCache(state2);
+      const buildOrder = getBuildOrderFromAnyBuildOrder(getBuildOrder(state2));
+      buildOrder.forEach((configFileName) => state2.projectPendingBuild.set(toResolvedConfigFilePath(state2, configFileName), 0));
       if (cancellationToken) {
         cancellationToken.throwIfCancellationRequested();
       }
@@ -138085,11 +138085,11 @@ ${lanes.join(`
       InvalidatedProjectKind2[InvalidatedProjectKind2["UpdateOutputFileStamps"] = 1] = "UpdateOutputFileStamps";
       return InvalidatedProjectKind2;
     })(InvalidatedProjectKind || {});
-    function doneInvalidatedProject(state3, projectPath) {
-      state3.projectPendingBuild.delete(projectPath);
-      return state3.diagnostics.has(projectPath) ? 1 : 0;
+    function doneInvalidatedProject(state2, projectPath) {
+      state2.projectPendingBuild.delete(projectPath);
+      return state2.diagnostics.has(projectPath) ? 1 : 0;
     }
-    function createUpdateOutputFileStampsProject(state3, project, projectPath, config3, buildOrder) {
+    function createUpdateOutputFileStampsProject(state2, project, projectPath, config3, buildOrder) {
       let updateOutputFileStampsPending = true;
       return {
         kind: 1,
@@ -138097,21 +138097,21 @@ ${lanes.join(`
         projectPath,
         buildOrder,
         getCompilerOptions: () => config3.options,
-        getCurrentDirectory: () => state3.compilerHost.getCurrentDirectory(),
+        getCurrentDirectory: () => state2.compilerHost.getCurrentDirectory(),
         updateOutputFileStatmps: () => {
-          updateOutputTimestamps(state3, config3, projectPath);
+          updateOutputTimestamps(state2, config3, projectPath);
           updateOutputFileStampsPending = false;
         },
         done: () => {
           if (updateOutputFileStampsPending) {
-            updateOutputTimestamps(state3, config3, projectPath);
+            updateOutputTimestamps(state2, config3, projectPath);
           }
           mark("SolutionBuilder::Timestamps only updates");
-          return doneInvalidatedProject(state3, projectPath);
+          return doneInvalidatedProject(state2, projectPath);
         }
       };
     }
-    function createBuildOrUpdateInvalidedProject(state3, project, projectPath, projectIndex, config3, status, buildOrder) {
+    function createBuildOrUpdateInvalidedProject(state2, project, projectPath, projectIndex, config3, status, buildOrder) {
       let step = 0;
       let program;
       let buildResult;
@@ -138121,7 +138121,7 @@ ${lanes.join(`
         projectPath,
         buildOrder,
         getCompilerOptions: () => config3.options,
-        getCurrentDirectory: () => state3.compilerHost.getCurrentDirectory(),
+        getCurrentDirectory: () => state2.compilerHost.getCurrentDirectory(),
         getBuilderProgram: () => withProgramOrUndefined(identity),
         getProgram: () => withProgramOrUndefined((program2) => program2.getProgramOrUndefined()),
         getSourceFile: (fileName) => withProgramOrUndefined((program2) => program2.getSourceFile(fileName)),
@@ -138137,7 +138137,7 @@ ${lanes.join(`
           if (targetSourceFile || emitOnlyDtsFiles) {
             return withProgramOrUndefined((program2) => {
               var _a3, _b;
-              return program2.emit(targetSourceFile, writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers || ((_b = (_a3 = state3.host).getCustomTransformers) == null ? undefined : _b.call(_a3, project)));
+              return program2.emit(targetSourceFile, writeFile2, cancellationToken, emitOnlyDtsFiles, customTransformers || ((_b = (_a3 = state2.host).getCustomTransformers) == null ? undefined : _b.call(_a3, project)));
             });
           }
           executeSteps(0, cancellationToken);
@@ -138148,7 +138148,7 @@ ${lanes.join(`
       function done(cancellationToken, writeFile2, customTransformers) {
         executeSteps(3, cancellationToken, writeFile2, customTransformers);
         mark("SolutionBuilder::Projects built");
-        return doneInvalidatedProject(state3, projectPath);
+        return doneInvalidatedProject(state2, projectPath);
       }
       function withProgramOrUndefined(action) {
         executeSteps(0);
@@ -138160,29 +138160,29 @@ ${lanes.join(`
       function createProgram2() {
         var _a3, _b, _c;
         Debug.assert(program === undefined);
-        if (state3.options.dry) {
-          reportStatus(state3, Diagnostics.A_non_dry_build_would_build_project_0, project);
+        if (state2.options.dry) {
+          reportStatus(state2, Diagnostics.A_non_dry_build_would_build_project_0, project);
           buildResult = 1;
           step = 2;
           return;
         }
-        if (state3.options.verbose)
-          reportStatus(state3, Diagnostics.Building_project_0, project);
+        if (state2.options.verbose)
+          reportStatus(state2, Diagnostics.Building_project_0, project);
         if (config3.fileNames.length === 0) {
-          reportAndStoreErrors(state3, projectPath, getConfigFileParsingDiagnostics(config3));
+          reportAndStoreErrors(state2, projectPath, getConfigFileParsingDiagnostics(config3));
           buildResult = 0;
           step = 2;
           return;
         }
-        const { host, compilerHost } = state3;
-        state3.projectCompilerOptions = config3.options;
-        (_a3 = state3.moduleResolutionCache) == null || _a3.update(config3.options);
-        (_b = state3.typeReferenceDirectiveResolutionCache) == null || _b.update(config3.options);
-        program = host.createProgram(config3.fileNames, config3.options, compilerHost, getOldProgram(state3, projectPath, config3), getConfigFileParsingDiagnostics(config3), config3.projectReferences);
-        if (state3.watch) {
-          const internalMap = (_c = state3.moduleResolutionCache) == null ? undefined : _c.getPackageJsonInfoCache().getInternalMap();
-          state3.lastCachedPackageJsonLookups.set(projectPath, internalMap && new Set(arrayFrom(internalMap.values(), (data) => state3.host.realpath && (isPackageJsonInfo(data) || data.directoryExists) ? state3.host.realpath(combinePaths(data.packageDirectory, "package.json")) : combinePaths(data.packageDirectory, "package.json"))));
-          state3.builderPrograms.set(projectPath, program);
+        const { host, compilerHost } = state2;
+        state2.projectCompilerOptions = config3.options;
+        (_a3 = state2.moduleResolutionCache) == null || _a3.update(config3.options);
+        (_b = state2.typeReferenceDirectiveResolutionCache) == null || _b.update(config3.options);
+        program = host.createProgram(config3.fileNames, config3.options, compilerHost, getOldProgram(state2, projectPath, config3), getConfigFileParsingDiagnostics(config3), config3.projectReferences);
+        if (state2.watch) {
+          const internalMap = (_c = state2.moduleResolutionCache) == null ? undefined : _c.getPackageJsonInfoCache().getInternalMap();
+          state2.lastCachedPackageJsonLookups.set(projectPath, internalMap && new Set(arrayFrom(internalMap.values(), (data) => state2.host.realpath && (isPackageJsonInfo(data) || data.directoryExists) ? state2.host.realpath(combinePaths(data.packageDirectory, "package.json")) : combinePaths(data.packageDirectory, "package.json"))));
+          state2.builderPrograms.set(projectPath, program);
         }
         step++;
       }
@@ -138190,59 +138190,59 @@ ${lanes.join(`
         var _a3, _b, _c;
         Debug.assertIsDefined(program);
         Debug.assert(step === 1);
-        const { host, compilerHost } = state3;
+        const { host, compilerHost } = state2;
         const emittedOutputs = /* @__PURE__ */ new Map;
         const options2 = program.getCompilerOptions();
         const isIncremental = isIncrementalCompilation(options2);
         let outputTimeStampMap;
         let now;
-        const { emitResult, diagnostics } = emitFilesAndReportErrors(program, (d) => host.reportDiagnostic(d), state3.write, undefined, (name, text, writeByteOrderMark, onError, sourceFiles, data) => {
+        const { emitResult, diagnostics } = emitFilesAndReportErrors(program, (d) => host.reportDiagnostic(d), state2.write, undefined, (name, text, writeByteOrderMark, onError, sourceFiles, data) => {
           var _a22;
-          const path13 = toPath2(state3, name);
-          emittedOutputs.set(toPath2(state3, name), name);
+          const path13 = toPath2(state2, name);
+          emittedOutputs.set(toPath2(state2, name), name);
           if (data == null ? undefined : data.buildInfo) {
-            now || (now = getCurrentTime(state3.host));
+            now || (now = getCurrentTime(state2.host));
             const isChangedSignature2 = (_a22 = program.hasChangedEmitSignature) == null ? undefined : _a22.call(program);
-            const existing = getBuildInfoCacheEntry(state3, name, projectPath);
+            const existing = getBuildInfoCacheEntry(state2, name, projectPath);
             if (existing) {
               existing.buildInfo = data.buildInfo;
               existing.modifiedTime = now;
               if (isChangedSignature2)
                 existing.latestChangedDtsTime = now;
             } else {
-              state3.buildInfoCache.set(projectPath, {
-                path: toPath2(state3, name),
+              state2.buildInfoCache.set(projectPath, {
+                path: toPath2(state2, name),
                 buildInfo: data.buildInfo,
                 modifiedTime: now,
                 latestChangedDtsTime: isChangedSignature2 ? now : undefined
               });
             }
           }
-          const modifiedTime = (data == null ? undefined : data.differsOnlyInMap) ? getModifiedTime(state3.host, name) : undefined;
+          const modifiedTime = (data == null ? undefined : data.differsOnlyInMap) ? getModifiedTime(state2.host, name) : undefined;
           (writeFileCallback || compilerHost.writeFile)(name, text, writeByteOrderMark, onError, sourceFiles, data);
           if (data == null ? undefined : data.differsOnlyInMap)
-            state3.host.setModifiedTime(name, modifiedTime);
-          else if (!isIncremental && state3.watch) {
-            (outputTimeStampMap || (outputTimeStampMap = getOutputTimeStampMap(state3, projectPath))).set(path13, now || (now = getCurrentTime(state3.host)));
+            state2.host.setModifiedTime(name, modifiedTime);
+          else if (!isIncremental && state2.watch) {
+            (outputTimeStampMap || (outputTimeStampMap = getOutputTimeStampMap(state2, projectPath))).set(path13, now || (now = getCurrentTime(state2.host)));
           }
-        }, cancellationToken, undefined, customTransformers || ((_b = (_a3 = state3.host).getCustomTransformers) == null ? undefined : _b.call(_a3, project)));
+        }, cancellationToken, undefined, customTransformers || ((_b = (_a3 = state2.host).getCustomTransformers) == null ? undefined : _b.call(_a3, project)));
         if ((!options2.noEmitOnError || !diagnostics.length) && (emittedOutputs.size || status.type !== 8)) {
-          updateOutputTimestampsWorker(state3, config3, projectPath, Diagnostics.Updating_unchanged_output_timestamps_of_project_0, emittedOutputs);
+          updateOutputTimestampsWorker(state2, config3, projectPath, Diagnostics.Updating_unchanged_output_timestamps_of_project_0, emittedOutputs);
         }
-        state3.projectErrorsReported.set(projectPath, true);
+        state2.projectErrorsReported.set(projectPath, true);
         buildResult = ((_c = program.hasChangedEmitSignature) == null ? undefined : _c.call(program)) ? 0 : 2;
         if (!diagnostics.length) {
-          state3.diagnostics.delete(projectPath);
-          state3.projectStatus.set(projectPath, {
+          state2.diagnostics.delete(projectPath);
+          state2.projectStatus.set(projectPath, {
             type: 1,
             oldestOutputFileName: firstOrUndefinedIterator(emittedOutputs.values()) ?? getFirstProjectOutput(config3, !host.useCaseSensitiveFileNames())
           });
         } else {
-          state3.diagnostics.set(projectPath, diagnostics);
-          state3.projectStatus.set(projectPath, { type: 0, reason: `it had errors` });
+          state2.diagnostics.set(projectPath, diagnostics);
+          state2.projectStatus.set(projectPath, { type: 0, reason: `it had errors` });
           buildResult |= 4;
         }
-        afterProgramDone(state3, program);
+        afterProgramDone(state2, program);
         step = 2;
         return emitResult;
       }
@@ -138257,7 +138257,7 @@ ${lanes.join(`
               emit2(writeFile2, cancellationToken, customTransformers);
               break;
             case 2:
-              queueReferencingProjects(state3, project, projectPath, projectIndex, config3, buildOrder, Debug.checkDefined(buildResult));
+              queueReferencingProjects(state2, project, projectPath, projectIndex, config3, buildOrder, Debug.checkDefined(buildResult));
               step++;
               break;
             case 3:
@@ -138268,53 +138268,53 @@ ${lanes.join(`
         }
       }
     }
-    function getNextInvalidatedProjectCreateInfo(state3, buildOrder, reportQueue) {
-      if (!state3.projectPendingBuild.size)
+    function getNextInvalidatedProjectCreateInfo(state2, buildOrder, reportQueue) {
+      if (!state2.projectPendingBuild.size)
         return;
       if (isCircularBuildOrder(buildOrder))
         return;
-      const { options: options2, projectPendingBuild } = state3;
+      const { options: options2, projectPendingBuild } = state2;
       for (let projectIndex = 0;projectIndex < buildOrder.length; projectIndex++) {
         const project = buildOrder[projectIndex];
-        const projectPath = toResolvedConfigFilePath(state3, project);
-        const updateLevel = state3.projectPendingBuild.get(projectPath);
+        const projectPath = toResolvedConfigFilePath(state2, project);
+        const updateLevel = state2.projectPendingBuild.get(projectPath);
         if (updateLevel === undefined)
           continue;
         if (reportQueue) {
           reportQueue = false;
-          reportBuildQueue(state3, buildOrder);
+          reportBuildQueue(state2, buildOrder);
         }
-        const config3 = parseConfigFile(state3, project, projectPath);
+        const config3 = parseConfigFile(state2, project, projectPath);
         if (!config3) {
-          reportParseConfigFileDiagnostic(state3, projectPath);
+          reportParseConfigFileDiagnostic(state2, projectPath);
           projectPendingBuild.delete(projectPath);
           continue;
         }
         if (updateLevel === 2) {
-          watchConfigFile(state3, project, projectPath, config3);
-          watchExtendedConfigFiles(state3, projectPath, config3);
-          watchWildCardDirectories(state3, project, projectPath, config3);
-          watchInputFiles(state3, project, projectPath, config3);
-          watchPackageJsonFiles(state3, project, projectPath, config3);
+          watchConfigFile(state2, project, projectPath, config3);
+          watchExtendedConfigFiles(state2, projectPath, config3);
+          watchWildCardDirectories(state2, project, projectPath, config3);
+          watchInputFiles(state2, project, projectPath, config3);
+          watchPackageJsonFiles(state2, project, projectPath, config3);
         } else if (updateLevel === 1) {
-          config3.fileNames = getFileNamesFromConfigSpecs(config3.options.configFile.configFileSpecs, getDirectoryPath(project), config3.options, state3.parseConfigFileHost);
+          config3.fileNames = getFileNamesFromConfigSpecs(config3.options.configFile.configFileSpecs, getDirectoryPath(project), config3.options, state2.parseConfigFileHost);
           updateErrorForNoInputFiles(config3.fileNames, project, config3.options.configFile.configFileSpecs, config3.errors, canJsonReportNoInputFiles(config3.raw));
-          watchInputFiles(state3, project, projectPath, config3);
-          watchPackageJsonFiles(state3, project, projectPath, config3);
+          watchInputFiles(state2, project, projectPath, config3);
+          watchPackageJsonFiles(state2, project, projectPath, config3);
         }
-        const status = getUpToDateStatus(state3, config3, projectPath);
+        const status = getUpToDateStatus(state2, config3, projectPath);
         if (!options2.force) {
           if (status.type === 1) {
-            verboseReportProjectStatus(state3, project, status);
-            reportAndStoreErrors(state3, projectPath, getConfigFileParsingDiagnostics(config3));
+            verboseReportProjectStatus(state2, project, status);
+            reportAndStoreErrors(state2, projectPath, getConfigFileParsingDiagnostics(config3));
             projectPendingBuild.delete(projectPath);
             if (options2.dry) {
-              reportStatus(state3, Diagnostics.Project_0_is_up_to_date, project);
+              reportStatus(state2, Diagnostics.Project_0_is_up_to_date, project);
             }
             continue;
           }
           if (status.type === 2 || status.type === 15) {
-            reportAndStoreErrors(state3, projectPath, getConfigFileParsingDiagnostics(config3));
+            reportAndStoreErrors(state2, projectPath, getConfigFileParsingDiagnostics(config3));
             return {
               kind: 1,
               status,
@@ -138326,17 +138326,17 @@ ${lanes.join(`
           }
         }
         if (status.type === 12) {
-          verboseReportProjectStatus(state3, project, status);
-          reportAndStoreErrors(state3, projectPath, getConfigFileParsingDiagnostics(config3));
+          verboseReportProjectStatus(state2, project, status);
+          reportAndStoreErrors(state2, projectPath, getConfigFileParsingDiagnostics(config3));
           projectPendingBuild.delete(projectPath);
           if (options2.verbose) {
-            reportStatus(state3, status.upstreamProjectBlocked ? Diagnostics.Skipping_build_of_project_0_because_its_dependency_1_was_not_built : Diagnostics.Skipping_build_of_project_0_because_its_dependency_1_has_errors, project, status.upstreamProjectName);
+            reportStatus(state2, status.upstreamProjectBlocked ? Diagnostics.Skipping_build_of_project_0_because_its_dependency_1_was_not_built : Diagnostics.Skipping_build_of_project_0_because_its_dependency_1_has_errors, project, status.upstreamProjectName);
           }
           continue;
         }
         if (status.type === 16) {
-          verboseReportProjectStatus(state3, project, status);
-          reportAndStoreErrors(state3, projectPath, getConfigFileParsingDiagnostics(config3));
+          verboseReportProjectStatus(state2, project, status);
+          reportAndStoreErrors(state2, projectPath, getConfigFileParsingDiagnostics(config3));
           projectPendingBuild.delete(projectPath);
           continue;
         }
@@ -138351,15 +138351,15 @@ ${lanes.join(`
       }
       return;
     }
-    function createInvalidatedProjectWithInfo(state3, info, buildOrder) {
-      verboseReportProjectStatus(state3, info.project, info.status);
-      return info.kind !== 1 ? createBuildOrUpdateInvalidedProject(state3, info.project, info.projectPath, info.projectIndex, info.config, info.status, buildOrder) : createUpdateOutputFileStampsProject(state3, info.project, info.projectPath, info.config, buildOrder);
+    function createInvalidatedProjectWithInfo(state2, info, buildOrder) {
+      verboseReportProjectStatus(state2, info.project, info.status);
+      return info.kind !== 1 ? createBuildOrUpdateInvalidedProject(state2, info.project, info.projectPath, info.projectIndex, info.config, info.status, buildOrder) : createUpdateOutputFileStampsProject(state2, info.project, info.projectPath, info.config, buildOrder);
     }
-    function getNextInvalidatedProject(state3, buildOrder, reportQueue) {
-      const info = getNextInvalidatedProjectCreateInfo(state3, buildOrder, reportQueue);
+    function getNextInvalidatedProject(state2, buildOrder, reportQueue) {
+      const info = getNextInvalidatedProjectCreateInfo(state2, buildOrder, reportQueue);
       if (!info)
         return info;
-      return createInvalidatedProjectWithInfo(state3, info, buildOrder);
+      return createInvalidatedProjectWithInfo(state2, info, buildOrder);
     }
     function getOldProgram({ options: options2, builderPrograms, compilerHost }, proj, parsed) {
       if (options2.force)
@@ -138369,56 +138369,56 @@ ${lanes.join(`
         return value;
       return readBuilderProgram(parsed.options, compilerHost);
     }
-    function afterProgramDone(state3, program) {
+    function afterProgramDone(state2, program) {
       if (program) {
-        if (state3.host.afterProgramEmitAndDiagnostics) {
-          state3.host.afterProgramEmitAndDiagnostics(program);
+        if (state2.host.afterProgramEmitAndDiagnostics) {
+          state2.host.afterProgramEmitAndDiagnostics(program);
         }
         program.releaseProgram();
       }
-      state3.projectCompilerOptions = state3.baseCompilerOptions;
+      state2.projectCompilerOptions = state2.baseCompilerOptions;
     }
     function isFileWatcherWithModifiedTime(value) {
       return !!value.watcher;
     }
-    function getModifiedTime2(state3, fileName) {
-      const path13 = toPath2(state3, fileName);
-      const existing = state3.filesWatched.get(path13);
-      if (state3.watch && !!existing) {
+    function getModifiedTime2(state2, fileName) {
+      const path13 = toPath2(state2, fileName);
+      const existing = state2.filesWatched.get(path13);
+      if (state2.watch && !!existing) {
         if (!isFileWatcherWithModifiedTime(existing))
           return existing;
         if (existing.modifiedTime)
           return existing.modifiedTime;
       }
-      const result = getModifiedTime(state3.host, fileName);
-      if (state3.watch) {
+      const result = getModifiedTime(state2.host, fileName);
+      if (state2.watch) {
         if (existing)
           existing.modifiedTime = result;
         else
-          state3.filesWatched.set(path13, result);
+          state2.filesWatched.set(path13, result);
       }
       return result;
     }
-    function watchFile(state3, file3, callback, pollingInterval, options2, watchType, project) {
-      const path13 = toPath2(state3, file3);
-      const existing = state3.filesWatched.get(path13);
+    function watchFile(state2, file3, callback, pollingInterval, options2, watchType, project) {
+      const path13 = toPath2(state2, file3);
+      const existing = state2.filesWatched.get(path13);
       if (existing && isFileWatcherWithModifiedTime(existing)) {
         existing.callbacks.push(callback);
       } else {
-        const watcher = state3.watchFile(file3, (fileName, eventKind, modifiedTime) => {
-          const existing2 = Debug.checkDefined(state3.filesWatched.get(path13));
+        const watcher = state2.watchFile(file3, (fileName, eventKind, modifiedTime) => {
+          const existing2 = Debug.checkDefined(state2.filesWatched.get(path13));
           Debug.assert(isFileWatcherWithModifiedTime(existing2));
           existing2.modifiedTime = modifiedTime;
           existing2.callbacks.forEach((cb) => cb(fileName, eventKind, modifiedTime));
         }, pollingInterval, options2, watchType, project);
-        state3.filesWatched.set(path13, { callbacks: [callback], watcher, modifiedTime: existing });
+        state2.filesWatched.set(path13, { callbacks: [callback], watcher, modifiedTime: existing });
       }
       return {
         close: () => {
-          const existing2 = Debug.checkDefined(state3.filesWatched.get(path13));
+          const existing2 = Debug.checkDefined(state2.filesWatched.get(path13));
           Debug.assert(isFileWatcherWithModifiedTime(existing2));
           if (existing2.callbacks.length === 1) {
-            state3.filesWatched.delete(path13);
+            state2.filesWatched.delete(path13);
             closeFileWatcherOf(existing2);
           } else {
             unorderedRemoveItem(existing2.callbacks, callback);
@@ -138426,32 +138426,32 @@ ${lanes.join(`
         }
       };
     }
-    function getOutputTimeStampMap(state3, resolvedConfigFilePath) {
-      if (!state3.watch)
+    function getOutputTimeStampMap(state2, resolvedConfigFilePath) {
+      if (!state2.watch)
         return;
-      let result = state3.outputTimeStamps.get(resolvedConfigFilePath);
+      let result = state2.outputTimeStamps.get(resolvedConfigFilePath);
       if (!result)
-        state3.outputTimeStamps.set(resolvedConfigFilePath, result = /* @__PURE__ */ new Map);
+        state2.outputTimeStamps.set(resolvedConfigFilePath, result = /* @__PURE__ */ new Map);
       return result;
     }
-    function getBuildInfoCacheEntry(state3, buildInfoPath, resolvedConfigPath) {
-      const path13 = toPath2(state3, buildInfoPath);
-      const existing = state3.buildInfoCache.get(resolvedConfigPath);
+    function getBuildInfoCacheEntry(state2, buildInfoPath, resolvedConfigPath) {
+      const path13 = toPath2(state2, buildInfoPath);
+      const existing = state2.buildInfoCache.get(resolvedConfigPath);
       return (existing == null ? undefined : existing.path) === path13 ? existing : undefined;
     }
-    function getBuildInfo3(state3, buildInfoPath, resolvedConfigPath, modifiedTime) {
-      const path13 = toPath2(state3, buildInfoPath);
-      const existing = state3.buildInfoCache.get(resolvedConfigPath);
+    function getBuildInfo3(state2, buildInfoPath, resolvedConfigPath, modifiedTime) {
+      const path13 = toPath2(state2, buildInfoPath);
+      const existing = state2.buildInfoCache.get(resolvedConfigPath);
       if (existing !== undefined && existing.path === path13) {
         return existing.buildInfo || undefined;
       }
-      const value = state3.readFileWithCache(buildInfoPath);
+      const value = state2.readFileWithCache(buildInfoPath);
       const buildInfo = value ? getBuildInfo(buildInfoPath, value) : undefined;
-      state3.buildInfoCache.set(resolvedConfigPath, { path: path13, buildInfo: buildInfo || false, modifiedTime: modifiedTime || missingFileModifiedTime });
+      state2.buildInfoCache.set(resolvedConfigPath, { path: path13, buildInfo: buildInfo || false, modifiedTime: modifiedTime || missingFileModifiedTime });
       return buildInfo;
     }
-    function checkConfigFileUpToDateStatus(state3, configFile, oldestOutputFileTime, oldestOutputFileName) {
-      const tsconfigTime = getModifiedTime2(state3, configFile);
+    function checkConfigFileUpToDateStatus(state2, configFile, oldestOutputFileTime, oldestOutputFileName) {
+      const tsconfigTime = getModifiedTime2(state2, configFile);
       if (oldestOutputFileTime < tsconfigTime) {
         return {
           type: 5,
@@ -138460,23 +138460,23 @@ ${lanes.join(`
         };
       }
     }
-    function getUpToDateStatusWorker(state3, project, resolvedPath) {
+    function getUpToDateStatusWorker(state2, project, resolvedPath) {
       var _a3, _b, _c, _d, _e;
       if (isSolutionConfig(project))
         return { type: 16 };
       let referenceStatuses;
-      const force = !!state3.options.force;
+      const force = !!state2.options.force;
       if (project.projectReferences) {
-        state3.projectStatus.set(resolvedPath, { type: 13 });
+        state2.projectStatus.set(resolvedPath, { type: 13 });
         for (const ref of project.projectReferences) {
           const resolvedRef = resolveProjectReferencePath(ref);
-          const resolvedRefPath = toResolvedConfigFilePath(state3, resolvedRef);
-          const resolvedConfig = parseConfigFile(state3, resolvedRef, resolvedRefPath);
-          const refStatus = getUpToDateStatus(state3, resolvedConfig, resolvedRefPath);
+          const resolvedRefPath = toResolvedConfigFilePath(state2, resolvedRef);
+          const resolvedConfig = parseConfigFile(state2, resolvedRef, resolvedRefPath);
+          const refStatus = getUpToDateStatus(state2, resolvedConfig, resolvedRefPath);
           if (refStatus.type === 13 || refStatus.type === 16) {
             continue;
           }
-          if (state3.options.stopBuildOnErrors && (refStatus.type === 0 || refStatus.type === 12)) {
+          if (state2.options.stopBuildOnErrors && (refStatus.type === 0 || refStatus.type === 12)) {
             return {
               type: 12,
               upstreamProjectName: ref.path,
@@ -138489,15 +138489,15 @@ ${lanes.join(`
       }
       if (force)
         return { type: 17 };
-      const { host } = state3;
+      const { host } = state2;
       const buildInfoPath = getTsBuildInfoEmitOutputFilePath(project.options);
       const isIncremental = isIncrementalCompilation(project.options);
-      let buildInfoCacheEntry = getBuildInfoCacheEntry(state3, buildInfoPath, resolvedPath);
+      let buildInfoCacheEntry = getBuildInfoCacheEntry(state2, buildInfoPath, resolvedPath);
       const buildInfoTime = (buildInfoCacheEntry == null ? undefined : buildInfoCacheEntry.modifiedTime) || getModifiedTime(host, buildInfoPath);
       if (buildInfoTime === missingFileModifiedTime) {
         if (!buildInfoCacheEntry) {
-          state3.buildInfoCache.set(resolvedPath, {
-            path: toPath2(state3, buildInfoPath),
+          state2.buildInfoCache.set(resolvedPath, {
+            path: toPath2(state2, buildInfoPath),
             buildInfo: false,
             modifiedTime: buildInfoTime
           });
@@ -138507,7 +138507,7 @@ ${lanes.join(`
           missingOutputFileName: buildInfoPath
         };
       }
-      const buildInfo = getBuildInfo3(state3, buildInfoPath, resolvedPath, buildInfoTime);
+      const buildInfo = getBuildInfo3(state2, buildInfoPath, resolvedPath, buildInfoTime);
       if (!buildInfo) {
         return {
           type: 4,
@@ -138555,14 +138555,14 @@ ${lanes.join(`
       const seenRoots = /* @__PURE__ */ new Set;
       let buildInfoVersionMap;
       for (const inputFile of project.fileNames) {
-        const inputTime = getModifiedTime2(state3, inputFile);
+        const inputTime = getModifiedTime2(state2, inputFile);
         if (inputTime === missingFileModifiedTime) {
           return {
             type: 0,
             reason: `${inputFile} does not exist`
           };
         }
-        const inputPath = toPath2(state3, inputFile);
+        const inputPath = toPath2(state2, inputFile);
         if (buildInfoTime < inputTime) {
           let version22;
           let currentVersion;
@@ -138571,7 +138571,7 @@ ${lanes.join(`
               buildInfoVersionMap = getBuildInfoFileVersionMap(incrementalBuildInfo, buildInfoPath, host);
             const resolvedInputPath = buildInfoVersionMap.roots.get(inputPath);
             version22 = buildInfoVersionMap.fileInfos.get(resolvedInputPath ?? inputPath);
-            const text = version22 ? state3.readFileWithCache(resolvedInputPath ?? inputFile) : undefined;
+            const text = version22 ? state2.readFileWithCache(resolvedInputPath ?? inputFile) : undefined;
             currentVersion = text !== undefined ? getSourceFileVersionAsHashFromText(host, text) : undefined;
             if (version22 && version22 === currentVersion)
               pseudoInputUpToDate = true;
@@ -138607,14 +138607,14 @@ ${lanes.join(`
       }
       if (!isIncremental) {
         const outputs = getAllProjectOutputs(project, !host.useCaseSensitiveFileNames());
-        const outputTimeStampMap = getOutputTimeStampMap(state3, resolvedPath);
+        const outputTimeStampMap = getOutputTimeStampMap(state2, resolvedPath);
         for (const output of outputs) {
           if (output === buildInfoPath)
             continue;
-          const path13 = toPath2(state3, output);
+          const path13 = toPath2(state2, output);
           let outputTime = outputTimeStampMap == null ? undefined : outputTimeStampMap.get(path13);
           if (!outputTime) {
-            outputTime = getModifiedTime(state3.host, output);
+            outputTime = getModifiedTime(state2.host, output);
             outputTimeStampMap == null || outputTimeStampMap.set(path13, outputTime);
           }
           if (outputTime === missingFileModifiedTime) {
@@ -138642,14 +138642,14 @@ ${lanes.join(`
           if (refStatus.newestInputFileTime && refStatus.newestInputFileTime <= oldestOutputFileTime) {
             continue;
           }
-          if (hasSameBuildInfo(state3, buildInfoCacheEntry ?? (buildInfoCacheEntry = state3.buildInfoCache.get(resolvedPath)), resolvedRefPath)) {
+          if (hasSameBuildInfo(state2, buildInfoCacheEntry ?? (buildInfoCacheEntry = state2.buildInfoCache.get(resolvedPath)), resolvedRefPath)) {
             return {
               type: 6,
               outOfDateOutputFileName: buildInfoPath,
               newerProjectName: ref.path
             };
           }
-          const newestDeclarationFileContentChangedTime = getLatestChangedDtsTime(state3, resolvedConfig.options, resolvedRefPath);
+          const newestDeclarationFileContentChangedTime = getLatestChangedDtsTime(state2, resolvedConfig.options, resolvedRefPath);
           if (newestDeclarationFileContentChangedTime && newestDeclarationFileContentChangedTime <= oldestOutputFileTime) {
             pseudoUpToDate = true;
             continue;
@@ -138662,14 +138662,14 @@ ${lanes.join(`
           };
         }
       }
-      const configStatus = checkConfigFileUpToDateStatus(state3, project.options.configFilePath, oldestOutputFileTime, oldestOutputFileName);
+      const configStatus = checkConfigFileUpToDateStatus(state2, project.options.configFilePath, oldestOutputFileTime, oldestOutputFileName);
       if (configStatus)
         return configStatus;
-      const extendedConfigStatus = forEach(project.options.configFile.extendedSourceFiles || emptyArray, (configFile) => checkConfigFileUpToDateStatus(state3, configFile, oldestOutputFileTime, oldestOutputFileName));
+      const extendedConfigStatus = forEach(project.options.configFile.extendedSourceFiles || emptyArray, (configFile) => checkConfigFileUpToDateStatus(state2, configFile, oldestOutputFileTime, oldestOutputFileName));
       if (extendedConfigStatus)
         return extendedConfigStatus;
-      const packageJsonLookups = state3.lastCachedPackageJsonLookups.get(resolvedPath);
-      const dependentPackageFileStatus = packageJsonLookups && forEachKey(packageJsonLookups, (path13) => checkConfigFileUpToDateStatus(state3, path13, oldestOutputFileTime, oldestOutputFileName));
+      const packageJsonLookups = state2.lastCachedPackageJsonLookups.get(resolvedPath);
+      const dependentPackageFileStatus = packageJsonLookups && forEachKey(packageJsonLookups, (path13) => checkConfigFileUpToDateStatus(state2, path13, oldestOutputFileTime, oldestOutputFileName));
       if (dependentPackageFileStatus)
         return dependentPackageFileStatus;
       return {
@@ -138679,58 +138679,58 @@ ${lanes.join(`
         oldestOutputFileName
       };
     }
-    function hasSameBuildInfo(state3, buildInfoCacheEntry, resolvedRefPath) {
-      const refBuildInfo = state3.buildInfoCache.get(resolvedRefPath);
+    function hasSameBuildInfo(state2, buildInfoCacheEntry, resolvedRefPath) {
+      const refBuildInfo = state2.buildInfoCache.get(resolvedRefPath);
       return refBuildInfo.path === buildInfoCacheEntry.path;
     }
-    function getUpToDateStatus(state3, project, resolvedPath) {
+    function getUpToDateStatus(state2, project, resolvedPath) {
       if (project === undefined) {
         return { type: 0, reason: "config file deleted mid-build" };
       }
-      const prior = state3.projectStatus.get(resolvedPath);
+      const prior = state2.projectStatus.get(resolvedPath);
       if (prior !== undefined) {
         return prior;
       }
       mark("SolutionBuilder::beforeUpToDateCheck");
-      const actual = getUpToDateStatusWorker(state3, project, resolvedPath);
+      const actual = getUpToDateStatusWorker(state2, project, resolvedPath);
       mark("SolutionBuilder::afterUpToDateCheck");
       measure("SolutionBuilder::Up-to-date check", "SolutionBuilder::beforeUpToDateCheck", "SolutionBuilder::afterUpToDateCheck");
-      state3.projectStatus.set(resolvedPath, actual);
+      state2.projectStatus.set(resolvedPath, actual);
       return actual;
     }
-    function updateOutputTimestampsWorker(state3, proj, projectPath, verboseMessage, skipOutputs) {
+    function updateOutputTimestampsWorker(state2, proj, projectPath, verboseMessage, skipOutputs) {
       if (proj.options.noEmit)
         return;
       let now;
       const buildInfoPath = getTsBuildInfoEmitOutputFilePath(proj.options);
       const isIncremental = isIncrementalCompilation(proj.options);
       if (buildInfoPath && isIncremental) {
-        if (!(skipOutputs == null ? undefined : skipOutputs.has(toPath2(state3, buildInfoPath)))) {
-          if (!!state3.options.verbose)
-            reportStatus(state3, verboseMessage, proj.options.configFilePath);
-          state3.host.setModifiedTime(buildInfoPath, now = getCurrentTime(state3.host));
-          getBuildInfoCacheEntry(state3, buildInfoPath, projectPath).modifiedTime = now;
+        if (!(skipOutputs == null ? undefined : skipOutputs.has(toPath2(state2, buildInfoPath)))) {
+          if (!!state2.options.verbose)
+            reportStatus(state2, verboseMessage, proj.options.configFilePath);
+          state2.host.setModifiedTime(buildInfoPath, now = getCurrentTime(state2.host));
+          getBuildInfoCacheEntry(state2, buildInfoPath, projectPath).modifiedTime = now;
         }
-        state3.outputTimeStamps.delete(projectPath);
+        state2.outputTimeStamps.delete(projectPath);
         return;
       }
-      const { host } = state3;
+      const { host } = state2;
       const outputs = getAllProjectOutputs(proj, !host.useCaseSensitiveFileNames());
-      const outputTimeStampMap = getOutputTimeStampMap(state3, projectPath);
+      const outputTimeStampMap = getOutputTimeStampMap(state2, projectPath);
       const modifiedOutputs = outputTimeStampMap ? /* @__PURE__ */ new Set : undefined;
       if (!skipOutputs || outputs.length !== skipOutputs.size) {
-        let reportVerbose = !!state3.options.verbose;
+        let reportVerbose = !!state2.options.verbose;
         for (const file3 of outputs) {
-          const path13 = toPath2(state3, file3);
+          const path13 = toPath2(state2, file3);
           if (skipOutputs == null ? undefined : skipOutputs.has(path13))
             continue;
           if (reportVerbose) {
             reportVerbose = false;
-            reportStatus(state3, verboseMessage, proj.options.configFilePath);
+            reportStatus(state2, verboseMessage, proj.options.configFilePath);
           }
-          host.setModifiedTime(file3, now || (now = getCurrentTime(state3.host)));
+          host.setModifiedTime(file3, now || (now = getCurrentTime(state2.host)));
           if (file3 === buildInfoPath)
-            getBuildInfoCacheEntry(state3, buildInfoPath, projectPath).modifiedTime = now;
+            getBuildInfoCacheEntry(state2, buildInfoPath, projectPath).modifiedTime = now;
           else if (outputTimeStampMap) {
             outputTimeStampMap.set(path13, now);
             modifiedOutputs.add(path13);
@@ -138742,44 +138742,44 @@ ${lanes.join(`
           outputTimeStampMap.delete(key);
       });
     }
-    function getLatestChangedDtsTime(state3, options2, resolvedConfigPath) {
+    function getLatestChangedDtsTime(state2, options2, resolvedConfigPath) {
       if (!options2.composite)
         return;
-      const entry = Debug.checkDefined(state3.buildInfoCache.get(resolvedConfigPath));
+      const entry = Debug.checkDefined(state2.buildInfoCache.get(resolvedConfigPath));
       if (entry.latestChangedDtsTime !== undefined)
         return entry.latestChangedDtsTime || undefined;
-      const latestChangedDtsTime = entry.buildInfo && isIncrementalBuildInfo(entry.buildInfo) && entry.buildInfo.latestChangedDtsFile ? state3.host.getModifiedTime(getNormalizedAbsolutePath(entry.buildInfo.latestChangedDtsFile, getDirectoryPath(entry.path))) : undefined;
+      const latestChangedDtsTime = entry.buildInfo && isIncrementalBuildInfo(entry.buildInfo) && entry.buildInfo.latestChangedDtsFile ? state2.host.getModifiedTime(getNormalizedAbsolutePath(entry.buildInfo.latestChangedDtsFile, getDirectoryPath(entry.path))) : undefined;
       entry.latestChangedDtsTime = latestChangedDtsTime || false;
       return latestChangedDtsTime;
     }
-    function updateOutputTimestamps(state3, proj, resolvedPath) {
-      if (state3.options.dry) {
-        return reportStatus(state3, Diagnostics.A_non_dry_build_would_update_timestamps_for_output_of_project_0, proj.options.configFilePath);
+    function updateOutputTimestamps(state2, proj, resolvedPath) {
+      if (state2.options.dry) {
+        return reportStatus(state2, Diagnostics.A_non_dry_build_would_update_timestamps_for_output_of_project_0, proj.options.configFilePath);
       }
-      updateOutputTimestampsWorker(state3, proj, resolvedPath, Diagnostics.Updating_output_timestamps_of_project_0);
-      state3.projectStatus.set(resolvedPath, {
+      updateOutputTimestampsWorker(state2, proj, resolvedPath, Diagnostics.Updating_output_timestamps_of_project_0);
+      state2.projectStatus.set(resolvedPath, {
         type: 1,
-        oldestOutputFileName: getFirstProjectOutput(proj, !state3.host.useCaseSensitiveFileNames())
+        oldestOutputFileName: getFirstProjectOutput(proj, !state2.host.useCaseSensitiveFileNames())
       });
     }
-    function queueReferencingProjects(state3, project, projectPath, projectIndex, config3, buildOrder, buildResult) {
-      if (state3.options.stopBuildOnErrors && buildResult & 4)
+    function queueReferencingProjects(state2, project, projectPath, projectIndex, config3, buildOrder, buildResult) {
+      if (state2.options.stopBuildOnErrors && buildResult & 4)
         return;
       if (!config3.options.composite)
         return;
       for (let index = projectIndex + 1;index < buildOrder.length; index++) {
         const nextProject = buildOrder[index];
-        const nextProjectPath = toResolvedConfigFilePath(state3, nextProject);
-        if (state3.projectPendingBuild.has(nextProjectPath))
+        const nextProjectPath = toResolvedConfigFilePath(state2, nextProject);
+        if (state2.projectPendingBuild.has(nextProjectPath))
           continue;
-        const nextProjectConfig = parseConfigFile(state3, nextProject, nextProjectPath);
+        const nextProjectConfig = parseConfigFile(state2, nextProject, nextProjectPath);
         if (!nextProjectConfig || !nextProjectConfig.projectReferences)
           continue;
         for (const ref of nextProjectConfig.projectReferences) {
-          const resolvedRefPath = resolveProjectName(state3, ref.path);
-          if (toResolvedConfigFilePath(state3, resolvedRefPath) !== projectPath)
+          const resolvedRefPath = resolveProjectName(state2, ref.path);
+          if (toResolvedConfigFilePath(state2, resolvedRefPath) !== projectPath)
             continue;
-          const status = state3.projectStatus.get(nextProjectPath);
+          const status = state2.projectStatus.get(nextProjectPath);
           if (status) {
             switch (status.type) {
               case 1:
@@ -138790,7 +138790,7 @@ ${lanes.join(`
               case 15:
               case 2:
                 if (!(buildResult & 2)) {
-                  state3.projectStatus.set(nextProjectPath, {
+                  state2.projectStatus.set(nextProjectPath, {
                     type: 6,
                     outOfDateOutputFileName: status.oldestOutputFileName,
                     newerProjectName: project
@@ -138798,298 +138798,298 @@ ${lanes.join(`
                 }
                 break;
               case 12:
-                if (toResolvedConfigFilePath(state3, resolveProjectName(state3, status.upstreamProjectName)) === projectPath) {
-                  clearProjectStatus(state3, nextProjectPath);
+                if (toResolvedConfigFilePath(state2, resolveProjectName(state2, status.upstreamProjectName)) === projectPath) {
+                  clearProjectStatus(state2, nextProjectPath);
                 }
                 break;
             }
           }
-          addProjToQueue(state3, nextProjectPath, 0);
+          addProjToQueue(state2, nextProjectPath, 0);
           break;
         }
       }
     }
-    function build(state3, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences) {
+    function build(state2, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences) {
       mark("SolutionBuilder::beforeBuild");
-      const result = buildWorker(state3, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences);
+      const result = buildWorker(state2, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences);
       mark("SolutionBuilder::afterBuild");
       measure("SolutionBuilder::Build", "SolutionBuilder::beforeBuild", "SolutionBuilder::afterBuild");
       return result;
     }
-    function buildWorker(state3, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences) {
-      const buildOrder = getBuildOrderFor(state3, project, onlyReferences);
+    function buildWorker(state2, project, cancellationToken, writeFile2, getCustomTransformers, onlyReferences) {
+      const buildOrder = getBuildOrderFor(state2, project, onlyReferences);
       if (!buildOrder)
         return 3;
-      setupInitialBuild(state3, cancellationToken);
+      setupInitialBuild(state2, cancellationToken);
       let reportQueue = true;
       let successfulProjects = 0;
       while (true) {
-        const invalidatedProject = getNextInvalidatedProject(state3, buildOrder, reportQueue);
+        const invalidatedProject = getNextInvalidatedProject(state2, buildOrder, reportQueue);
         if (!invalidatedProject)
           break;
         reportQueue = false;
         invalidatedProject.done(cancellationToken, writeFile2, getCustomTransformers == null ? undefined : getCustomTransformers(invalidatedProject.project));
-        if (!state3.diagnostics.has(invalidatedProject.projectPath))
+        if (!state2.diagnostics.has(invalidatedProject.projectPath))
           successfulProjects++;
       }
-      disableCache(state3);
-      reportErrorSummary(state3, buildOrder);
-      startWatching(state3, buildOrder);
-      return isCircularBuildOrder(buildOrder) ? 4 : !buildOrder.some((p) => state3.diagnostics.has(toResolvedConfigFilePath(state3, p))) ? 0 : successfulProjects ? 2 : 1;
+      disableCache(state2);
+      reportErrorSummary(state2, buildOrder);
+      startWatching(state2, buildOrder);
+      return isCircularBuildOrder(buildOrder) ? 4 : !buildOrder.some((p) => state2.diagnostics.has(toResolvedConfigFilePath(state2, p))) ? 0 : successfulProjects ? 2 : 1;
     }
-    function clean(state3, project, onlyReferences) {
+    function clean(state2, project, onlyReferences) {
       mark("SolutionBuilder::beforeClean");
-      const result = cleanWorker(state3, project, onlyReferences);
+      const result = cleanWorker(state2, project, onlyReferences);
       mark("SolutionBuilder::afterClean");
       measure("SolutionBuilder::Clean", "SolutionBuilder::beforeClean", "SolutionBuilder::afterClean");
       return result;
     }
-    function cleanWorker(state3, project, onlyReferences) {
-      const buildOrder = getBuildOrderFor(state3, project, onlyReferences);
+    function cleanWorker(state2, project, onlyReferences) {
+      const buildOrder = getBuildOrderFor(state2, project, onlyReferences);
       if (!buildOrder)
         return 3;
       if (isCircularBuildOrder(buildOrder)) {
-        reportErrors(state3, buildOrder.circularDiagnostics);
+        reportErrors(state2, buildOrder.circularDiagnostics);
         return 4;
       }
-      const { options: options2, host } = state3;
+      const { options: options2, host } = state2;
       const filesToDelete = options2.dry ? [] : undefined;
       for (const proj of buildOrder) {
-        const resolvedPath = toResolvedConfigFilePath(state3, proj);
-        const parsed = parseConfigFile(state3, proj, resolvedPath);
+        const resolvedPath = toResolvedConfigFilePath(state2, proj);
+        const parsed = parseConfigFile(state2, proj, resolvedPath);
         if (parsed === undefined) {
-          reportParseConfigFileDiagnostic(state3, resolvedPath);
+          reportParseConfigFileDiagnostic(state2, resolvedPath);
           continue;
         }
         const outputs = getAllProjectOutputs(parsed, !host.useCaseSensitiveFileNames());
         if (!outputs.length)
           continue;
-        const inputFileNames = new Set(parsed.fileNames.map((f) => toPath2(state3, f)));
+        const inputFileNames = new Set(parsed.fileNames.map((f) => toPath2(state2, f)));
         for (const output of outputs) {
-          if (inputFileNames.has(toPath2(state3, output)))
+          if (inputFileNames.has(toPath2(state2, output)))
             continue;
           if (host.fileExists(output)) {
             if (filesToDelete) {
               filesToDelete.push(output);
             } else {
               host.deleteFile(output);
-              invalidateProject(state3, resolvedPath, 0);
+              invalidateProject(state2, resolvedPath, 0);
             }
           }
         }
       }
       if (filesToDelete) {
-        reportStatus(state3, Diagnostics.A_non_dry_build_would_delete_the_following_files_Colon_0, filesToDelete.map((f) => `\r
+        reportStatus(state2, Diagnostics.A_non_dry_build_would_delete_the_following_files_Colon_0, filesToDelete.map((f) => `\r
  * ${f}`).join(""));
       }
       return 0;
     }
-    function invalidateProject(state3, resolved, updateLevel) {
-      if (state3.host.getParsedCommandLine && updateLevel === 1) {
+    function invalidateProject(state2, resolved, updateLevel) {
+      if (state2.host.getParsedCommandLine && updateLevel === 1) {
         updateLevel = 2;
       }
       if (updateLevel === 2) {
-        state3.configFileCache.delete(resolved);
-        state3.buildOrder = undefined;
+        state2.configFileCache.delete(resolved);
+        state2.buildOrder = undefined;
       }
-      state3.needsSummary = true;
-      clearProjectStatus(state3, resolved);
-      addProjToQueue(state3, resolved, updateLevel);
-      enableCache(state3);
+      state2.needsSummary = true;
+      clearProjectStatus(state2, resolved);
+      addProjToQueue(state2, resolved, updateLevel);
+      enableCache(state2);
     }
-    function invalidateProjectAndScheduleBuilds(state3, resolvedPath, updateLevel) {
-      state3.reportFileChangeDetected = true;
-      invalidateProject(state3, resolvedPath, updateLevel);
-      scheduleBuildInvalidatedProject(state3, 250, true);
+    function invalidateProjectAndScheduleBuilds(state2, resolvedPath, updateLevel) {
+      state2.reportFileChangeDetected = true;
+      invalidateProject(state2, resolvedPath, updateLevel);
+      scheduleBuildInvalidatedProject(state2, 250, true);
     }
-    function scheduleBuildInvalidatedProject(state3, time5, changeDetected) {
-      const { hostWithWatch } = state3;
+    function scheduleBuildInvalidatedProject(state2, time5, changeDetected) {
+      const { hostWithWatch } = state2;
       if (!hostWithWatch.setTimeout || !hostWithWatch.clearTimeout) {
         return;
       }
-      if (state3.timerToBuildInvalidatedProject) {
-        hostWithWatch.clearTimeout(state3.timerToBuildInvalidatedProject);
+      if (state2.timerToBuildInvalidatedProject) {
+        hostWithWatch.clearTimeout(state2.timerToBuildInvalidatedProject);
       }
-      state3.timerToBuildInvalidatedProject = hostWithWatch.setTimeout(buildNextInvalidatedProject, time5, "timerToBuildInvalidatedProject", state3, changeDetected);
+      state2.timerToBuildInvalidatedProject = hostWithWatch.setTimeout(buildNextInvalidatedProject, time5, "timerToBuildInvalidatedProject", state2, changeDetected);
     }
-    function buildNextInvalidatedProject(_timeoutType, state3, changeDetected) {
+    function buildNextInvalidatedProject(_timeoutType, state2, changeDetected) {
       mark("SolutionBuilder::beforeBuild");
-      const buildOrder = buildNextInvalidatedProjectWorker(state3, changeDetected);
+      const buildOrder = buildNextInvalidatedProjectWorker(state2, changeDetected);
       mark("SolutionBuilder::afterBuild");
       measure("SolutionBuilder::Build", "SolutionBuilder::beforeBuild", "SolutionBuilder::afterBuild");
       if (buildOrder)
-        reportErrorSummary(state3, buildOrder);
+        reportErrorSummary(state2, buildOrder);
     }
-    function buildNextInvalidatedProjectWorker(state3, changeDetected) {
-      state3.timerToBuildInvalidatedProject = undefined;
-      if (state3.reportFileChangeDetected) {
-        state3.reportFileChangeDetected = false;
-        state3.projectErrorsReported.clear();
-        reportWatchStatus(state3, Diagnostics.File_change_detected_Starting_incremental_compilation);
+    function buildNextInvalidatedProjectWorker(state2, changeDetected) {
+      state2.timerToBuildInvalidatedProject = undefined;
+      if (state2.reportFileChangeDetected) {
+        state2.reportFileChangeDetected = false;
+        state2.projectErrorsReported.clear();
+        reportWatchStatus(state2, Diagnostics.File_change_detected_Starting_incremental_compilation);
       }
       let projectsBuilt = 0;
-      const buildOrder = getBuildOrder(state3);
-      const invalidatedProject = getNextInvalidatedProject(state3, buildOrder, false);
+      const buildOrder = getBuildOrder(state2);
+      const invalidatedProject = getNextInvalidatedProject(state2, buildOrder, false);
       if (invalidatedProject) {
         invalidatedProject.done();
         projectsBuilt++;
-        while (state3.projectPendingBuild.size) {
-          if (state3.timerToBuildInvalidatedProject)
+        while (state2.projectPendingBuild.size) {
+          if (state2.timerToBuildInvalidatedProject)
             return;
-          const info = getNextInvalidatedProjectCreateInfo(state3, buildOrder, false);
+          const info = getNextInvalidatedProjectCreateInfo(state2, buildOrder, false);
           if (!info)
             break;
           if (info.kind !== 1 && (changeDetected || projectsBuilt === 5)) {
-            scheduleBuildInvalidatedProject(state3, 100, false);
+            scheduleBuildInvalidatedProject(state2, 100, false);
             return;
           }
-          const project = createInvalidatedProjectWithInfo(state3, info, buildOrder);
+          const project = createInvalidatedProjectWithInfo(state2, info, buildOrder);
           project.done();
           if (info.kind !== 1)
             projectsBuilt++;
         }
       }
-      disableCache(state3);
+      disableCache(state2);
       return buildOrder;
     }
-    function watchConfigFile(state3, resolved, resolvedPath, parsed) {
-      if (!state3.watch || state3.allWatchedConfigFiles.has(resolvedPath))
+    function watchConfigFile(state2, resolved, resolvedPath, parsed) {
+      if (!state2.watch || state2.allWatchedConfigFiles.has(resolvedPath))
         return;
-      state3.allWatchedConfigFiles.set(resolvedPath, watchFile(state3, resolved, () => invalidateProjectAndScheduleBuilds(state3, resolvedPath, 2), 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.ConfigFile, resolved));
+      state2.allWatchedConfigFiles.set(resolvedPath, watchFile(state2, resolved, () => invalidateProjectAndScheduleBuilds(state2, resolvedPath, 2), 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.ConfigFile, resolved));
     }
-    function watchExtendedConfigFiles(state3, resolvedPath, parsed) {
-      updateSharedExtendedConfigFileWatcher(resolvedPath, parsed == null ? undefined : parsed.options, state3.allWatchedExtendedConfigFiles, (extendedConfigFileName, extendedConfigFilePath) => watchFile(state3, extendedConfigFileName, () => {
+    function watchExtendedConfigFiles(state2, resolvedPath, parsed) {
+      updateSharedExtendedConfigFileWatcher(resolvedPath, parsed == null ? undefined : parsed.options, state2.allWatchedExtendedConfigFiles, (extendedConfigFileName, extendedConfigFilePath) => watchFile(state2, extendedConfigFileName, () => {
         var _a3;
-        return (_a3 = state3.allWatchedExtendedConfigFiles.get(extendedConfigFilePath)) == null ? undefined : _a3.projects.forEach((projectConfigFilePath) => invalidateProjectAndScheduleBuilds(state3, projectConfigFilePath, 2));
-      }, 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.ExtendedConfigFile), (fileName) => toPath2(state3, fileName));
+        return (_a3 = state2.allWatchedExtendedConfigFiles.get(extendedConfigFilePath)) == null ? undefined : _a3.projects.forEach((projectConfigFilePath) => invalidateProjectAndScheduleBuilds(state2, projectConfigFilePath, 2));
+      }, 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.ExtendedConfigFile), (fileName) => toPath2(state2, fileName));
     }
-    function watchWildCardDirectories(state3, resolved, resolvedPath, parsed) {
-      if (!state3.watch)
+    function watchWildCardDirectories(state2, resolved, resolvedPath, parsed) {
+      if (!state2.watch)
         return;
-      updateWatchingWildcardDirectories(getOrCreateValueMapFromConfigFileMap(state3.allWatchedWildcardDirectories, resolvedPath), parsed.wildcardDirectories, (dir, flags) => state3.watchDirectory(dir, (fileOrDirectory) => {
+      updateWatchingWildcardDirectories(getOrCreateValueMapFromConfigFileMap(state2.allWatchedWildcardDirectories, resolvedPath), parsed.wildcardDirectories, (dir, flags) => state2.watchDirectory(dir, (fileOrDirectory) => {
         var _a3;
         if (isIgnoredFileFromWildCardWatching({
-          watchedDirPath: toPath2(state3, dir),
+          watchedDirPath: toPath2(state2, dir),
           fileOrDirectory,
-          fileOrDirectoryPath: toPath2(state3, fileOrDirectory),
+          fileOrDirectoryPath: toPath2(state2, fileOrDirectory),
           configFileName: resolved,
-          currentDirectory: state3.compilerHost.getCurrentDirectory(),
+          currentDirectory: state2.compilerHost.getCurrentDirectory(),
           options: parsed.options,
-          program: state3.builderPrograms.get(resolvedPath) || ((_a3 = getCachedParsedConfigFile(state3, resolvedPath)) == null ? undefined : _a3.fileNames),
-          useCaseSensitiveFileNames: state3.parseConfigFileHost.useCaseSensitiveFileNames,
-          writeLog: (s) => state3.writeLog(s),
-          toPath: (fileName) => toPath2(state3, fileName)
+          program: state2.builderPrograms.get(resolvedPath) || ((_a3 = getCachedParsedConfigFile(state2, resolvedPath)) == null ? undefined : _a3.fileNames),
+          useCaseSensitiveFileNames: state2.parseConfigFileHost.useCaseSensitiveFileNames,
+          writeLog: (s) => state2.writeLog(s),
+          toPath: (fileName) => toPath2(state2, fileName)
         }))
           return;
-        invalidateProjectAndScheduleBuilds(state3, resolvedPath, 1);
+        invalidateProjectAndScheduleBuilds(state2, resolvedPath, 1);
       }, flags, parsed == null ? undefined : parsed.watchOptions, WatchType.WildcardDirectory, resolved));
     }
-    function watchInputFiles(state3, resolved, resolvedPath, parsed) {
-      if (!state3.watch)
+    function watchInputFiles(state2, resolved, resolvedPath, parsed) {
+      if (!state2.watch)
         return;
-      mutateMap(getOrCreateValueMapFromConfigFileMap(state3.allWatchedInputFiles, resolvedPath), new Set(parsed.fileNames), {
-        createNewValue: (input) => watchFile(state3, input, () => invalidateProjectAndScheduleBuilds(state3, resolvedPath, 0), 250, parsed == null ? undefined : parsed.watchOptions, WatchType.SourceFile, resolved),
+      mutateMap(getOrCreateValueMapFromConfigFileMap(state2.allWatchedInputFiles, resolvedPath), new Set(parsed.fileNames), {
+        createNewValue: (input) => watchFile(state2, input, () => invalidateProjectAndScheduleBuilds(state2, resolvedPath, 0), 250, parsed == null ? undefined : parsed.watchOptions, WatchType.SourceFile, resolved),
         onDeleteValue: closeFileWatcher
       });
     }
-    function watchPackageJsonFiles(state3, resolved, resolvedPath, parsed) {
-      if (!state3.watch || !state3.lastCachedPackageJsonLookups)
+    function watchPackageJsonFiles(state2, resolved, resolvedPath, parsed) {
+      if (!state2.watch || !state2.lastCachedPackageJsonLookups)
         return;
-      mutateMap(getOrCreateValueMapFromConfigFileMap(state3.allWatchedPackageJsonFiles, resolvedPath), state3.lastCachedPackageJsonLookups.get(resolvedPath), {
-        createNewValue: (input) => watchFile(state3, input, () => invalidateProjectAndScheduleBuilds(state3, resolvedPath, 0), 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.PackageJson, resolved),
+      mutateMap(getOrCreateValueMapFromConfigFileMap(state2.allWatchedPackageJsonFiles, resolvedPath), state2.lastCachedPackageJsonLookups.get(resolvedPath), {
+        createNewValue: (input) => watchFile(state2, input, () => invalidateProjectAndScheduleBuilds(state2, resolvedPath, 0), 2000, parsed == null ? undefined : parsed.watchOptions, WatchType.PackageJson, resolved),
         onDeleteValue: closeFileWatcher
       });
     }
-    function startWatching(state3, buildOrder) {
-      if (!state3.watchAllProjectsPending)
+    function startWatching(state2, buildOrder) {
+      if (!state2.watchAllProjectsPending)
         return;
       mark("SolutionBuilder::beforeWatcherCreation");
-      state3.watchAllProjectsPending = false;
+      state2.watchAllProjectsPending = false;
       for (const resolved of getBuildOrderFromAnyBuildOrder(buildOrder)) {
-        const resolvedPath = toResolvedConfigFilePath(state3, resolved);
-        const cfg = parseConfigFile(state3, resolved, resolvedPath);
-        watchConfigFile(state3, resolved, resolvedPath, cfg);
-        watchExtendedConfigFiles(state3, resolvedPath, cfg);
+        const resolvedPath = toResolvedConfigFilePath(state2, resolved);
+        const cfg = parseConfigFile(state2, resolved, resolvedPath);
+        watchConfigFile(state2, resolved, resolvedPath, cfg);
+        watchExtendedConfigFiles(state2, resolvedPath, cfg);
         if (cfg) {
-          watchWildCardDirectories(state3, resolved, resolvedPath, cfg);
-          watchInputFiles(state3, resolved, resolvedPath, cfg);
-          watchPackageJsonFiles(state3, resolved, resolvedPath, cfg);
+          watchWildCardDirectories(state2, resolved, resolvedPath, cfg);
+          watchInputFiles(state2, resolved, resolvedPath, cfg);
+          watchPackageJsonFiles(state2, resolved, resolvedPath, cfg);
         }
       }
       mark("SolutionBuilder::afterWatcherCreation");
       measure("SolutionBuilder::Watcher creation", "SolutionBuilder::beforeWatcherCreation", "SolutionBuilder::afterWatcherCreation");
     }
-    function stopWatching(state3) {
-      clearMap(state3.allWatchedConfigFiles, closeFileWatcher);
-      clearMap(state3.allWatchedExtendedConfigFiles, closeFileWatcherOf);
-      clearMap(state3.allWatchedWildcardDirectories, (watchedWildcardDirectories) => clearMap(watchedWildcardDirectories, closeFileWatcherOf));
-      clearMap(state3.allWatchedInputFiles, (watchedWildcardDirectories) => clearMap(watchedWildcardDirectories, closeFileWatcher));
-      clearMap(state3.allWatchedPackageJsonFiles, (watchedPacageJsonFiles) => clearMap(watchedPacageJsonFiles, closeFileWatcher));
+    function stopWatching(state2) {
+      clearMap(state2.allWatchedConfigFiles, closeFileWatcher);
+      clearMap(state2.allWatchedExtendedConfigFiles, closeFileWatcherOf);
+      clearMap(state2.allWatchedWildcardDirectories, (watchedWildcardDirectories) => clearMap(watchedWildcardDirectories, closeFileWatcherOf));
+      clearMap(state2.allWatchedInputFiles, (watchedWildcardDirectories) => clearMap(watchedWildcardDirectories, closeFileWatcher));
+      clearMap(state2.allWatchedPackageJsonFiles, (watchedPacageJsonFiles) => clearMap(watchedPacageJsonFiles, closeFileWatcher));
     }
     function createSolutionBuilderWorker(watch, hostOrHostWithWatch, rootNames, options2, baseWatchOptions) {
-      const state3 = createSolutionBuilderState(watch, hostOrHostWithWatch, rootNames, options2, baseWatchOptions);
+      const state2 = createSolutionBuilderState(watch, hostOrHostWithWatch, rootNames, options2, baseWatchOptions);
       return {
-        build: (project, cancellationToken, writeFile2, getCustomTransformers) => build(state3, project, cancellationToken, writeFile2, getCustomTransformers),
-        clean: (project) => clean(state3, project),
-        buildReferences: (project, cancellationToken, writeFile2, getCustomTransformers) => build(state3, project, cancellationToken, writeFile2, getCustomTransformers, true),
-        cleanReferences: (project) => clean(state3, project, true),
+        build: (project, cancellationToken, writeFile2, getCustomTransformers) => build(state2, project, cancellationToken, writeFile2, getCustomTransformers),
+        clean: (project) => clean(state2, project),
+        buildReferences: (project, cancellationToken, writeFile2, getCustomTransformers) => build(state2, project, cancellationToken, writeFile2, getCustomTransformers, true),
+        cleanReferences: (project) => clean(state2, project, true),
         getNextInvalidatedProject: (cancellationToken) => {
-          setupInitialBuild(state3, cancellationToken);
-          return getNextInvalidatedProject(state3, getBuildOrder(state3), false);
+          setupInitialBuild(state2, cancellationToken);
+          return getNextInvalidatedProject(state2, getBuildOrder(state2), false);
         },
-        getBuildOrder: () => getBuildOrder(state3),
+        getBuildOrder: () => getBuildOrder(state2),
         getUpToDateStatusOfProject: (project) => {
-          const configFileName = resolveProjectName(state3, project);
-          const configFilePath = toResolvedConfigFilePath(state3, configFileName);
-          return getUpToDateStatus(state3, parseConfigFile(state3, configFileName, configFilePath), configFilePath);
+          const configFileName = resolveProjectName(state2, project);
+          const configFilePath = toResolvedConfigFilePath(state2, configFileName);
+          return getUpToDateStatus(state2, parseConfigFile(state2, configFileName, configFilePath), configFilePath);
         },
-        invalidateProject: (configFilePath, updateLevel) => invalidateProject(state3, configFilePath, updateLevel || 0),
-        close: () => stopWatching(state3)
+        invalidateProject: (configFilePath, updateLevel) => invalidateProject(state2, configFilePath, updateLevel || 0),
+        close: () => stopWatching(state2)
       };
     }
-    function relName(state3, path13) {
-      return convertToRelativePath(path13, state3.compilerHost.getCurrentDirectory(), state3.compilerHost.getCanonicalFileName);
+    function relName(state2, path13) {
+      return convertToRelativePath(path13, state2.compilerHost.getCurrentDirectory(), state2.compilerHost.getCanonicalFileName);
     }
-    function reportStatus(state3, message, ...args) {
-      state3.host.reportSolutionBuilderStatus(createCompilerDiagnostic(message, ...args));
+    function reportStatus(state2, message, ...args) {
+      state2.host.reportSolutionBuilderStatus(createCompilerDiagnostic(message, ...args));
     }
-    function reportWatchStatus(state3, message, ...args) {
+    function reportWatchStatus(state2, message, ...args) {
       var _a3, _b;
-      (_b = (_a3 = state3.hostWithWatch).onWatchStatusChange) == null || _b.call(_a3, createCompilerDiagnostic(message, ...args), state3.host.getNewLine(), state3.baseCompilerOptions);
+      (_b = (_a3 = state2.hostWithWatch).onWatchStatusChange) == null || _b.call(_a3, createCompilerDiagnostic(message, ...args), state2.host.getNewLine(), state2.baseCompilerOptions);
     }
     function reportErrors({ host }, errors5) {
       errors5.forEach((err) => host.reportDiagnostic(err));
     }
-    function reportAndStoreErrors(state3, proj, errors5) {
-      reportErrors(state3, errors5);
-      state3.projectErrorsReported.set(proj, true);
+    function reportAndStoreErrors(state2, proj, errors5) {
+      reportErrors(state2, errors5);
+      state2.projectErrorsReported.set(proj, true);
       if (errors5.length) {
-        state3.diagnostics.set(proj, errors5);
+        state2.diagnostics.set(proj, errors5);
       }
     }
-    function reportParseConfigFileDiagnostic(state3, proj) {
-      reportAndStoreErrors(state3, proj, [state3.configFileCache.get(proj)]);
+    function reportParseConfigFileDiagnostic(state2, proj) {
+      reportAndStoreErrors(state2, proj, [state2.configFileCache.get(proj)]);
     }
-    function reportErrorSummary(state3, buildOrder) {
-      if (!state3.needsSummary)
+    function reportErrorSummary(state2, buildOrder) {
+      if (!state2.needsSummary)
         return;
-      state3.needsSummary = false;
-      const canReportSummary = state3.watch || !!state3.host.reportErrorSummary;
-      const { diagnostics } = state3;
+      state2.needsSummary = false;
+      const canReportSummary = state2.watch || !!state2.host.reportErrorSummary;
+      const { diagnostics } = state2;
       let totalErrors = 0;
       let filesInError = [];
       if (isCircularBuildOrder(buildOrder)) {
-        reportBuildQueue(state3, buildOrder.buildOrder);
-        reportErrors(state3, buildOrder.circularDiagnostics);
+        reportBuildQueue(state2, buildOrder.buildOrder);
+        reportErrors(state2, buildOrder.circularDiagnostics);
         if (canReportSummary)
           totalErrors += getErrorCountForSummary(buildOrder.circularDiagnostics);
         if (canReportSummary)
           filesInError = [...filesInError, ...getFilesInErrorForSummary(buildOrder.circularDiagnostics)];
       } else {
         buildOrder.forEach((project) => {
-          const projectPath = toResolvedConfigFilePath(state3, project);
-          if (!state3.projectErrorsReported.has(projectPath)) {
-            reportErrors(state3, diagnostics.get(projectPath) || emptyArray);
+          const projectPath = toResolvedConfigFilePath(state2, project);
+          if (!state2.projectErrorsReported.has(projectPath)) {
+            reportErrors(state2, diagnostics.get(projectPath) || emptyArray);
           }
         });
         if (canReportSummary)
@@ -139097,55 +139097,55 @@ ${lanes.join(`
         if (canReportSummary)
           diagnostics.forEach((singleProjectErrors) => [...filesInError, ...getFilesInErrorForSummary(singleProjectErrors)]);
       }
-      if (state3.watch) {
-        reportWatchStatus(state3, getWatchErrorSummaryDiagnosticMessage(totalErrors), totalErrors);
-      } else if (state3.host.reportErrorSummary) {
-        state3.host.reportErrorSummary(totalErrors, filesInError);
+      if (state2.watch) {
+        reportWatchStatus(state2, getWatchErrorSummaryDiagnosticMessage(totalErrors), totalErrors);
+      } else if (state2.host.reportErrorSummary) {
+        state2.host.reportErrorSummary(totalErrors, filesInError);
       }
     }
-    function reportBuildQueue(state3, buildQueue) {
-      if (state3.options.verbose) {
-        reportStatus(state3, Diagnostics.Projects_in_this_build_Colon_0, buildQueue.map((s) => `\r
-    * ` + relName(state3, s)).join(""));
+    function reportBuildQueue(state2, buildQueue) {
+      if (state2.options.verbose) {
+        reportStatus(state2, Diagnostics.Projects_in_this_build_Colon_0, buildQueue.map((s) => `\r
+    * ` + relName(state2, s)).join(""));
       }
     }
-    function reportUpToDateStatus(state3, configFileName, status) {
+    function reportUpToDateStatus(state2, configFileName, status) {
       switch (status.type) {
         case 5:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_output_1_is_older_than_input_2, relName(state3, configFileName), relName(state3, status.outOfDateOutputFileName), relName(state3, status.newerInputFileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_output_1_is_older_than_input_2, relName(state2, configFileName), relName(state2, status.outOfDateOutputFileName), relName(state2, status.newerInputFileName));
         case 6:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_output_1_is_older_than_input_2, relName(state3, configFileName), relName(state3, status.outOfDateOutputFileName), relName(state3, status.newerProjectName));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_output_1_is_older_than_input_2, relName(state2, configFileName), relName(state2, status.outOfDateOutputFileName), relName(state2, status.newerProjectName));
         case 3:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_output_file_1_does_not_exist, relName(state3, configFileName), relName(state3, status.missingOutputFileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_output_file_1_does_not_exist, relName(state2, configFileName), relName(state2, status.missingOutputFileName));
         case 4:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_there_was_error_reading_file_1, relName(state3, configFileName), relName(state3, status.fileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_there_was_error_reading_file_1, relName(state2, configFileName), relName(state2, status.fileName));
         case 7:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_some_of_the_changes_were_not_emitted, relName(state3, configFileName), relName(state3, status.buildInfoFile));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_some_of_the_changes_were_not_emitted, relName(state2, configFileName), relName(state2, status.buildInfoFile));
         case 8:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_program_needs_to_report_errors, relName(state3, configFileName), relName(state3, status.buildInfoFile));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_program_needs_to_report_errors, relName(state2, configFileName), relName(state2, status.buildInfoFile));
         case 9:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_there_is_change_in_compilerOptions, relName(state3, configFileName), relName(state3, status.buildInfoFile));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_there_is_change_in_compilerOptions, relName(state2, configFileName), relName(state2, status.buildInfoFile));
         case 10:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_file_2_was_root_file_of_compilation_but_not_any_more, relName(state3, configFileName), relName(state3, status.buildInfoFile), relName(state3, status.inputFile));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_buildinfo_file_1_indicates_that_file_2_was_root_file_of_compilation_but_not_any_more, relName(state2, configFileName), relName(state2, status.buildInfoFile), relName(state2, status.inputFile));
         case 1:
           if (status.newestInputFileTime !== undefined) {
-            return reportStatus(state3, Diagnostics.Project_0_is_up_to_date_because_newest_input_1_is_older_than_output_2, relName(state3, configFileName), relName(state3, status.newestInputFileName || ""), relName(state3, status.oldestOutputFileName || ""));
+            return reportStatus(state2, Diagnostics.Project_0_is_up_to_date_because_newest_input_1_is_older_than_output_2, relName(state2, configFileName), relName(state2, status.newestInputFileName || ""), relName(state2, status.oldestOutputFileName || ""));
           }
           break;
         case 2:
-          return reportStatus(state3, Diagnostics.Project_0_is_up_to_date_with_d_ts_files_from_its_dependencies, relName(state3, configFileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_up_to_date_with_d_ts_files_from_its_dependencies, relName(state2, configFileName));
         case 15:
-          return reportStatus(state3, Diagnostics.Project_0_is_up_to_date_but_needs_to_update_timestamps_of_output_files_that_are_older_than_input_files, relName(state3, configFileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_up_to_date_but_needs_to_update_timestamps_of_output_files_that_are_older_than_input_files, relName(state2, configFileName));
         case 11:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_its_dependency_1_is_out_of_date, relName(state3, configFileName), relName(state3, status.upstreamProjectName));
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_its_dependency_1_is_out_of_date, relName(state2, configFileName), relName(state2, status.upstreamProjectName));
         case 12:
-          return reportStatus(state3, status.upstreamProjectBlocked ? Diagnostics.Project_0_can_t_be_built_because_its_dependency_1_was_not_built : Diagnostics.Project_0_can_t_be_built_because_its_dependency_1_has_errors, relName(state3, configFileName), relName(state3, status.upstreamProjectName));
+          return reportStatus(state2, status.upstreamProjectBlocked ? Diagnostics.Project_0_can_t_be_built_because_its_dependency_1_was_not_built : Diagnostics.Project_0_can_t_be_built_because_its_dependency_1_has_errors, relName(state2, configFileName), relName(state2, status.upstreamProjectName));
         case 0:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_1, relName(state3, configFileName), status.reason);
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_1, relName(state2, configFileName), status.reason);
         case 14:
-          return reportStatus(state3, Diagnostics.Project_0_is_out_of_date_because_output_for_it_was_generated_with_version_1_that_differs_with_current_version_2, relName(state3, configFileName), status.version, version3);
+          return reportStatus(state2, Diagnostics.Project_0_is_out_of_date_because_output_for_it_was_generated_with_version_1_that_differs_with_current_version_2, relName(state2, configFileName), status.version, version3);
         case 17:
-          return reportStatus(state3, Diagnostics.Project_0_is_being_forcibly_rebuilt, relName(state3, configFileName));
+          return reportStatus(state2, Diagnostics.Project_0_is_being_forcibly_rebuilt, relName(state2, configFileName));
         case 16:
         case 13:
           break;
@@ -139153,9 +139153,9 @@ ${lanes.join(`
           assertType(status);
       }
     }
-    function verboseReportProjectStatus(state3, configFileName, status) {
-      if (state3.options.verbose) {
-        reportUpToDateStatus(state3, configFileName, status);
+    function verboseReportProjectStatus(state2, configFileName, status) {
+      if (state2.options.verbose) {
+        reportUpToDateStatus(state2, configFileName, status);
       }
     }
     var StatisticType = /* @__PURE__ */ ((StatisticType2) => {
@@ -170659,27 +170659,27 @@ ${newComment.split(`
         const symbol3 = node && skipPastExportOrImportSpecifierOrUnion(originalSymbol, node, checker, !isForRenameWithPrefixAndSuffixText(options2)) || originalSymbol;
         const searchMeaning = node && options2.use !== 2 ? getIntersectingMeaningFromDeclarations(node, symbol3) : 7;
         const result = [];
-        const state3 = new State(sourceFiles, sourceFilesSet, node ? getSpecialSearchKind(node) : 0, checker, cancellationToken, searchMeaning, options2, result);
+        const state2 = new State(sourceFiles, sourceFilesSet, node ? getSpecialSearchKind(node) : 0, checker, cancellationToken, searchMeaning, options2, result);
         const exportSpecifier = !isForRenameWithPrefixAndSuffixText(options2) || !symbol3.declarations ? undefined : find(symbol3.declarations, isExportSpecifier);
         if (exportSpecifier) {
-          getReferencesAtExportSpecifier(exportSpecifier.name, symbol3, exportSpecifier, state3.createSearch(node, originalSymbol, undefined), state3, true, true);
+          getReferencesAtExportSpecifier(exportSpecifier.name, symbol3, exportSpecifier, state2.createSearch(node, originalSymbol, undefined), state2, true, true);
         } else if (node && node.kind === 90 && symbol3.escapedName === "default" && symbol3.parent) {
-          addReference(node, symbol3, state3);
-          searchForImportsOfExport(node, symbol3, { exportingModuleSymbol: symbol3.parent, exportKind: 1 }, state3);
+          addReference(node, symbol3, state2);
+          searchForImportsOfExport(node, symbol3, { exportingModuleSymbol: symbol3.parent, exportKind: 1 }, state2);
         } else {
-          const search = state3.createSearch(node, symbol3, undefined, { allSearchSymbols: node ? populateSearchSymbolSet(symbol3, node, checker, options2.use === 2, !!options2.providePrefixAndSuffixTextForRename, !!options2.implementations) : [symbol3] });
-          getReferencesInContainerOrFiles(symbol3, state3, search);
+          const search = state2.createSearch(node, symbol3, undefined, { allSearchSymbols: node ? populateSearchSymbolSet(symbol3, node, checker, options2.use === 2, !!options2.providePrefixAndSuffixTextForRename, !!options2.implementations) : [symbol3] });
+          getReferencesInContainerOrFiles(symbol3, state2, search);
         }
         return result;
       }
-      function getReferencesInContainerOrFiles(symbol3, state3, search) {
+      function getReferencesInContainerOrFiles(symbol3, state2, search) {
         const scope = getSymbolScope(symbol3);
         if (scope) {
-          getReferencesInContainer(scope, scope.getSourceFile(), search, state3, !(isSourceFile(scope) && !contains(state3.sourceFiles, scope)));
+          getReferencesInContainer(scope, scope.getSourceFile(), search, state2, !(isSourceFile(scope) && !contains(state2.sourceFiles, scope)));
         } else {
-          for (const sourceFile of state3.sourceFiles) {
-            state3.cancellationToken.throwIfCancellationRequested();
-            searchForName(sourceFile, search, state3);
+          for (const sourceFile of state2.sourceFiles) {
+            state2.cancellationToken.throwIfCancellationRequested();
+            searchForName(sourceFile, search, state2);
           }
         }
       }
@@ -170782,33 +170782,33 @@ ${newComment.split(`
           return anyNewSymbols;
         }
       }
-      function searchForImportsOfExport(exportLocation, exportSymbol, exportInfo, state3) {
-        const { importSearches, singleReferences, indirectUsers } = state3.getImportSearches(exportSymbol, exportInfo);
+      function searchForImportsOfExport(exportLocation, exportSymbol, exportInfo, state2) {
+        const { importSearches, singleReferences, indirectUsers } = state2.getImportSearches(exportSymbol, exportInfo);
         if (singleReferences.length) {
-          const addRef = state3.referenceAdder(exportSymbol);
+          const addRef = state2.referenceAdder(exportSymbol);
           for (const singleRef of singleReferences) {
-            if (shouldAddSingleReference(singleRef, state3))
+            if (shouldAddSingleReference(singleRef, state2))
               addRef(singleRef);
           }
         }
         for (const [importLocation, importSymbol] of importSearches) {
-          getReferencesInSourceFile(importLocation.getSourceFile(), state3.createSearch(importLocation, importSymbol, 1), state3);
+          getReferencesInSourceFile(importLocation.getSourceFile(), state2.createSearch(importLocation, importSymbol, 1), state2);
         }
         if (indirectUsers.length) {
           let indirectSearch;
           switch (exportInfo.exportKind) {
             case 0:
-              indirectSearch = state3.createSearch(exportLocation, exportSymbol, 1);
+              indirectSearch = state2.createSearch(exportLocation, exportSymbol, 1);
               break;
             case 1:
-              indirectSearch = state3.options.use === 2 ? undefined : state3.createSearch(exportLocation, exportSymbol, 1, { text: "default" });
+              indirectSearch = state2.options.use === 2 ? undefined : state2.createSearch(exportLocation, exportSymbol, 1, { text: "default" });
               break;
             case 2:
               break;
           }
           if (indirectSearch) {
             for (const indirectUser of indirectUsers) {
-              searchForName(indirectUser, indirectSearch, state3);
+              searchForName(indirectUser, indirectSearch, state2);
             }
           }
         }
@@ -170835,26 +170835,26 @@ ${newComment.split(`
         }
       }
       Core2.eachExportReference = eachExportReference;
-      function shouldAddSingleReference(singleRef, state3) {
-        if (!hasMatchingMeaning(singleRef, state3))
+      function shouldAddSingleReference(singleRef, state2) {
+        if (!hasMatchingMeaning(singleRef, state2))
           return false;
-        if (state3.options.use !== 2)
+        if (state2.options.use !== 2)
           return true;
         if (!isIdentifier(singleRef) && !isImportOrExportSpecifier(singleRef.parent))
           return false;
         return !(isImportOrExportSpecifier(singleRef.parent) && moduleExportNameIsDefault(singleRef));
       }
-      function searchForImportedSymbol(symbol3, state3) {
+      function searchForImportedSymbol(symbol3, state2) {
         if (!symbol3.declarations)
           return;
         for (const declaration of symbol3.declarations) {
           const exportingFile = declaration.getSourceFile();
-          getReferencesInSourceFile(exportingFile, state3.createSearch(declaration, symbol3, 0), state3, state3.includesSourceFile(exportingFile));
+          getReferencesInSourceFile(exportingFile, state2.createSearch(declaration, symbol3, 0), state2, state2.includesSourceFile(exportingFile));
         }
       }
-      function searchForName(sourceFile, search, state3) {
+      function searchForName(sourceFile, search, state2) {
         if (getNameTable(sourceFile).get(search.escapedText) !== undefined) {
-          getReferencesInSourceFile(sourceFile, search, state3);
+          getReferencesInSourceFile(sourceFile, search, state2);
         }
       }
       function getPropertySymbolOfDestructuringAssignment(location, checker) {
@@ -171041,32 +171041,32 @@ ${newComment.split(`
         });
         return references.length ? [{ definition: { type: 2, node: references[0].node }, references }] : undefined;
       }
-      function getReferencesInSourceFile(sourceFile, search, state3, addReferencesHere = true) {
-        state3.cancellationToken.throwIfCancellationRequested();
-        return getReferencesInContainer(sourceFile, sourceFile, search, state3, addReferencesHere);
+      function getReferencesInSourceFile(sourceFile, search, state2, addReferencesHere = true) {
+        state2.cancellationToken.throwIfCancellationRequested();
+        return getReferencesInContainer(sourceFile, sourceFile, search, state2, addReferencesHere);
       }
-      function getReferencesInContainer(container, sourceFile, search, state3, addReferencesHere) {
-        if (!state3.markSearchedSymbols(sourceFile, search.allSearchSymbols)) {
+      function getReferencesInContainer(container, sourceFile, search, state2, addReferencesHere) {
+        if (!state2.markSearchedSymbols(sourceFile, search.allSearchSymbols)) {
           return;
         }
         for (const position of getPossibleSymbolReferencePositions(sourceFile, search.text, container)) {
-          getReferencesAtLocation(sourceFile, position, search, state3, addReferencesHere);
+          getReferencesAtLocation(sourceFile, position, search, state2, addReferencesHere);
         }
       }
-      function hasMatchingMeaning(referenceLocation, state3) {
-        return !!(getMeaningFromLocation(referenceLocation) & state3.searchMeaning);
+      function hasMatchingMeaning(referenceLocation, state2) {
+        return !!(getMeaningFromLocation(referenceLocation) & state2.searchMeaning);
       }
-      function getReferencesAtLocation(sourceFile, position, search, state3, addReferencesHere) {
+      function getReferencesAtLocation(sourceFile, position, search, state2, addReferencesHere) {
         const referenceLocation = getTouchingPropertyName(sourceFile, position);
         if (!isValidReferencePosition(referenceLocation, search.text)) {
-          if (!state3.options.implementations && (state3.options.findInStrings && isInString(sourceFile, position) || state3.options.findInComments && isInNonReferenceComment(sourceFile, position))) {
-            state3.addStringOrCommentReference(sourceFile.fileName, createTextSpan(position, search.text.length));
+          if (!state2.options.implementations && (state2.options.findInStrings && isInString(sourceFile, position) || state2.options.findInComments && isInNonReferenceComment(sourceFile, position))) {
+            state2.addStringOrCommentReference(sourceFile.fileName, createTextSpan(position, search.text.length));
           }
           return;
         }
-        if (!hasMatchingMeaning(referenceLocation, state3))
+        if (!hasMatchingMeaning(referenceLocation, state2))
           return;
-        let referenceSymbol = state3.checker.getSymbolAtLocation(referenceLocation);
+        let referenceSymbol = state2.checker.getSymbolAtLocation(referenceLocation);
         if (!referenceSymbol) {
           return;
         }
@@ -171076,89 +171076,89 @@ ${newComment.split(`
         }
         if (isExportSpecifier(parent2)) {
           Debug.assert(referenceLocation.kind === 80 || referenceLocation.kind === 11);
-          getReferencesAtExportSpecifier(referenceLocation, referenceSymbol, parent2, search, state3, addReferencesHere);
+          getReferencesAtExportSpecifier(referenceLocation, referenceSymbol, parent2, search, state2, addReferencesHere);
           return;
         }
         if (isJSDocPropertyLikeTag(parent2) && parent2.isNameFirst && parent2.typeExpression && isJSDocTypeLiteral(parent2.typeExpression.type) && parent2.typeExpression.type.jsDocPropertyTags && length(parent2.typeExpression.type.jsDocPropertyTags)) {
-          getReferencesAtJSDocTypeLiteral(parent2.typeExpression.type.jsDocPropertyTags, referenceLocation, search, state3);
+          getReferencesAtJSDocTypeLiteral(parent2.typeExpression.type.jsDocPropertyTags, referenceLocation, search, state2);
           return;
         }
-        const relatedSymbol = getRelatedSymbol(search, referenceSymbol, referenceLocation, state3);
+        const relatedSymbol = getRelatedSymbol(search, referenceSymbol, referenceLocation, state2);
         if (!relatedSymbol) {
-          getReferenceForShorthandProperty(referenceSymbol, search, state3);
+          getReferenceForShorthandProperty(referenceSymbol, search, state2);
           return;
         }
-        switch (state3.specialSearchKind) {
+        switch (state2.specialSearchKind) {
           case 0:
             if (addReferencesHere)
-              addReference(referenceLocation, relatedSymbol, state3);
+              addReference(referenceLocation, relatedSymbol, state2);
             break;
           case 1:
-            addConstructorReferences(referenceLocation, sourceFile, search, state3);
+            addConstructorReferences(referenceLocation, sourceFile, search, state2);
             break;
           case 2:
-            addClassStaticThisReferences(referenceLocation, search, state3);
+            addClassStaticThisReferences(referenceLocation, search, state2);
             break;
           default:
-            Debug.assertNever(state3.specialSearchKind);
+            Debug.assertNever(state2.specialSearchKind);
         }
         if (isInJSFile(referenceLocation) && isBindingElement(referenceLocation.parent) && isVariableDeclarationInitializedToBareOrAccessedRequire(referenceLocation.parent.parent.parent)) {
           referenceSymbol = referenceLocation.parent.symbol;
           if (!referenceSymbol)
             return;
         }
-        getImportOrExportReferences(referenceLocation, referenceSymbol, search, state3);
+        getImportOrExportReferences(referenceLocation, referenceSymbol, search, state2);
       }
-      function getReferencesAtJSDocTypeLiteral(jsDocPropertyTags, referenceLocation, search, state3) {
-        const addRef = state3.referenceAdder(search.symbol);
-        addReference(referenceLocation, search.symbol, state3);
+      function getReferencesAtJSDocTypeLiteral(jsDocPropertyTags, referenceLocation, search, state2) {
+        const addRef = state2.referenceAdder(search.symbol);
+        addReference(referenceLocation, search.symbol, state2);
         forEach(jsDocPropertyTags, (propTag) => {
           if (isQualifiedName(propTag.name)) {
             addRef(propTag.name.left);
           }
         });
       }
-      function getReferencesAtExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, search, state3, addReferencesHere, alwaysGetReferences) {
-        Debug.assert(!alwaysGetReferences || !!state3.options.providePrefixAndSuffixTextForRename, "If alwaysGetReferences is true, then prefix/suffix text must be enabled");
+      function getReferencesAtExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, search, state2, addReferencesHere, alwaysGetReferences) {
+        Debug.assert(!alwaysGetReferences || !!state2.options.providePrefixAndSuffixTextForRename, "If alwaysGetReferences is true, then prefix/suffix text must be enabled");
         const { parent: parent2, propertyName, name } = exportSpecifier;
         const exportDeclaration = parent2.parent;
-        const localSymbol = getLocalSymbolForExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, state3.checker);
+        const localSymbol = getLocalSymbolForExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, state2.checker);
         if (!alwaysGetReferences && !search.includes(localSymbol)) {
           return;
         }
         if (!propertyName) {
-          if (!(state3.options.use === 2 && moduleExportNameIsDefault(name))) {
+          if (!(state2.options.use === 2 && moduleExportNameIsDefault(name))) {
             addRef();
           }
         } else if (referenceLocation === propertyName) {
           if (!exportDeclaration.moduleSpecifier) {
             addRef();
           }
-          if (addReferencesHere && state3.options.use !== 2 && state3.markSeenReExportRHS(name)) {
-            addReference(name, Debug.checkDefined(exportSpecifier.symbol), state3);
+          if (addReferencesHere && state2.options.use !== 2 && state2.markSeenReExportRHS(name)) {
+            addReference(name, Debug.checkDefined(exportSpecifier.symbol), state2);
           }
         } else {
-          if (state3.markSeenReExportRHS(referenceLocation)) {
+          if (state2.markSeenReExportRHS(referenceLocation)) {
             addRef();
           }
         }
-        if (!isForRenameWithPrefixAndSuffixText(state3.options) || alwaysGetReferences) {
+        if (!isForRenameWithPrefixAndSuffixText(state2.options) || alwaysGetReferences) {
           const isDefaultExport = moduleExportNameIsDefault(referenceLocation) || moduleExportNameIsDefault(exportSpecifier.name);
           const exportKind = isDefaultExport ? 1 : 0;
           const exportSymbol = Debug.checkDefined(exportSpecifier.symbol);
-          const exportInfo = getExportInfo(exportSymbol, exportKind, state3.checker);
+          const exportInfo = getExportInfo(exportSymbol, exportKind, state2.checker);
           if (exportInfo) {
-            searchForImportsOfExport(referenceLocation, exportSymbol, exportInfo, state3);
+            searchForImportsOfExport(referenceLocation, exportSymbol, exportInfo, state2);
           }
         }
-        if (search.comingFrom !== 1 && exportDeclaration.moduleSpecifier && !propertyName && !isForRenameWithPrefixAndSuffixText(state3.options)) {
-          const imported = state3.checker.getExportSpecifierLocalTargetSymbol(exportSpecifier);
+        if (search.comingFrom !== 1 && exportDeclaration.moduleSpecifier && !propertyName && !isForRenameWithPrefixAndSuffixText(state2.options)) {
+          const imported = state2.checker.getExportSpecifierLocalTargetSymbol(exportSpecifier);
           if (imported)
-            searchForImportedSymbol(imported, state3);
+            searchForImportedSymbol(imported, state2);
         }
         function addRef() {
           if (addReferencesHere)
-            addReference(referenceLocation, localSymbol, state3);
+            addReference(referenceLocation, localSymbol, state2);
         }
       }
       function getLocalSymbolForExportSpecifier(referenceLocation, referenceSymbol, exportSpecifier, checker) {
@@ -171173,43 +171173,43 @@ ${newComment.split(`
           return !parent2.parent.moduleSpecifier;
         }
       }
-      function getImportOrExportReferences(referenceLocation, referenceSymbol, search, state3) {
-        const importOrExport = getImportOrExportSymbol(referenceLocation, referenceSymbol, state3.checker, search.comingFrom === 1);
+      function getImportOrExportReferences(referenceLocation, referenceSymbol, search, state2) {
+        const importOrExport = getImportOrExportSymbol(referenceLocation, referenceSymbol, state2.checker, search.comingFrom === 1);
         if (!importOrExport)
           return;
         const { symbol: symbol3 } = importOrExport;
         if (importOrExport.kind === 0) {
-          if (!isForRenameWithPrefixAndSuffixText(state3.options)) {
-            searchForImportedSymbol(symbol3, state3);
+          if (!isForRenameWithPrefixAndSuffixText(state2.options)) {
+            searchForImportedSymbol(symbol3, state2);
           }
         } else {
-          searchForImportsOfExport(referenceLocation, symbol3, importOrExport.exportInfo, state3);
+          searchForImportsOfExport(referenceLocation, symbol3, importOrExport.exportInfo, state2);
         }
       }
-      function getReferenceForShorthandProperty({ flags, valueDeclaration }, search, state3) {
-        const shorthandValueSymbol = state3.checker.getShorthandAssignmentValueSymbol(valueDeclaration);
+      function getReferenceForShorthandProperty({ flags, valueDeclaration }, search, state2) {
+        const shorthandValueSymbol = state2.checker.getShorthandAssignmentValueSymbol(valueDeclaration);
         const name = valueDeclaration && getNameOfDeclaration(valueDeclaration);
         if (!(flags & 33554432) && name && search.includes(shorthandValueSymbol)) {
-          addReference(name, shorthandValueSymbol, state3);
+          addReference(name, shorthandValueSymbol, state2);
         }
       }
-      function addReference(referenceLocation, relatedSymbol, state3) {
+      function addReference(referenceLocation, relatedSymbol, state2) {
         const { kind, symbol: symbol3 } = "kind" in relatedSymbol ? relatedSymbol : { kind: undefined, symbol: relatedSymbol };
-        if (state3.options.use === 2 && referenceLocation.kind === 90) {
+        if (state2.options.use === 2 && referenceLocation.kind === 90) {
           return;
         }
-        const addRef = state3.referenceAdder(symbol3);
-        if (state3.options.implementations) {
-          addImplementationReferences(referenceLocation, addRef, state3);
+        const addRef = state2.referenceAdder(symbol3);
+        if (state2.options.implementations) {
+          addImplementationReferences(referenceLocation, addRef, state2);
         } else {
           addRef(referenceLocation, kind);
         }
       }
-      function addConstructorReferences(referenceLocation, sourceFile, search, state3) {
+      function addConstructorReferences(referenceLocation, sourceFile, search, state2) {
         if (isNewExpressionTarget(referenceLocation)) {
-          addReference(referenceLocation, search.symbol, state3);
+          addReference(referenceLocation, search.symbol, state2);
         }
-        const pusher = () => state3.referenceAdder(search.symbol);
+        const pusher = () => state2.referenceAdder(search.symbol);
         if (isClassLike(referenceLocation.parent)) {
           Debug.assert(referenceLocation.kind === 90 || referenceLocation.parent.name === referenceLocation);
           findOwnConstructorReferences(search.symbol, sourceFile, pusher());
@@ -171217,17 +171217,17 @@ ${newComment.split(`
           const classExtending = tryGetClassByExtendingIdentifier(referenceLocation);
           if (classExtending) {
             findSuperConstructorAccesses(classExtending, pusher());
-            findInheritedConstructorReferences(classExtending, state3);
+            findInheritedConstructorReferences(classExtending, state2);
           }
         }
       }
-      function addClassStaticThisReferences(referenceLocation, search, state3) {
-        addReference(referenceLocation, search.symbol, state3);
+      function addClassStaticThisReferences(referenceLocation, search, state2) {
+        addReference(referenceLocation, search.symbol, state2);
         const classLike = referenceLocation.parent;
-        if (state3.options.use === 2 || !isClassLike(classLike))
+        if (state2.options.use === 2 || !isClassLike(classLike))
           return;
         Debug.assert(classLike.name === referenceLocation);
-        const addRef = state3.referenceAdder(search.symbol);
+        const addRef = state2.referenceAdder(search.symbol);
         for (const member of classLike.members) {
           if (!(isMethodOrAccessor(member) && isStatic(member))) {
             continue;
@@ -171291,14 +171291,14 @@ ${newComment.split(`
       function hasOwnConstructor(classDeclaration) {
         return !!getClassConstructorSymbol(classDeclaration.symbol);
       }
-      function findInheritedConstructorReferences(classDeclaration, state3) {
+      function findInheritedConstructorReferences(classDeclaration, state2) {
         if (hasOwnConstructor(classDeclaration))
           return;
         const classSymbol = classDeclaration.symbol;
-        const search = state3.createSearch(undefined, classSymbol, undefined);
-        getReferencesInContainerOrFiles(classSymbol, state3, search);
+        const search = state2.createSearch(undefined, classSymbol, undefined);
+        getReferencesInContainerOrFiles(classSymbol, state2, search);
       }
-      function addImplementationReferences(refNode, addReference2, state3) {
+      function addImplementationReferences(refNode, addReference2, state2) {
         if (isDeclarationName(refNode) && isImplementation(refNode.parent)) {
           addReference2(refNode);
           return;
@@ -171307,7 +171307,7 @@ ${newComment.split(`
           return;
         }
         if (refNode.parent.kind === 305) {
-          getReferenceEntriesForShorthandPropertyAssignment(refNode, state3.checker, addReference2);
+          getReferenceEntriesForShorthandPropertyAssignment(refNode, state2.checker, addReference2);
         }
         const containingNode = getContainingNodeIfInHeritageClause(refNode);
         if (containingNode) {
@@ -171316,7 +171316,7 @@ ${newComment.split(`
         }
         const typeNode = findAncestor(refNode, (a) => !isQualifiedName(a.parent) && !isTypeNode(a.parent) && !isTypeElement(a.parent));
         const typeHavingNode = typeNode.parent;
-        if (hasType(typeHavingNode) && typeHavingNode.type === typeNode && state3.markSeenContainingTypeReference(typeHavingNode)) {
+        if (hasType(typeHavingNode) && typeHavingNode.type === typeNode && state2.markSeenContainingTypeReference(typeHavingNode)) {
           if (hasInitializer(typeHavingNode)) {
             addIfImplementation(typeHavingNode.initializer);
           } else if (isFunctionLike(typeHavingNode) && typeHavingNode.body) {
@@ -171590,16 +171590,16 @@ ${newComment.split(`
         const modifierFlags = getEffectiveModifierFlags(symbol3.valueDeclaration);
         return !!(modifierFlags & 256);
       }
-      function getRelatedSymbol(search, referenceSymbol, referenceLocation, state3) {
-        const { checker } = state3;
-        return forEachRelatedSymbol(referenceSymbol, referenceLocation, checker, false, state3.options.use !== 2 || !!state3.options.providePrefixAndSuffixTextForRename, (sym, rootSymbol, baseSymbol, kind) => {
+      function getRelatedSymbol(search, referenceSymbol, referenceLocation, state2) {
+        const { checker } = state2;
+        return forEachRelatedSymbol(referenceSymbol, referenceLocation, checker, false, state2.options.use !== 2 || !!state2.options.providePrefixAndSuffixTextForRename, (sym, rootSymbol, baseSymbol, kind) => {
           if (baseSymbol) {
             if (isStaticSymbol(referenceSymbol) !== isStaticSymbol(baseSymbol)) {
               baseSymbol = undefined;
             }
           }
           return search.includes(baseSymbol || rootSymbol || sym) ? { symbol: rootSymbol && !(getCheckFlags(sym) & 6) ? rootSymbol : sym, kind } : undefined;
-        }, (rootSymbol) => !(search.parents && !search.parents.some((parent2) => explicitlyInheritsFrom(rootSymbol.parent, parent2, state3.inheritsFromCache, checker))));
+        }, (rootSymbol) => !(search.parents && !search.parents.some((parent2) => explicitlyInheritsFrom(rootSymbol.parent, parent2, state2.inheritsFromCache, checker))));
       }
       function getIntersectingMeaningFromDeclarations(node, symbol3) {
         let meaning = getMeaningFromLocation(node);
@@ -178111,9 +178111,9 @@ ${options2.prefix}` : `
     })(RulesPosition || {});
     function addRule(rules, rule2, specificTokens, constructionState, rulesBucketIndex) {
       const position = rule2.action & 3 ? specificTokens ? 0 : RulesPosition.StopRulesAny : rule2.context !== anyContext ? specificTokens ? RulesPosition.ContextRulesSpecific : RulesPosition.ContextRulesAny : specificTokens ? RulesPosition.NoContextRulesSpecific : RulesPosition.NoContextRulesAny;
-      const state3 = constructionState[rulesBucketIndex] || 0;
-      rules.splice(getInsertionIndex(state3, position), 0, rule2);
-      constructionState[rulesBucketIndex] = increaseInsertionIndex(state3, position);
+      const state2 = constructionState[rulesBucketIndex] || 0;
+      rules.splice(getInsertionIndex(state2, position), 0, rule2);
+      constructionState[rulesBucketIndex] = increaseInsertionIndex(state2, position);
     }
     function getInsertionIndex(indexBitmap, maskPosition) {
       let index = 0;
@@ -200673,7 +200673,7 @@ var systemTransformHook = async function(input, output) {
   } catch (e) {
     tridentLog("ERROR", "hooks", "T1 synthesis failed: " + (e.message || e));
   }
-  if (!state.identityLoaded) {
+  if (!orchestrator.getState(sessionId).identityLoaded) {
     orchestrator.setIdentityLoaded(true, sessionId);
     orchestrator.setIdentityLoaded(true, "default");
     notifyIdentityLoaded("4.3.3");
@@ -233909,7 +233909,7 @@ class CycleTracker {
         existing.lastSeenAt = this.cycles.length;
         result.push(existing);
       } else {
-        var state3 = {
+        var state2 = {
           id,
           file: f.file,
           line: f.line,
@@ -233922,8 +233922,8 @@ class CycleTracker {
           fixVerified: false,
           assignedPlan: ""
         };
-        this.findings.set(id, state3);
-        result.push(state3);
+        this.findings.set(id, state2);
+        result.push(state2);
       }
     }
     for (var pid of previousIds) {
@@ -234419,7 +234419,7 @@ class GodLoopOrchestrator {
     writeFileSync7(path24.join(cycleDir, "PLAN.md"), plan);
   }
   writeLoopState(archiveBase, cycle, score2, targetPath) {
-    var state3 = [
+    var state2 = [
       "# GOD LOOP STATE \u2014 Compaction Survival",
       "",
       "- Current Cycle: " + cycle,
@@ -234432,7 +234432,7 @@ class GodLoopOrchestrator {
       "The loop must continue until score >= 96 or abort flag is set."
     ].join(`
 `);
-    writeFileSync7(path24.join(archiveBase, "LOOP_STATE.md"), state3);
+    writeFileSync7(path24.join(archiveBase, "LOOP_STATE.md"), state2);
   }
   writeNextSteps(archiveBase, cycle, score2, phase) {
     var steps = [
@@ -234454,9 +234454,9 @@ class GodLoopOrchestrator {
 `);
     writeFileSync7(path24.join(archiveBase, "NEXT_STEPS.md"), steps);
   }
-  saveLoopState(archiveBase, state3) {
+  saveLoopState(archiveBase, state2) {
     try {
-      writeFileSync7(path24.join(archiveBase, "GOD_LOOP_STATE.json"), JSON.stringify(state3, null, 2));
+      writeFileSync7(path24.join(archiveBase, "GOD_LOOP_STATE.json"), JSON.stringify(state2, null, 2));
     } catch (e) {
       tiLog("ERROR", "Failed to save loop state: " + (e instanceof Error ? e.message : String(e)));
     }
@@ -236420,28 +236420,28 @@ ${t2.preview}
       description: "Show current Trident Brain v4.3 state: mode, layer, iteration, status, artifact metadata",
       args: {},
       execute: async () => {
-        const state3 = orchestrator.getState();
+        const state2 = orchestrator.getState();
         const artifactMeta = {};
-        for (const [key, value] of state3.artifacts) {
+        for (const [key, value] of state2.artifacts) {
           artifactMeta[key] = {
             length: value.length,
             preview: value.substring(0, 120)
           };
         }
         return JSON.stringify({
-          mode: state3.mode,
-          currentLayer: state3.currentLayer,
+          mode: state2.mode,
+          currentLayer: state2.currentLayer,
           maxLayers: orchestrator.getMaxLayers(),
-          iteration: state3.iteration,
-          status: state3.status,
-          initialized: state3.initialized,
-          identityLoaded: state3.identityLoaded,
-          artifactCount: state3.artifacts.size,
-          artifactKeys: Array.from(state3.artifacts.keys()),
+          iteration: state2.iteration,
+          status: state2.status,
+          initialized: state2.initialized,
+          identityLoaded: state2.identityLoaded,
+          artifactCount: state2.artifacts.size,
+          artifactKeys: Array.from(state2.artifacts.keys()),
           artifactMetadata: artifactMeta,
-          lastIntent: state3.lastIntent ? {
-            mode: state3.lastIntent.mode,
-            reasoning: state3.lastIntent.reasoning
+          lastIntent: state2.lastIntent ? {
+            mode: state2.lastIntent.mode,
+            reasoning: state2.lastIntent.reasoning
           } : null,
           corePrinciple: orchestrator.getCorePrinciple()
         }, null, 2);
