@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "model": "google/gemma-4-26b-a4b-it",
+  "small_model": "google/gemma-4-26b-a4b-it",
+  "permission": { "*": { "*": "allow" } },
+  "plugin": ["file:///root/.config/opencode/plugins/trident/dist/index.js"],
+  "agent": {
+    "trident": {
+      "name": "trident",
+      "description": "TRIDENT v4.3.3 — Algorithmic Audit Engine",
+      "mode": "primary",
+      "color": "#00BFFF"
+    }
+  }
+}
