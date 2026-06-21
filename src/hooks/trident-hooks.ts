@@ -666,7 +666,7 @@ var systemTransformHook = async function(input: Record<string, unknown>, output:
     tridentLog('ERROR', 'hooks', 'T1 synthesis failed: ' + ((e as Error).message || e));
   }
 
-  if (!state.identityLoaded) {
+  if (!orchestrator.getState(sessionId).identityLoaded) {
     orchestrator.setIdentityLoaded(true, sessionId);
     // CRITICAL: trident-status and other tools call getState() with NO session ID,
     // which resolves to the 'default' key. Set identityLoaded on default too
