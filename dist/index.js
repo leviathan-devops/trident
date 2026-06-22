@@ -199287,6 +199287,7 @@ var ALLOWED_EXTERNAL_TOOLS = new Set([
   "webfetch",
   "question",
   "task",
+  "todowrite",
   "hive_context",
   "hive-context",
   "hive_status",
@@ -200739,6 +200740,29 @@ var systemTransformHook = async function(input, output) {
     orchestrator.setIdentityLoaded(true, "default");
     notifyIdentityLoaded("4.3.3");
   }
+  try {
+    const poseidonActive = poseidonState.isActive(sessionId);
+    const hasMandate = systemOut.system.some((s2) => typeof s2 === "string" && s2.indexOf("POSEIDON MODE \u2014 AUTONOMOUS EXECUTION MANDATE") !== -1);
+    if (poseidonActive && !hasMandate) {
+      systemOut.system.push(`## POSEIDON MODE \u2014 AUTONOMOUS EXECUTION MANDATE
+
+` + `You are in POSEIDON MODE. The GOD LOOP is active.
+
+1. When trident-poseidon returns "Next Step" instructions, EXECUTE THEM IMMEDIATELY. Do NOT wait for user confirmation. Do NOT ask "shall I proceed?".
+
+2. Chain tool calls autonomously: read plan, dispatch agents, verify, repeat. The loop continues until LOCKED or FAILED.
+
+3. ALWAYS present Poseidon output to the user. They MUST see every cycle plan, score, and next step. Do NOT hide or summarize tool output.
+
+4. After build agents return, IMMEDIATELY call trident-poseidon action=verify. Do NOT stop to chat. Do NOT ask for feedback.
+
+5. If score does not improve for 2 consecutive cycles, call trident-problem-solving to analyze why. NEVER guess. Then replan and continue.
+
+6. Do NOT stop before LOCKED or FAILED. The user walked away. They expect fully built software when they return.`);
+    } else if (!poseidonActive && hasMandate) {
+      systemOut.system = systemOut.system.filter((s2) => typeof s2 !== "string" || s2.indexOf("POSEIDON MODE \u2014 AUTONOMOUS EXECUTION MANDATE") === -1);
+    }
+  } catch {}
   await hookRegistry.fire("system.transform", input, output);
 };
 var messagesTransformHook = async function(input, output) {
@@ -217521,7 +217545,7 @@ ${providerJson}  },
 `;
   return a;
 }
-function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery) {
+function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap) {
   const now = new Date().toISOString();
   const projectLabel = projectName.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
   const typeCategory = (t) => {
@@ -217542,73 +217566,24 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
         return "behavioral";
     }
   };
-  const codeExample = (name, t) => {
-    switch (t) {
-      case "class":
-        return [
-          "export class " + name + " {",
-          "  private state: Record<string, unknown> = {};",
-          "  constructor(config?: Record<string, unknown>) {",
-          "    if (config) Object.assign(this.state, config);",
-          "  }",
-          "  /** Primary accessor \u2014 downstream code calls this. */",
-          "  getState(): Record<string, unknown> { return this.state; }",
-          "}"
-        ].join(`
-`);
-      case "interface":
-        return [
-          "export interface " + name + " {",
-          "  /** Unique identifier for the entity. */",
-          "  id: string;",
-          "  /** Optional metadata bag; validate before use. */",
-          "  metadata?: Record<string, unknown>;",
-          "  /** Timestamps in ISO 8601. */",
-          "  createdAt?: string;",
-          "}"
-        ].join(`
-`);
-      case "function":
-        return [
-          "export function " + name + "(input: unknown): Promise<void> {",
-          "  if (!input) throw new Error(`" + name + ": input required`);",
-          "  // ... core transformation or side effect ...",
-          "  return Promise.resolve();",
-          "}"
-        ].join(`
-`);
-      case "import":
-        return [
-          "import { " + name + " } from './module';",
-          "// " + name + " establishes a dependency edge consumed by the caller."
-        ].join(`
-`);
-      case "export":
-        return [
-          "export const " + name + " = (data: unknown) => ({",
-          "  ok: true as const,",
-          "  data,",
-          "});"
-        ].join(`
-`);
-      default:
-        return "// " + name + ": recognized construct (detail not extractable from static scan).";
-    }
+  const codeExample = (_name, _t) => {
+    return "";
   };
-  const describePattern = (name, t) => {
+  const describePattern = (name, t, file2, line) => {
+    const location = file2 ? " (at `" + file2 + ":" + (line || "?") + "`)" : "";
     switch (t) {
       case "class":
-        return "The `" + name + "` class encapsulates state and behavior. It manages lifecycle, " + "holds configuration, and exposes methods invoked by downstream consumers.";
+        return "The `" + name + "` class is a structural construct" + location + ".";
       case "interface":
-        return "The `" + name + "` interface defines a structural contract. Implementations must " + "conform to its shape; mismatches surface at compile time.";
+        return "The `" + name + "` interface defines a structural contract" + location + ".";
       case "function":
-        return "The `" + name + "` function performs a discrete transformation or side effect. " + "It is a callable unit, importable and reusable.";
+        return "The `" + name + "` function is a callable unit" + location + ".";
       case "import":
-        return "The `" + name + "` symbol is imported from another module, establishing a " + "dependency edge in the import graph.";
+        return "The `" + name + "` symbol is imported" + location + ", establishing a dependency edge.";
       case "export":
-        return "The `" + name + "` binding is exported as a module boundary, consumable by " + "importers across the codebase.";
+        return "The `" + name + "` binding is exported as a module boundary" + location + ".";
       default:
-        return "The `" + name + "` construct is a recognized code pattern at this location.";
+        return "The `" + name + "` construct (" + t + ")" + location + ".";
     }
   };
   const antiPattern = (t) => {
@@ -217718,9 +217693,22 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
   b += `## Agent Identity
 
 `;
-  b += projectLabel + " is a Trident-managed agent/project. This T2 knowledge base captures " + "the identity, critical facts, behavioral patterns, failure modes, prohibitions, " + `interface contracts, and architecture discovered during context synthesis.
+  const langList = discovery ? Object.keys(discovery.languages).join("/") : "TypeScript";
+  const fileCount = discovery ? discovery.totalFiles : "unknown";
+  const lineCount = discovery ? discovery.totalLines.toLocaleString() : "unknown";
+  b += "**" + projectLabel + "** is a " + langList + " project with " + fileCount + " files and " + lineCount + ` lines of code.
 
 `;
+  if (discovery && discovery.entryPoints.length > 0) {
+    b += "Entry points: " + discovery.entryPoints.map((e) => "`" + e + "`").join(", ") + `
+
+`;
+  }
+  if (discovery && discovery.warheads.length > 0) {
+    b += "Contains " + discovery.warheads.length + " warhead system(s) and " + discovery.auditLayers.length + ` audit layer(s).
+
+`;
+  }
   b += `| Property | Value |
 `;
   b += `|----------|-------|
@@ -217851,7 +217839,7 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 
 `;
   if (discovery && discovery.patterns.length > 0) {
-    const shown = discovery.patterns.slice(0, 30);
+    const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((targetLines || 1000) / 3)));
     b += "_" + shown.length + " of " + discovery.patterns.length + " discovered patterns " + `shown below._
 
 `;
@@ -217861,13 +217849,20 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 `;
       b += "- **Location:** `" + p.file + ":" + p.line + "`\n";
       b += "- **Type:** " + cat + " (discovery type: `" + p.type + "`)\n";
-      b += "- **What It Does:** " + describePattern(p.name, p.type) + `
+      b += "- **What It Does:** " + describePattern(p.name, p.type, p.file, p.line) + `
 `;
       b += `- **Code Example:**
 `;
       b += "```typescript\n";
-      b += codeExample(p.name, p.type) + `
+      const _realCodeKey = p.file + ":" + p.line;
+      const _realSnippet = realCodeMap?.get(_realCodeKey);
+      if (_realSnippet) {
+        b += _realSnippet + `
 `;
+      } else {
+        b += `// Real source not available for this pattern.
+`;
+      }
       b += "```\n";
       b += "- **When to Follow:** When implementing functionality that interacts with `" + p.name + "` or builds a similar construct (type: `" + p.type + "`).\n";
       b += "- **Anti-Pattern:** " + antiPattern(p.type) + `
@@ -217904,7 +217899,7 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 
 `;
   if (discovery && discovery.failureModes.length > 0) {
-    const shown = discovery.failureModes.slice(0, 20);
+    const shown = discovery.failureModes.slice(0, Math.max(20, Math.floor((targetLines || 1000) / 5)));
     b += "_" + shown.length + " of " + discovery.failureModes.length + " failure modes " + `shown below._
 
 `;
@@ -218189,7 +218184,7 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 `;
     const imports = discovery.patterns.filter((p) => p.type === "import");
     if (imports.length > 0) {
-      for (const imp of imports.slice(0, 15)) {
+      for (const imp of imports.slice(0, Math.max(15, Math.floor((targetLines || 1000) / 6)))) {
         b += "- `" + imp.file + ":" + imp.line + "` imports `" + imp.name + "`\n";
       }
     } else {
@@ -218275,7 +218270,7 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 `;
       b += `|-------|------|----------|-------------------|
 `;
-      for (const p of exported.slice(0, 25)) {
+      for (const p of exported.slice(0, Math.max(25, Math.floor((targetLines || 1000) / 4)))) {
         let sig = "";
         switch (p.type) {
           case "function":
@@ -218307,7 +218302,7 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 `;
         b += `|----------------|-------------|----------|
 `;
-        for (const imp of importSyms.slice(0, 20)) {
+        for (const imp of importSyms.slice(0, Math.max(20, Math.floor((targetLines || 1000) / 5)))) {
           b += "| `" + imp.name + "` | `" + imp.file + "` | line " + imp.line + ` |
 `;
         }
@@ -218339,8 +218334,8 @@ function generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discov
 `;
   return b;
 }
-async function generateT2Artifact(projectName, patterns, keyFacts, targetPath, discovery) {
-  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery);
+async function generateT2Artifact(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap) {
+  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap);
   const base = TRIDENT_CONFIG.artifactsBase || path12.join(process.cwd(), "GENERATED_ARTIFACTS");
   const artifactDir = path12.join(base, "T2_KNOWLEDGE");
   await fs9.mkdir(artifactDir, { recursive: true });
@@ -218362,7 +218357,9 @@ async function generateT2Artifact(projectName, patterns, keyFacts, targetPath, d
 }
 
 // src/tools/trident-tools.ts
+init_context_synthesis_engine();
 init_config();
+import * as fsSync from "fs";
 
 // src/modes/problem-solving.ts
 init_orchestrator();
@@ -219311,11 +219308,12 @@ class GodLoopOrchestrator {
       return f.id;
     });
     cycleTracker.recordCycle(cycle, score2, classifiedIds, "");
-    var effectiveMaxCycles = maxCycles || globalThis.poseidonMaxCycles || 50;
+    var effectiveMaxCycles = maxCycles || globalThis.poseidonMaxCycles || 99999;
     var stagnation = cycleTracker.detectStagnation();
-    if (stagnation.stuck) {
-      tiLog("POSEIDON", `CYCLE ${cycle}: STALLED \u2014 aborting.`);
-      return { cycle, score: score2, findings: rawFindings, plan: "", planPath: "", archiveBase, status: "error" };
+    var stallDetected = false;
+    if (stagnation && stagnation.stuck) {
+      tiLog("poseidon", `Stagnation detected: ${stagnation.cyclesWithoutImprovement} cycles without improvement. Triggering PSM self-heal.`);
+      stallDetected = true;
     }
     this.archiveCycle(archiveBase, cycle, auditOutput, score2);
     this.writeLoopState(archiveBase, cycle, score2, targetPath);
@@ -219342,7 +219340,7 @@ class GodLoopOrchestrator {
     cycleTracker.saveToDisk(archiveBase);
     this.saveLoopState(archiveBase, { cycle, score: score2, highestScore: previousState?.highestScore || score2, status: "looping", nextAction: "dispatch_build", archiveBase, cycleTrackerPath: archiveBase, targetPath, plan });
     tiLog("POSEIDON", `CYCLE ${cycle}: Audit complete. Score=${score2}/100. Plan saved to ${planPath}`);
-    return { cycle, score: score2, findings: rawFindings, plan, planPath, archiveBase, status: "looping" };
+    return { cycle, score: score2, findings: rawFindings, plan, planPath, archiveBase, status: "looping", stallDetected };
   }
   async verifyCycle(targetPath, sessionId) {
     var archiveBase = path16.join(process.cwd(), ".trident", "poseidon-audits", sessionId);
@@ -219376,10 +219374,10 @@ class GodLoopOrchestrator {
         findingsRemaining++;
     }
     var stagnation = cycleTracker.detectStagnation();
-    if (stagnation.stuck) {
-      tiLog("POSEIDON", `CYCLE ${cycle}: STALLED \u2014 no progress across multiple cycles.`);
-      this.saveLoopState(archiveBase, { ...previousState, score: score2, highestScore: Math.max(previousState.highestScore, score2), status: "error", nextAction: "error" });
-      return { cycle, score: score2, previousScore, findingsFixed, findingsRemaining, nextAction: "error", status: "error" };
+    var stallDetected = false;
+    if (stagnation && stagnation.stuck) {
+      tiLog("poseidon", `Stagnation detected in verify: ${stagnation.cyclesWithoutImprovement} cycles without improvement. Triggering PSM self-heal.`);
+      stallDetected = true;
     }
     if (score2 > previousScore) {
       tiLog("POSEIDON", `CYCLE ${cycle}: Score improved ${previousScore} \u2192 ${score2}.`);
@@ -219392,13 +219390,13 @@ class GodLoopOrchestrator {
       var plan = this.generatePlan(cycle, rawFindings, targetPath, score2);
       this.archivePlan(archiveBase, cycle + 1, plan);
       this.saveLoopState(archiveBase, { ...previousState, score: score2, highestScore: Math.max(previousState.highestScore, score2), cycle, status: "looping", nextAction: "dispatch_build", plan });
-      return { cycle, score: score2, previousScore, findingsFixed, findingsRemaining, nextAction: "dispatch_build", status: "looping" };
+      return { cycle, score: score2, previousScore, findingsFixed, findingsRemaining, nextAction: "dispatch_build", status: "looping", stallDetected };
     } else {
       tiLog("POSEIDON", `CYCLE ${cycle}: No score improvement (${previousScore} \u2192 ${score2}). Generating verbose plan.`);
       var verbosePlan = this.generateVerbosePlan(cycle, rawFindings, targetPath, score2);
       this.archivePlan(archiveBase, cycle + 1, verbosePlan);
       this.saveLoopState(archiveBase, { ...previousState, score: score2, highestScore: Math.max(previousState.highestScore, score2), cycle, status: "looping", nextAction: "dispatch_build", plan: verbosePlan });
-      return { cycle, score: score2, previousScore, findingsFixed, findingsRemaining, nextAction: "dispatch_build", status: "looping" };
+      return { cycle, score: score2, previousScore, findingsFixed, findingsRemaining, nextAction: "dispatch_build", status: "looping", stallDetected };
     }
   }
   async runAudit(targetPath) {
@@ -219735,7 +219733,7 @@ var godLoopOrchestrator = new GodLoopOrchestrator;
 
 // src/tools/trident-poseidon.ts
 var tridentPoseidonTool = tool({
-  description: "POSEIDON MODE: God Orchestrator for quality-enforced build execution. " + "Dispatches work to Trident_Build subagent, audits output, loops until 96%+ runtime grade. " + 'AUTO-LOCKS on completion. Requires user activation via "Poseidon Mode".',
+  description: "POSEIDON MODE: God Orchestrator for quality-enforced build execution. Dispatches work to Trident_Build subagent, audits output, loops until 96%+ runtime grade. AUTO-LOCKS on completion. ALL POSEIDON OUTPUT MUST BE DISPLAYED TO THE USER \u2014 THE USER MUST SEE EVERY CYCLE PLAN, SCORE, AND NEXT STEP.",
   args: {
     targetPath: exports_external.string().describe("Absolute path to the project root to build/audit"),
     action: exports_external.enum(["start", "status", "abort", "verify", "phase"]).default("start").describe("start=run God Loop, status=show current state, abort=cancel running loop, phase=run 10-phase machine"),
@@ -219747,13 +219745,19 @@ var tridentPoseidonTool = tool({
     if (!poseidonState.isActive(sessionId)) {
       return `## POSEIDON MODE: LOCKED
 
-` + "Poseidon Mode is not active. The user must explicitly activate it by " + 'saying something like "Poseidon Mode Activate" or "enable poseidon mode" ' + "in the chat. The agent cannot activate Poseidon Mode autonomously.";
+` + "Poseidon Mode is not active. The user must explicitly activate it by " + 'saying something like "Poseidon Mode Activate" or "enable poseidon mode" ' + "in the chat. The agent cannot activate Poseidon Mode autonomously." + `
+
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
     }
     try {
       if (args.action === "status") {
         var metrics = poseidonState.getMetrics(sessionId);
         if (!metrics) {
-          return "## POSEIDON MODE: No active session data.";
+          return "## POSEIDON MODE: No active session data." + `
+
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
         }
         return `## POSEIDON MODE \u2014 STATUS
 
@@ -219763,13 +219767,18 @@ var tridentPoseidonTool = tool({
 ` + "- Highest Score: " + metrics.highestScore + `/100
 ` + "- Target: " + metrics.targetPath + `
 ` + "- Abort Flag: " + metrics.abortFlag + `
-`;
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
       if (args.action === "abort") {
         poseidonState.setAbortFlag(sessionId, true);
         return `## POSEIDON MODE: ABORT SIGNAL SENT
 
-Loop will terminate after current cycle.`;
+Loop will terminate after current cycle.` + `
+
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
       if (args.action === "verify") {
         tridentLog("INFO", "trident-poseidon", `Verifying build for: ${args.targetPath}`);
@@ -219778,7 +219787,9 @@ Loop will terminate after current cycle.`;
           return `## POSEIDON MODE \u2014 VERIFY FAILED
 
 ` + `No progress detected. The God Loop is stalled.
-` + "Use `trident-poseidon action=abort` to reset.\n";
+` + "Use `trident-poseidon action=abort` to reset.\n" + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
         }
         if (verifyResult.status === "complete") {
           poseidonState.autoDeactivate(sessionId);
@@ -219795,7 +219806,27 @@ Loop will terminate after current cycle.`;
 ` + `The code has passed the audit at >= 96%.
 
 ` + `Poseidon Mode has been locked.
-`;
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
+        }
+        if (verifyResult.stallDetected) {
+          return `**[POSEIDON MODE \u2014 DISPLAY TO USER]**
+
+` + `## POSEIDON MODE \u2014 STALL DETECTED
+
+` + `Score has not improved for 2 cycles. Activating Problem Solving Mode for self-healing.
+
+` + `### MANDATORY: Call trident-problem-solving NOW
+` + '- problem: "Score stalled at ' + verifyResult.score + `/100 for 2 cycles"
+` + `- reasoning: [List cycle history, persistent findings, approaches that failed]
+` + `- workingPlan: [Revised approach based on PSM analysis]
+
+` + `After PSM completes, call trident-deep-planning to generate a new wave plan, then continue the GOD loop.
+` + `Do NOT stop. Do NOT ask the user. Self-heal and continue.
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
         }
         return `## POSEIDON MODE \u2014 CYCLE VERIFY
 
@@ -219804,12 +219835,16 @@ Loop will terminate after current cycle.`;
 ` + "### Findings Fixed: " + verifyResult.findingsFixed + `
 ` + "### Findings Remaining: " + verifyResult.findingsRemaining + `
 
-` + "### Next Action: " + (verifyResult.nextAction === "dispatch_build" ? "Dispatch to Trident_Build again" : "Audit again") + `
-
-` + `1. Read the plan:
+` + `### MANDATORY NEXT ACTIONS (Do NOT wait for user. Execute NOW.):
+` + `1. Read the plan NOW:
 ` + '   `read path=".trident/poseidon-audits/' + sessionId + "/cycle_" + (verifyResult.cycle + 1) + '/PLAN.md"`\n' + `2. Dispatch to Trident_Build:
 ` + '   `task description="Trident Build Cycle" prompt="<plan>" subagent_type="trident_build"`\n' + `3. After build, verify again:
-` + '   `trident-poseidon action=verify targetPath="' + args.targetPath + '"`\n';
+` + '   `trident-poseidon action=verify targetPath="' + args.targetPath + `"\`
+
+` + `Do NOT stop. Do NOT ask the user. Do NOT chat. EXECUTE.
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
       if (args.action === "phase") {
         var phaseMetrics = poseidonState.getMetrics(sessionId);
@@ -219821,16 +219856,22 @@ Loop will terminate after current cycle.`;
 ` + "- Highest Score: " + (phaseMetrics?.highestScore || 0) + `/100
 ` + "- Target: " + (phaseMetrics?.targetPath || args.targetPath) + `
 
-` + "Use `trident-poseidon action=start` to begin a new audit cycle, or `action=verify` after build.";
+` + "Use `trident-poseidon action=start` to begin a new audit cycle, or `action=verify` after build." + `
+
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
       poseidonState.setTargetPath(sessionId, args.targetPath);
+      poseidonState.setAbortFlag(sessionId, false);
       tridentLog("INFO", "trident-poseidon", `Poseidon Mode audit for: ${args.targetPath}`);
       var auditResult = await godLoopOrchestrator.auditAndPlan(args.targetPath, sessionId);
       if (auditResult.status === "error") {
         return `## POSEIDON MODE \u2014 AUDIT FAILED
 
 ` + `The audit encountered a fatal error (stalled or aborted).
-` + "Use `trident-poseidon action=status` to check state.\n" + "Use `trident-poseidon action=abort` to reset.\n";
+` + "Use `trident-poseidon action=status` to check state.\n" + "Use `trident-poseidon action=abort` to reset.\n" + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
       if (auditResult.status === "complete") {
         poseidonState.autoDeactivate(sessionId);
@@ -219842,9 +219883,31 @@ Loop will terminate after current cycle.`;
 ` + `No fixes needed.
 
 ` + `Poseidon Mode has been locked.
-`;
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
       }
-      return "## POSEIDON MODE \u2014 CYCLE " + auditResult.cycle + ` PLAN
+      if (auditResult.stallDetected) {
+        return `**[POSEIDON MODE \u2014 DISPLAY TO USER]**
+
+` + `## POSEIDON MODE \u2014 STALL DETECTED
+
+` + `Score has not improved for 2 cycles. Activating Problem Solving Mode for self-healing.
+
+` + `### MANDATORY: Call trident-problem-solving NOW
+` + '- problem: "Score stalled at ' + auditResult.score + `/100 for 2 cycles"
+` + `- reasoning: [List cycle history, persistent findings, approaches that failed]
+` + `- workingPlan: [Revised approach based on PSM analysis]
+
+` + `After PSM completes, call trident-deep-planning to generate a new wave plan, then continue the GOD loop.
+` + `Do NOT stop. Do NOT ask the user. Self-heal and continue.
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
+      }
+      return `**[POSEIDON MODE \u2014 DISPLAY TO USER]**
+
+## POSEIDON MODE \u2014 CYCLE ` + auditResult.cycle + ` PLAN
 
 ` + "### Current Score: " + auditResult.score + `/100
 
@@ -219852,19 +219915,26 @@ Loop will terminate after current cycle.`;
 ` + "A remediation plan with " + auditResult.findings.length + ` findings has been saved to:
 ` + "`" + auditResult.planPath + `\`
 
-` + `### Next Step: Dispatch to Trident_Build
-` + `1. Read the plan:
+` + `### MANDATORY NEXT ACTIONS (Do NOT wait for user. Execute NOW.):
+` + `1. Read the plan NOW:
 ` + '   `read path="' + auditResult.planPath + '"`\n' + `2. Dispatch to Trident_Build with the plan:
 ` + '   `task description="Trident Build Cycle" prompt="<plan content>" subagent_type="trident_build"`\n' + `3. After build completes, verify:
 ` + '   `trident-poseidon action=verify targetPath="' + args.targetPath + `"\`
 
+` + `Do NOT stop. Do NOT ask the user. Do NOT chat. EXECUTE.
+
 ` + `### Auto-Deactivation
 ` + `Poseidon Mode will auto-lock when the build completes.
-`;
+` + `
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
     } catch (err) {
       var errMsg = err instanceof Error ? err.message : String(err);
       tridentLog("ERROR", "trident-poseidon", `[POSEIDON-ERR] ${errMsg}`);
-      return JSON.stringify({ error: "Poseidon Mode failed", message: errMsg }, null, 2);
+      return JSON.stringify({ error: "Poseidon Mode failed", message: errMsg }, null, 2) + `
+
+---
+**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**`;
     } finally {}
   }
 });
@@ -221211,8 +221281,8 @@ function createTridentTools() {
           throw new Error("targetPath does not exist: " + args.targetPath);
         }
         const auditTimeout = setTimeout(() => {
-          throw new Error("[TIMEOUT] Audit exceeded 120s");
-        }, 120000);
+          throw new Error("[TIMEOUT] Audit exceeded 600s");
+        }, 600000);
         try {
           orchestrator.startAudit();
           const projectName = await resolveProjectName(args.targetPath);
@@ -221493,7 +221563,8 @@ function createTridentTools() {
         keyFacts: exports_external.array(exports_external.string()).optional().describe("Critical facts the agent must know"),
         targetPath: exports_external.string().optional().describe("Absolute path to the project root (used in T2 mode for architecture discovery)"),
         targetPaths: exports_external.array(exports_external.string()).optional().describe("File paths for trident_explore subagent dispatch (T2 mode only)"),
-        outputMode: exports_external.enum(["T1", "T2"]).default("T1").describe("T1 (default) = lightweight injectable config. T2 = dense, bible-style standalone knowledge file written to disk.")
+        outputMode: exports_external.enum(["T1", "T2"]).default("T1").describe("T1 (default) = lightweight injectable config. T2 = dense, bible-style standalone knowledge file written to disk."),
+        targetLines: exports_external.number().min(100).max(16000).default(1000).optional().describe("Target line count for T2 artifact. Controls how many patterns, failure modes, imports, etc. are sampled. Higher = more discovery data included.")
       },
       execute: async (args) => {
         try {
@@ -221514,8 +221585,78 @@ function createTridentTools() {
                 tridentLog("WARN", "trident-context-synthesis", `T2 discovery failed: ${e.message}`);
               }
             }
-            const t2 = await generateT2Artifact(args.projectName, args.patterns || [], args.keyFacts || [], args.targetPath, discovery);
-            csMachineActor.send({ type: "COLLECT", context: t2.content });
+            const realCodeMap = new Map;
+            const _basePath = args.targetPath || "";
+            if (_basePath && discovery && discovery.patterns.length > 0) {
+              const fileIndex = new Map;
+              const buildIndex = (dir, depth) => {
+                if (depth > 10)
+                  return;
+                try {
+                  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                    if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist")
+                      continue;
+                    const full = path20.join(dir, entry.name);
+                    if (entry.isDirectory())
+                      buildIndex(full, depth + 1);
+                    else if (entry.isFile()) {
+                      const arr = fileIndex.get(entry.name) || [];
+                      arr.push(full);
+                      fileIndex.set(entry.name, arr);
+                    }
+                  }
+                } catch {}
+              };
+              buildIndex(_basePath, 0);
+              const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((args.targetLines || 1000) / 10)));
+              for (const pat of shown) {
+                try {
+                  const candidates = fileIndex.get(pat.file);
+                  if (!candidates || candidates.length === 0)
+                    continue;
+                  const content = fsSync.readFileSync(candidates[0], "utf-8");
+                  const lines = content.split(`
+`);
+                  const startLine = Math.max(0, pat.line - 1);
+                  const scaleFactor = Math.max(1, Math.floor((args.targetLines || 1000) / 500));
+                  const snippetLines = Math.min(30 * scaleFactor, 80);
+                  const snippet = lines.slice(startLine, startLine + snippetLines).join(`
+`);
+                  realCodeMap.set(pat.file + ":" + pat.line, snippet);
+                } catch {}
+              }
+              tridentLog("INFO", "trident-context-synthesis", `T2 real source: read ${realCodeMap.size} actual code snippets from disk`);
+            }
+            const t2SourceMap = new Map;
+            if ((args.keyFacts || []).length > 0)
+              t2SourceMap.set("key-facts", (args.keyFacts || []).join(`
+`));
+            if ((args.patterns || []).length > 0)
+              t2SourceMap.set("user-patterns", (args.patterns || []).join(`
+`));
+            for (const [key, snippet] of realCodeMap) {
+              t2SourceMap.set("code/" + key, snippet);
+            }
+            let t2EngineSections = [];
+            try {
+              if (t2SourceMap.size > 0) {
+                const t2EngineResult = await contextSynthesisEngine.synthesize(t2SourceMap);
+                t2EngineSections = t2EngineResult.sections;
+                tridentLog("INFO", "trident-context-synthesis", `T2 engine: synthesized ${t2EngineResult.totalTokens} tokens across ${t2EngineSections.length} sections`);
+              }
+            } catch (e) {
+              tridentLog("WARN", "trident-context-synthesis", `T2 engine synthesis failed: ${e.message}`);
+            }
+            const t2 = await generateT2Artifact(args.projectName, args.patterns || [], args.keyFacts || [], args.targetPath, discovery, args.targetLines, realCodeMap);
+            const t2Content = t2EngineSections.length > 0 ? t2.content + `
+
+## Engine-Synthesized Context (Real Source)
+
+` + t2EngineSections.join(`
+
+`) + `
+` : t2.content;
+            csMachineActor.send({ type: "COLLECT", context: t2Content });
             if (args.targetPaths && args.targetPaths.length > 0 && mode === "T2") {
               const explorePlan = contextSynthesisModule.buildExplorerDispatchTemplate(args.targetPaths.slice(0, 5), Math.min(args.targetPaths.length, 5));
               storeArtifacts({
@@ -221526,20 +221667,25 @@ function createTridentTools() {
             const validations2 = [];
             for (let layer = 1;layer <= 4; layer++) {
               const config2 = contextSynthesisModule.getLayerConfig(layer);
-              const v = contextSynthesisModule.validateLayerContent(layer, t2.content);
+              const v = contextSynthesisModule.validateLayerContent(layer, t2Content);
               validations2.push({ layer, name: config2?.name || `Layer ${layer}`, ...v });
               orchestrator.completeLayer();
               if (layer === 1)
-                csMachineActor.send({ type: "COLLECT", context: t2.content });
+                csMachineActor.send({ type: "COLLECT", context: t2Content });
               else if (layer === 2)
                 csMachineActor.send({ type: "SCORE" });
               else if (layer === 3)
-                csMachineActor.send({ type: "COMPRESS", compressed: t2.content });
+                csMachineActor.send({ type: "COMPRESS", compressed: t2Content });
               else if (layer === 4)
                 csMachineActor.send({ type: "FORMAT", sections: t2.sections });
             }
+            if (t2Content !== t2.content) {
+              try {
+                await fs16.writeFile(t2.path, t2Content, "utf-8");
+              } catch {}
+            }
             storeArtifacts({
-              "t2-knowledge": t2.content,
+              "t2-knowledge": t2Content,
               "t2-artifact-path": t2.path,
               "validation-report": JSON.stringify(validations2),
               "t2-metadata": JSON.stringify({ lineCount: t2.lineCount, sizeKB: t2.sizeKB, sections: t2.sections })
@@ -221590,30 +221736,55 @@ ${t2.preview}
 ` + formatValidationReport(validations2, "CONTEXT_SYNTHESIS (T2)");
             return summary;
           }
+          const t1SourceMap = new Map;
+          if ((args.patterns || []).length > 0)
+            t1SourceMap.set("user-patterns", (args.patterns || []).join(`
+`));
+          if ((args.keyFacts || []).length > 0)
+            t1SourceMap.set("key-facts", (args.keyFacts || []).join(`
+`));
+          let t1EngineOutput = "";
+          try {
+            if (t1SourceMap.size > 0) {
+              const t1Result = await contextSynthesisEngine.synthesize(t1SourceMap);
+              t1EngineOutput = t1Result.sections.join(`
+
+`);
+              tridentLog("INFO", "trident-context-synthesis", `T1 engine: synthesized ${t1Result.totalTokens} tokens across ${t1Result.sections.length} sections`);
+            }
+          } catch (e) {
+            tridentLog("WARN", "trident-context-synthesis", `T1 engine synthesis failed: ${e.message}`);
+          }
           const artifact = generateT1Injectable(args.projectName, args.config || { model: "deepseek/deepseek-v4-flash" }, args.patterns || [], args.keyFacts || []);
-          csMachineActor.send({ type: "COLLECT", context: artifact });
+          const finalArtifact = t1EngineOutput ? artifact + `
+
+## Engine-Synthesized Context (NLP Pipeline)
+
+` + t1EngineOutput + `
+` : artifact;
+          csMachineActor.send({ type: "COLLECT", context: finalArtifact });
           const validations = [];
           for (let layer = 1;layer <= 4; layer++) {
             const config2 = contextSynthesisModule.getLayerConfig(layer);
-            const v = contextSynthesisModule.validateLayerContent(layer, artifact);
+            const v = contextSynthesisModule.validateLayerContent(layer, finalArtifact);
             validations.push({ layer, name: config2?.name || `Layer ${layer}`, ...v });
             orchestrator.completeLayer();
             if (layer === 1)
-              csMachineActor.send({ type: "COLLECT", context: artifact });
+              csMachineActor.send({ type: "COLLECT", context: finalArtifact });
             else if (layer === 2)
               csMachineActor.send({ type: "SCORE" });
             else if (layer === 3)
-              csMachineActor.send({ type: "COMPRESS", compressed: artifact });
+              csMachineActor.send({ type: "COMPRESS", compressed: finalArtifact });
             else if (layer === 4)
-              csMachineActor.send({ type: "FORMAT", sections: [artifact] });
+              csMachineActor.send({ type: "FORMAT", sections: [finalArtifact] });
           }
-          const mdPath = await writeArtifactFile("T1_INJECTABLE", artifact);
+          const mdPath = await writeArtifactFile("T1_INJECTABLE", finalArtifact);
           storeArtifacts({
-            "t1-injectable": artifact,
+            "t1-injectable": finalArtifact,
             "artifact-path": mdPath,
             "validation-report": JSON.stringify(validations)
           });
-          return artifact + (mdPath ? `
+          return finalArtifact + (mdPath ? `
 
 ---
 \uD83D\uDCC4 Artifact saved: \`${mdPath}\`` : "") + `
@@ -222239,7 +222410,7 @@ class RuntimeGradeEngineer {
 }
 
 // src/subagents/trident-build/firewall/plan-scope.ts
-import { readFileSync as readFileSync17 } from "fs";
+import { readFileSync as readFileSync18 } from "fs";
 import * as path29 from "path";
 
 class PlanScopeValidator {
@@ -222355,7 +222526,7 @@ class PlanScopeValidator {
   loadFromWellKnownPath() {
     try {
       var planPath = path29.join(process.cwd(), ".trident-build", "plan", "CURRENT_PLAN.md");
-      var content = readFileSync17(planPath, "utf-8");
+      var content = readFileSync18(planPath, "utf-8");
       if (content && content.length > 10) {
         this.loadPlan(content);
         return true;
@@ -222367,7 +222538,7 @@ class PlanScopeValidator {
 
 // src/subagents/trident-build/firewall/snapshot-diff.ts
 import { createHash as createHash6 } from "crypto";
-import { readFileSync as readFileSync18, readdirSync as readdirSync6, statSync as statSync2 } from "fs";
+import { readFileSync as readFileSync19, readdirSync as readdirSync7, statSync as statSync2 } from "fs";
 import * as path30 from "path";
 
 class SnapshotDiffClass {
@@ -222430,7 +222601,7 @@ class SnapshotDiffClass {
   walkDir(dir, rootDir, files, exclude) {
     var entries = [];
     try {
-      entries = readdirSync6(dir);
+      entries = readdirSync7(dir);
     } catch {
       return;
     }
@@ -222445,7 +222616,7 @@ class SnapshotDiffClass {
         if (stats.isDirectory()) {
           this.walkDir(fullPath, rootDir, files, exclude);
         } else if (stats.isFile() && entry.endsWith(".ts")) {
-          var content = readFileSync18(fullPath, "utf-8");
+          var content = readFileSync19(fullPath, "utf-8");
           var hash2 = createHash6("sha256").update(content).digest("hex").substring(0, 16);
           files.set(relativePath, hash2);
         }
@@ -222560,7 +222731,7 @@ class ASTFirewall {
 
 // src/subagents/trident-build/firewall/evidence-enforcer.ts
 import { createHash as createHash7 } from "crypto";
-import { readFileSync as readFileSync19 } from "fs";
+import { readFileSync as readFileSync20 } from "fs";
 
 class EvidenceEnforcer {
   changedFiles = new Map;
@@ -222607,7 +222778,7 @@ class EvidenceEnforcer {
   }
   computeHash(filePath) {
     try {
-      var content = readFileSync19(filePath, "utf-8");
+      var content = readFileSync20(filePath, "utf-8");
       return createHash7("sha256").update(content).digest("hex").substring(0, 16);
     } catch {
       return null;
@@ -222733,7 +222904,7 @@ function createGuardianHook() {
 
 // src/subagents/trident-build/harness/evidence-pipeline.ts
 import { createHash as createHash8 } from "crypto";
-import { readFileSync as readFileSync20, mkdirSync as mkdirSync9, appendFileSync as appendFileSync6 } from "fs";
+import { readFileSync as readFileSync21, mkdirSync as mkdirSync9, appendFileSync as appendFileSync6 } from "fs";
 import * as path31 from "path";
 
 class EvidencePipeline {
@@ -222746,7 +222917,7 @@ class EvidencePipeline {
   loadChain() {
     try {
       var filePath = path31.join(process.cwd(), this.basePath, "merkle-chain.jsonl");
-      var data = readFileSync20(filePath, "utf-8");
+      var data = readFileSync21(filePath, "utf-8");
       var lines = data.trim().split(`
 `).filter(function(l) {
         return l.length > 0;
