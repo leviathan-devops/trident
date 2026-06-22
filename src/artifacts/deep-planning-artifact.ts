@@ -54,334 +54,68 @@ function generateLayer1Prompt(
   discovery?: DiscoveryResult | null
 ): string {
   let p = '';
-
-  // -- Header --
-  p += `# GENERATIVE PROMPT — BUILD SPECIFICATION\n\n`;
-  p += `> This is a complete, self-contained prompt. Copy everything below this line\n`;
-  p += `> into any capable LLM chat to build this system.\n`;
-  p += `> Do NOT add additional context — everything needed is here.\n\n`;
-  p += `---\n\n`;
-
-  // -- SECTION 1: PROBLEM STATEMENT (~40 lines) --
-  p += `## 1. Problem Statement\n\n`;
-  p += `### The Gap\n\n`;
-  p += `Existing systems in this domain suffer from three systemic deficiencies:\n\n`;
-  p += `1. **Context Loss:** When a session compacts or a new session begins, the agent\n`;
-  p += `   forgets what it learned. There is no persistent memory layer that survives\n`;
-  p += `   across invocations. Every restart is a cold start, even for ongoing work.\n\n`;
-  p += `2. **Theatrical Code:** Code looks correct but is structurally hollow — empty\n`;
-  p += `   catch blocks, functions that return \`undefined\` on every path, test stubs\n`;
-  p += `   that assert nothing, TODO markers masquerading as implementations. Without\n`;
-  p += `   mechanical verification, this passes review because it *reads* fine.\n\n`;
-  p += `3. **Identity Drift:** The agent's core identity and behavioral constraints\n`;
-  p += `   are injected once and never reinforced. Over long sessions, the model\n`;
-  p += `   forgets who it is, what tools it has, and what rules govern its behavior.\n\n`;
-  p += `### What "Done" Looks Like\n\n`;
-  p += `"Done" is **mechanically verifiable**, not aesthetically pleasing. Specifically:\n\n`;
-  p += `- Every function has at least one caller and at least one test.\n`;
-  p += `- Every catch block either re-throws, logs with context, or has a documented\n`;
-  p += `  fallback strategy. Silent catches are flagged as defects.\n`;
-  p += `- The system loads in a container, identifies itself correctly when asked\n`;
-  p += `  "who are you", and maintains that identity across compaction events.\n`;
-  p += `- All tools register without errors and execute without state machine failures\n`;
-  p += `  on sequential calls.\n\n`;
-  p += `### Traditional vs. This System\n\n`;
-  p += `| Dimension | Traditional System | This System | The Difference |\n`;
-  p += `|-----------|-------------------|-------------|----------------|\n`;
-  p += `| Verification | Human reads code and judges | Mechanical tests with exit codes | Removes subjective bias |\n`;
-  p += `| Identity | Set once, drifts over time | Re-injected on every compaction | Consistent behavior always |\n`;
-  p += `| Memory | Session-scoped, lost on exit | Persistent across invocations | Continuous context |\n`;
-  p += `| Failure | Silent degradation | Structured error with evidence | Debuggable, traceable |\n`;
-  p += `| Testing | Integration tests, slow feedback | Container tests in <60s | Fast iteration loop |\n\n`;
-
-  // -- SECTION 2: CORE INSIGHT (~30 lines) --
-  p += `## 2. Core Insight\n\n`;
-  p += `### The Hypothesis\n\n`;
-  p += `**The single most important principle:** *Mechanical verification produces\n`;
-  p += `more reliable software than human judgment alone, because human review is\n`;
-  p += `bounded by attention, fatigue, and cognitive bias, while mechanical checks\n`;
-  p += `are deterministic, repeatable, and immune to social pressure.*\n\n`;
-  p += `This means: rather than asking "does this code look right?", we ask "does this\n`;
-  p += `code pass a deterministic check?" — and we design the checks to be as close\n`;
-  p += `to the failure mode as possible. A check for "empty catch blocks" should\n`;
-  p += `grep for catch blocks with no re-throw, no logging, and no fallback.\n\n`;
-  p += `### If This Insight Is WRONG\n\n`;
-  p += `If mechanical verification is NOT more reliable than human judgment:\n\n`;
-  p += `1. **Investment waste:** All the effort building AST scanners, audit layers,\n`;
-  p += `   and evidence gates would be better spent on better code review processes,\n`;
-  p += `   pair programming, and documentation.\n\n`;
-  p += `2. **False confidence risk:** Teams would trust the mechanical checks and stop\n`;
-  p += `   doing human review, leading to defects that the checks can't detect\n`;
-  p += `   (architectural mismatches, wrong abstractions, UX issues).\n\n`;
-  p += `3. **Invalidation signal:** If the audit layers produce many false positives\n`;
-  p += `   (flagging good code as bad) or many false negatives (missing real defects\n`;
-  p += `   that humans catch), the hypothesis is partially falsified. Track:\n`;
-  p += `   false-positive-rate < 15% and false-negative-rate < 25% as validity bounds.\n\n`;
-  p += `### The One Sentence\n\n`;
-  p += `> If you can't test it mechanically, you can't guarantee it works.\n\n`;
-
-  // -- SECTION 3: SCOPE (~50 lines) --
-  p += `## 3. Scope\n\n`;
-  p += `### In-Scope\n\n`;
-  p += `| Feature | Confidence Target | Verification Method |\n`;
-  p += `|---------|-------------------|---------------------|\n`;
-  if (discovery && discovery.warheads.length > 0) {
-    for (const w of discovery.warheads.slice(0, 8)) {
-      p += `| ${w} | >= 85% | Container test: hook registered + fires on trigger |\n`;
-    }
-  }
-  if (discovery && discovery.auditLayers.length > 0) {
-    for (const l of discovery.auditLayers.slice(0, 6)) {
-      p += `| ${l} audit layer | >= 90% | Self-audit: layer produces findings with scores |\n`;
-    }
-  }
-  p += `| Plugin entry point (index.ts) | 100% | Load test: module exports without error |\n`;
-  p += `| Hook registration (all hooks) | 100% | grep -c hook registrations >= expected count |\n`;
-  p += `| Tool definitions (zod schemas) | 100% | Each tool executes without schema error |\n`;
-  p += `| Identity injection | >= 95% | "who are you" returns correct identity string |\n`;
-  p += `| State machine (no crashes) | 100% | Sequential tool calls (5+) don't throw |\n`;
-  p += `| Build chain (tsc + esbuild) | 100% | Exit code 0 on both commands |\n`;
-  p += `| Container deployment | >= 90% | Plugin loads in container, TUI shows agent name |\n\n`;
-
-  p += `### Out-of-Scope\n\n`;
-  p += `| Feature | Rationale for Exclusion |\n`;
-  p += `|---------|------------------------|\n`;
-  p += `| UI/UX design | This is a backend/agent system — no user-facing UI layer |\n`;
-  p += `| Performance optimization | Correctness first; optimize after ship gate passes |\n`;
-  p += `| Multi-language i18n | Agent operates in English; localization is post-MVP |\n`;
-  p += `| Horizontal scaling | Single-process design; scaling requires architecture change |\n`;
-  p += `| OAuth/authentication | Uses API key auth only; no user identity management |\n`;
-  p += `| Real-time streaming | Batch processing model; streaming adds complexity without value |\n`;
-  p += `| Plugin marketplace | Single-purpose plugin; not designed for distribution |\n\n`;
-
-  // -- SECTION 4: USER PROFILE (~30 lines) --
-  p += `## 4. User Profile\n\n`;
-  p += `### Who This Is For\n\n`;
-  p += `This system is built for a **precision-focused engineer** who:\n\n`;
-  p += `- **Values correctness over speed.** They would rather spend an extra hour\n`;
-  p += `  building a mechanical check than spend three days debugging a regression.\n`;
-  p += `- **Doesn't trust aesthetics.** They've been burned by code that "looked right"\n`;
-  p += `  but had empty catch blocks, unreachable branches, or silent failures.\n`;
-  p += `- **Works iteratively.** They build, test, and refine in tight loops and need\n`;
-  p += `  fast feedback (under 60 seconds from code change to test result).\n`;
-  p += `- **Thinks in systems.** They understand that a failure in one component\n`;
-  p += `  cascades, so they want holistic verification, not point checks.\n\n`;
-  p += `### What They Need\n\n`;
-  p += `- Mechanical verification that catches what human review misses.\n`;
-  p += `- Fast container-based testing that mirrors production conditions.\n`;
-  p += `- Persistent context that survives session boundaries.\n`;
-  p += `- Clear pass/fail signals — no ambiguity about whether something works.\n\n`;
-  p += `### What They DON'T Need\n\n`;
-  p += `- Pretty dashboards or visualizations (text output is fine).\n`;
-  p += `- Hand-holding or step-by-step tutorials (they read source code).\n`;
-  p += `- Feature flags or gradual rollout (they want it to work or not work).\n`;
-  p += `- Configuration files with 50 options (sensible defaults, not knobs).\n\n`;
-
-  // -- SECTION 5: ARCHITECTURE OVERVIEW (~50 lines) --
-  p += `## 5. Architecture Overview\n\n`;
-  p += `### Component Diagram\n\n`;
-  p += `\`\`\`\n`;
-  p += `                    +------------------+\n`;
-  p += `                    |   Plugin Entry   |\n`;
-  p += `                    |   (index.ts)     |\n`;
-  p += `                    +--------+---------+\n`;
-  p += `                             | registers\n`;
-  p += `              +--------------+--------------+\n`;
-  p += `              v              v              v\n`;
-  p += `     +----------------+ +----------+ +--------------+\n`;
-  p += `     |  Hook Layer    | |  Tools   | |  Identity    |\n`;
-  p += `     | (4+ hooks)     | | (8+)     | |  Injector    |\n`;
-  p += `     +-------+--------+ +----+-----+ +------+-------+\n`;
-  p += `             |               |              |\n`;
-  p += `             v               v              v\n`;
-  p += `     +----------------------------------------------+\n`;
-  p += `     |              Orchestrator / FSM               |\n`;
-  p += `     |         (state machine, mode routing)         |\n`;
-  p += `     +----------------------+-----------------------+\n`;
-  p += `                            |\n`;
-  p += `             +--------------+--------------+\n`;
-  p += `             v              v              v\n`;
-  p += `     +--------------+ +----------+ +--------------+\n`;
-  p += `     | Audit Engine | | Artifact | |  Evidence    |\n`;
-  p += `     | (17 layers)  | | Gen (4)  | |  Store       |\n`;
-  p += `     +--------------+ +----------+ +--------------+\n`;
-  p += `\`\`\`\n\n`;
-
-  p += `### Component Table\n\n`;
-  p += `| Component | Role | Inputs | Outputs | Runtime |\n`;
-  p += `|-----------|------|--------|---------|---------|\n`;
-  p += `| Plugin Entry | Bootstrap, register hooks/tools | opencode context | Plugin object | hot (loaded once) |\n`;
-  p += `| Hook Layer | Intercept events, enforce rules | event payloads | side effects, mutations | hot (fires on every event) |\n`;
-  p += `| Tool Layer | Execute commands, produce artifacts | tool args (zod) | structured results | warm (fires on demand) |\n`;
-  p += `| Identity Injector | Maintain agent identity across compaction | system prompt | identity string push | hot (fires on transform) |\n`;
-  p += `| Orchestrator/FSM | Route modes, track layer state | tool calls | mode transitions | warm (fires per mode cycle) |\n`;
-  p += `| Audit Engine | Mechanical code verification | source files | findings + scores | cold (fires on audit command) |\n`;
-  p += `| Artifact Gen | Produce dense reference docs | analysis results | markdown files | cold (fires per mode cycle) |\n`;
-  p += `| Evidence Store | Tamper-evident audit trail | events, tool results | persisted records | warm (fires per evidence point) |\n\n`;
-
-  // -- SECTION 6: KEY DECISIONS (~60 lines, ADR format) --
-  p += `## 6. Key Decisions\n\n`;
-  p += `Each decision follows ADR format with explicitly rejected alternatives.\n\n`;
-
-  p += `### Decision 1: Single-File Bundle Strategy\n\n`;
-  p += `- **Chosen:** esbuild with \`--bundle --format=esm\` producing a single\n`;
-  p += `  \`dist/index.js\` file with all internal modules inlined.\n`;
-  p += `- **Rejected Alternative A:** Multiple files with \`tsc\` output.\n`;
-  p += `  *Reasoning rejected:* Relative imports break when deployed to container\n`;
-  p += `  paths. Node ESM resolution fails on cross-directory \`../../../\` imports.\n`;
-  p += `- **Rejected Alternative B:** Webpack with code splitting.\n`;
-  p += `  *Reasoning rejected:* Code splitting adds async chunks that the opencode\n`;
-  p += `  plugin loader doesn't support (it expects synchronous \`default export\`).\n`;
-  p += `- **Why:** Single-file bundles deploy by copying one file. No path issues.\n`;
-  p += `  External deps (\`@opencode-ai/plugin\`, \`zod\`) marked \`--external\`.\n`;
-  p += `- **Cost:** Bundle is larger (~500KB), source maps mandatory for debugging.\n\n`;
-
-  p += `### Decision 2: Hook-Based Identity Injection (SCAN+REPLACE)\n\n`;
-  p += `- **Chosen:** \`experimental.chat.system.transform\` hook that scans the\n`;
-  p += `  system prompt and replaces identity sections on every transform event.\n`;
-  p += `- **Rejected Alternative A:** Static system prompt in agent config.\n`;
-  p += `  *Reasoning rejected:* The model's system prompt gets overwritten by the\n`;
-  p += `  platform on compaction. Static config doesn't survive.\n`;
-  p += `- **Rejected Alternative B:** messages.transform for identity.\n`;
-  p += `  *Reasoning rejected:* Injecting into messages is noisier and can\n`;
-  p += `  confuse the model (identity in a "user" message vs system context).\n`;
-  p += `- **Why:** The transform hook fires on every compaction, so identity is\n`;
-  p += `  re-injected exactly when it would be lost. SCAN+REPLACE is idempotent.\n`;
-  p += `- **Cost:** Must handle race condition where hook fires before agent config\n`;
-  p += `  is loaded. Mitigated by checking \`input.agent\` before injecting.\n\n`;
-
-  p += `### Decision 3: Sequential Layer Pipeline (Not Parallel)\n\n`;
-  p += `- **Chosen:** Mode pipelines execute layers sequentially — Layer 1\n`;
-  p += `  completes before Layer 2 starts, Layer 2 before Layer 3.\n`;
-  p += `- **Rejected Alternative A:** Parallel layer execution with Promise.all.\n`;
-  p += `  *Reasoning rejected:* Layer 2 depends on Layer 1 output. Layer 3 depends\n`;
-  p += `  on both. Parallelism would require mock inputs, adding complexity.\n`;
-  p += `- **Rejected Alternative B:** Event-driven pipeline (emit/subscribe).\n`;
-  p += `  *Reasoning rejected:* Harder to debug. Can't trace which layer produced\n`;
-  p += `  which output. Sequential gives a clear execution trace.\n`;
-  p += `- **Why:** Dependencies are linear. Sequential is simplest and gives\n`;
-  p += `  deterministic output ordering for validation.\n`;
-  p += `- **Cost:** Slower than parallel (serial latency). Acceptable for\n`;
-  p += `  correctness-first design.\n\n`;
-
-  p += `### Decision 4: DiscoveryResult as Single Source of Truth\n\n`;
-  p += `- **Chosen:** All mode tools receive a unified \`DiscoveryResult\` object\n`;
-  p += `  from \`discoverProject()\` and derive their output from it.\n`;
-  p += `- **Rejected Alternative A:** Each tool scans independently.\n`;
-  p += `  *Reasoning rejected:* Redundant I/O. The project doesn't change between\n`;
-  p += `  tool calls within a single session.\n`;
-  p += `- **Rejected Alternative B:** Pre-computed intelligence stored in files.\n`;
-  p += `  *Reasoning rejected:* Files go stale. DiscoveryResult is computed fresh\n`;
-  p += `  on each tool invocation, guaranteeing current state.\n`;
-  p += `- **Why:** Single scan, shared result. Consistent data across all modes.\n`;
-  p += `- **Cost:** DiscoveryResult is large (~50KB serialized). Memory pressure\n`;
-  p += `  is acceptable for typical project sizes (under 10K files).\n\n`;
-
-  p += `### Decision 5: Validation as Warning, Not Error\n\n`;
-  p += `- **Chosen:** \`validateLayerContent()\` returns a structured result with\n`;
-  p += `  missing sections listed, but the pipeline always advances regardless.\n`;
-  p += `- **Rejected Alternative A:** Hard fail on missing sections.\n`;
-  p += `  *Reasoning rejected:* Too brittle. A missing heading shouldn't block\n`;
-  p += `  the entire pipeline. Better to produce output with warnings.\n`;
-  p += `- **Rejected Alternative B:** Silent ignore of validation.\n`;
-  p += `  *Reasoning rejected:* Validation provides value as a quality signal.\n`;
-  p += `  Ignoring it means no feedback loop for improvement.\n`;
-  p += `- **Why:** Warnings preserve forward progress while surfacing quality\n`;
-  p += `  issues for human review.\n`;
-  p += `- **Cost:** Users might ignore warnings. Mitigated by including\n`;
-  p += `  validation report in artifact metadata.\n\n`;
-
-  // -- SECTION 7: ANTI-PATTERN CATALOG (~40 lines) --
-  p += `## 7. Anti-Pattern Catalog\n\n`;
-  p += `What the architecture actively prevents.\n\n`;
-
-  p += `### AP1: Silent Catch Block\n`;
-  p += `- **What it looks like:** \`catch (e) { }\` or \`catch { /* ignore */ }\`\n`;
-  p += `- **How the architecture prevents it:** Audit layer R5 greps for catch\n`;
-  p += `  blocks with empty bodies. Any catch without re-throw, log, or documented\n`;
-  p += `  fallback is flagged as CRITICAL.\n\n`;
-
-  p += `### AP2: Theatrical Function\n`;
-  p += `- **What it looks like:** A function that compiles, has a return type,\n`;
-  p += `  but returns \`undefined\` on every code path. Looks implemented, isn't.\n`;
-  p += `- **How the architecture prevents it:** Audit layer R8 checks for\n`;
-  p += `  functions where no return statement matches the declared type.\n\n`;
-
-  p += `### AP3: Identity Drift\n`;
-  p += `- **What it looks like:** After 50+ turns, the agent starts calling\n`;
-  p += `  itself by the wrong name or claiming it can't do things it can.\n`;
-  p += `- **How the architecture prevents it:** The system.transform hook\n`;
-  p += `  fires on every compaction and re-injects identity. The messages.transform\n`;
-  p += `  hook provides backup injection if the primary fails.\n\n`;
-
-  p += `### AP4: Config Instruction Ignorance\n`;
-  p += `- **What it looks like:** Instructions placed in \`config.instructions\`\n`;
-  p += `  field are silently ignored by the runtime. The developer thinks\n`;
-  p += `  they're active, but they have no effect.\n`;
-  p += `- **How the architecture prevents it:** All behavioral rules are\n`;
-  p += `  injected via hooks (system.transform), not config instructions.\n\n`;
-
-  p += `### AP5: Array Unshift Instead of Replace\n`;
-  p += `- **What it looks like:** Using \`output.system.unshift()\` to prepend\n`;
-  p += `  identity, which creates duplicates on repeated hook calls.\n`;
-  p += `- **How the architecture prevents it:** Identity injection uses\n`;
-  p += `  SCAN+REPLACE — find existing identity block, replace it in-place.\n`;
-  p += `  If not found, push once. This is idempotent.\n\n`;
-
-  p += `### AP6: Text-Only Testing\n`;
-  p += `- **What it looks like:** Reading TUI output via text streams only,\n`;
-  p += `  missing visual layout, tile positioning, and error overlays.\n`;
-  p += `- **How the architecture prevents it:** Vision-first testing protocol\n`;
-  p += `  uses screenshot capture to verify layout and visual state.\n\n`;
-
-  // -- SECTION 8: CURRENT STATE ASSESSMENT (~40 lines, graded A-F) --
-  p += `## 8. Current State Assessment\n\n`;
-  p += `Graded assessment of the existing project (when discovery data available).\n\n`;
-
-  if (discovery) {
-    p += `| Capability | Grade | Metric | Assessment |\n`;
-    p += `|------------|-------|--------|------------|\n`;
-    p += `| Code Volume | ${discovery.totalFiles > 50 ? 'B' : discovery.totalFiles > 20 ? 'C' : 'D'} | ${discovery.totalFiles} files, ${discovery.totalLines} lines | ${discovery.totalFiles > 50 ? 'Substantial codebase' : discovery.totalFiles > 20 ? 'Moderate codebase' : 'Small codebase'} |\n`;
-    p += `| Language Coverage | ${Object.keys(discovery.languages).length >= 3 ? 'A' : Object.keys(discovery.languages).length >= 2 ? 'B' : 'C'} | ${Object.keys(discovery.languages).length} languages | ${Object.keys(discovery.languages).join(', ')} |\n`;
-    p += `| Structural Patterns | ${discovery.patterns.length > 30 ? 'A' : discovery.patterns.length > 15 ? 'B' : discovery.patterns.length > 5 ? 'C' : 'D'} | ${discovery.patterns.length} patterns | ${discovery.patterns.length > 15 ? 'Well-structured' : 'Moderately structured'} |\n`;
-    p += `| Error Handling | ${discovery.failureModes.length > 20 ? 'D' : discovery.failureModes.length > 10 ? 'C' : 'B'} | ${discovery.failureModes.length} failure modes | ${discovery.failureModes.length > 15 ? 'Many potential issues' : 'Few issues detected'} |\n`;
-    p += `| Design Documentation | ${discovery.decisions.length > 10 ? 'A' : discovery.decisions.length > 5 ? 'B' : discovery.decisions.length > 0 ? 'C' : 'F'} | ${discovery.decisions.length} decisions | ${discovery.decisions.length > 5 ? 'Well-documented rationale' : discovery.decisions.length > 0 ? 'Some documentation' : 'No rationale docs'} |\n`;
-    p += `| Extensibility Surface | ${discovery.warheads.length > 5 ? 'A' : discovery.warheads.length > 2 ? 'B' : discovery.warheads.length > 0 ? 'C' : 'D'} | ${discovery.warheads.length} warheads | ${discovery.warheads.length > 2 ? 'Strong extension surface' : 'Some extension points'} |\n`;
-    p += `| Audit Coverage | ${discovery.auditLayers.length > 10 ? 'A' : discovery.auditLayers.length > 5 ? 'B' : discovery.auditLayers.length > 0 ? 'C' : 'F'} | ${discovery.auditLayers.length} layers | ${discovery.auditLayers.length > 5 ? 'Comprehensive audit' : 'Partial audit'} |\n`;
-    p += `| Entry Point Clarity | ${discovery.entryPoints.length > 0 ? 'A' : 'F'} | ${discovery.entryPoints.length} entry points | ${discovery.entryPoints.length > 0 ? `Found: ${discovery.entryPoints.slice(0, 3).join(', ')}` : 'None detected'} |\n\n`;
+  
+  // v4.4.1: Actually USE the requirements and architecture parameters
+  // These were previously accepted but completely ignored
+  
+  // Section 1: Problem Statement — FROM REQUIREMENTS
+  p += '## 1. Problem Statement\n\n';
+  if (requirements && requirements.length > 20) {
+    p += requirements + '\n\n';
   } else {
-    p += `> No discovery data available. Assessment will populate after first auto-discover run.\n\n`;
-    p += `| Capability | Grade | Metric | Assessment |\n`;
-    p += `|------------|-------|--------|------------|\n`;
-    p += `| All capabilities | TBD | — | Run auto-discover to populate |\n\n`;
+    p += 'No specific requirements provided. Building from codebase discovery.\n\n';
   }
-
-  // -- SECTION 9: SUCCESS CRITERIA (~30 lines, measurable) --
-  p += `## 9. Success Criteria\n\n`;
-  p += `Each criterion is measurable with an exact threshold. No subjective criteria.\n\n`;
-
-  p += `| # | Criterion | Threshold | Verification Command |\n`;
-  p += `|---|-----------|-----------|---------------------|\n`;
-  p += `| 1 | TypeScript compiles | 0 errors | \`tsc --noEmit\` exit code 0 |\n`;
-  p += `| 2 | Bundle builds | exit 0 | \`esbuild ... --outfile=dist/index.js\` exit 0 |\n`;
-  p += `| 3 | Plugin loads in container | no errors | \`node -e "import('./dist/index.js')"\` |\n`;
-  p += `| 4 | Identity correct | exact match | "who are you" returns version string |\n`;
-  p += `| 5 | All tools registered | count match | grep tool definitions in bundle |\n`;
-  p += `| 6 | Sequential tool calls | 0 crashes | Call 5+ tools in sequence, no throw |\n`;
-  p += `| 7 | Self-audit score | >= 80/100 | Run code-audit tool, check score |\n`;
-  p += `| 8 | Critical findings | 0 or justified | Code-audit: 0 CRITICAL or justified |\n`;
-  p += `| 9 | Context library files | 9 files | \`ls context-library/ | wc -l\` == 9 |\n`;
-  p += `| 10 | Artifact density | > 200 lines | \`wc -l\` on each artifact file |\n\n`;
-
-  p += `### Falsification Conditions\n\n`;
-  p += `The system FAILS if ANY of these are true:\n\n`;
-  p += `- \`tsc --noEmit\` produces even 1 error.\n`;
-  p += `- The bundle has relative imports (not fully resolved).\n`;
-  p += `- "who are you" returns a generic response (identity injection failed).\n`;
-  p += `- Any tool throws on first invocation (not a state machine issue).\n`;
-  p += `- Self-audit score is below 80.\n`;
-  p += `- Context library has fewer than 9 files.\n\n`;
-
+  
+  // Section 2: Architecture — FROM ARCHITECTURE
+  if (architecture && architecture.length > 20) {
+    p += '## 2. Architecture\n\n';
+    p += architecture + '\n\n';
+  }
+  
+  // Section 3: Codebase Intelligence — from discovery
+  if (discovery) {
+    p += '## 3. Discovery Intelligence\n\n';
+    const fileCount = typeof discovery.totalFiles === 'number' ? discovery.totalFiles : 'N/A';
+    const totalLines = typeof discovery.totalLines === 'number' ? discovery.totalLines : 'N/A';
+    p += `- **Files:** ${fileCount}\n`;
+    p += `- **Lines:** ${totalLines}\n`;
+    if (discovery.languages) {
+      const langs = typeof discovery.languages === 'object' ? 
+        Object.entries(discovery.languages as Record<string,number>).map(([k,v]) => `${k} (${v})`).join(', ') : 'unknown';
+      p += `- **Languages:** ${langs}\n`;
+    }
+    if (discovery.warheads) p += `- **Warheads:** ${discovery.warheads}\n`;
+    if (discovery.auditLayers) p += `- **Audit Layers:** ${discovery.auditLayers}\n`;
+    p += '\n';
+  }
+  
+  // Section 4: Core Insight
+  p += '## 4. Core Insight\n\n';
+  p += 'The implementation must produce runtime-grade software that works correctly in a ';
+  p += 'real runtime environment — not just code that compiles. Every function follows P1-P10 ';
+  p += 'principles. Every catch block handles errors. Every type validates at boundaries. ';
+  p += 'Every resource cleans up in all paths.\n\n';
+  
+  // Section 5: Scope
+  p += '## 5. Scope\n\n';
+  if (requirements) {
+    const lines = requirements.split('\n').filter(l => l.trim().length > 10);
+    for (const line of lines.slice(0, 20)) {
+      p += `- ${line.trim().substring(0, 200)}\n`;
+    }
+    p += '\n';
+  }
+  
+  // Section 6: Success Criteria
+  p += '## 6. Success Criteria\n\n';
+  p += '| Criterion | Threshold |\n';
+  p += '|-----------|----------|\n';
+  p += '| TypeScript compilation | 0 errors |\n';
+  p += '| Bundle build | Exit 0 |\n';
+  p += '| Plugin loads | Runtime verification |\n';
+  p += '| Tools respond | All registered tools return valid results |\n';
+  p += '\n';
+  
   return p;
 }
 
@@ -448,7 +182,8 @@ export function generateLayer2DetailedWorkflow(
   a += `## Overview\n\n`;
   a += `- **Project:** ${projectName} (\`${safeName}\`)\n`;
   a += `- **Target Path:** ${targetPath}\n`;
-  a += `- **Requirements:** ${requirements || 'Auto-derived from project structure'}\n`;
+  // v4.4.1: Actually USE the requirements parameter — don't just label it
+  a += `## Requirements\n\n${requirements || 'Auto-derived from project structure and discovery data.'}\n\n`;
   a += `- **Architecture:** ${architecture || 'Auto-derived from discovery'}\n`;
   a += `- **Class Prefix:** ${className}\n`;
   a += `- **Safe Identifier:** ${safeName}\n\n`;
@@ -462,6 +197,26 @@ export function generateLayer2DetailedWorkflow(
     a += `- Known issues: ${discovery.failureModes.length} failure modes flagged\n\n`;
   } else {
     a += `${requirements}\n\n`;
+  }
+
+  // v4.4.1: If requirements contain specific build instructions, use them instead of generic phases
+  if (requirements && requirements.length > 200) {
+    // Requirements are detailed enough to drive phase generation
+    a += `## Build Phases (Derived from Requirements)\n\n`;
+    a += `The following phases are derived from the specific requirements provided.\n`;
+    a += `Each phase must be independently verifiable and follow P1-P10 principles.\n\n`;
+    a += `${requirements}\n\n`;
+    // Still include the generic phase templates as reference, but mark them as fallback
+    a += `## Reference Phase Templates (Fallback)\n\n`;
+    a += `*The following are generic templates. Use them only if the requirements above don't provide specific guidance.*\n\n`;
+  }
+
+  // v4.4.1: If detailed requirements exist, present them as the primary build driver
+  if (requirements && requirements.length > 100) {
+    a += `## Build Requirements\n\n`;
+    a += `${requirements}\n\n`;
+    a += `---\n\n`;
+    a += `## Reference Phase Templates (use as guide, adapt to requirements above)\n\n`;
   }
 
   // -- PHASE 1: PLUGIN ENTRY POINT --

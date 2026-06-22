@@ -21,6 +21,7 @@ class GodLoopOrchestrator {
     planPath: string;
     archiveBase: string;
     status: 'looping' | 'complete' | 'error';
+    stallDetected?: boolean;
   }> {
     var archiveBase = path.join(process.cwd(), '.trident', 'poseidon-audits', sessionId);
     mkdirSync(archiveBase, { recursive: true });
@@ -55,13 +56,17 @@ class GodLoopOrchestrator {
     cycleTracker.recordCycle(cycle, score, classifiedIds, '');
 
     // Check max cycles from config or parameter
-    var effectiveMaxCycles = maxCycles || (globalThis as any).poseidonMaxCycles || 50;
+    var effectiveMaxCycles = maxCycles || (globalThis as any).poseidonMaxCycles || 99999;
 
     // Check stagnation
     var stagnation = cycleTracker.detectStagnation();
-    if (stagnation.stuck) {
-      tiLog('POSEIDON', `CYCLE ${cycle}: STALLED — aborting.`);
-      return { cycle, score, findings: rawFindings, plan: '', planPath: '', archiveBase, status: 'error' };
+    // v4.4.1: Stall does NOT abort. It triggers PSM self-heal via the tool output.
+    // The loop NEVER breaks execution to ask the user. It self-heals.
+    var stallDetected = false;
+    if (stagnation && stagnation.stuck) {
+      tiLog('poseidon', `Stagnation detected: ${stagnation.cyclesWithoutImprovement} cycles without improvement. Triggering PSM self-heal.`);
+      stallDetected = true;
+      // Do NOT return error. Continue to plan generation with stall context.
     }
 
     // Archive audit output
@@ -96,7 +101,7 @@ class GodLoopOrchestrator {
 
     tiLog('POSEIDON', `CYCLE ${cycle}: Audit complete. Score=${score}/100. Plan saved to ${planPath}`);
 
-    return { cycle, score, findings: rawFindings, plan, planPath, archiveBase, status: 'looping' };
+    return { cycle, score, findings: rawFindings, plan, planPath, archiveBase, status: 'looping', stallDetected };
   }
 
   // PHASE C: Verify build results after Trident_Build execution
@@ -109,6 +114,7 @@ class GodLoopOrchestrator {
     findingsRemaining: number;
     nextAction: 'audit' | 'dispatch_build' | 'complete' | 'error';
     status: 'looping' | 'complete' | 'error';
+    stallDetected?: boolean;
   }> {
     var archiveBase = path.join(process.cwd(), '.trident', 'poseidon-audits', sessionId);
     var previousState = this.loadLoopState(archiveBase);
@@ -143,10 +149,13 @@ class GodLoopOrchestrator {
     }
 
     var stagnation = cycleTracker.detectStagnation();
-    if (stagnation.stuck) {
-      tiLog('POSEIDON', `CYCLE ${cycle}: STALLED — no progress across multiple cycles.`);
-      this.saveLoopState(archiveBase, { ...previousState, score, highestScore: Math.max(previousState.highestScore, score), status: 'error', nextAction: 'error' });
-      return { cycle, score, previousScore, findingsFixed, findingsRemaining, nextAction: 'error', status: 'error' };
+    // v4.4.1: Stall does NOT abort. It triggers PSM self-heal via the tool output.
+    // The loop NEVER breaks execution to ask the user. It self-heals.
+    var stallDetected = false;
+    if (stagnation && stagnation.stuck) {
+      tiLog('poseidon', `Stagnation detected in verify: ${stagnation.cyclesWithoutImprovement} cycles without improvement. Triggering PSM self-heal.`);
+      stallDetected = true;
+      // Do NOT return error. Continue to plan generation with stall context.
     }
 
     // Check if build made progress
@@ -162,14 +171,14 @@ class GodLoopOrchestrator {
       var plan = this.generatePlan(cycle, rawFindings, targetPath, score);
       this.archivePlan(archiveBase, cycle + 1, plan);
       this.saveLoopState(archiveBase, { ...previousState, score, highestScore: Math.max(previousState.highestScore, score), cycle, status: 'looping', nextAction: 'dispatch_build', plan });
-      return { cycle, score, previousScore, findingsFixed, findingsRemaining, nextAction: 'dispatch_build', status: 'looping' };
+      return { cycle, score, previousScore, findingsFixed, findingsRemaining, nextAction: 'dispatch_build', status: 'looping', stallDetected };
     } else {
       // No progress — generate verbose plan
       tiLog('POSEIDON', `CYCLE ${cycle}: No score improvement (${previousScore} → ${score}). Generating verbose plan.`);
       var verbosePlan = this.generateVerbosePlan(cycle, rawFindings, targetPath, score);
       this.archivePlan(archiveBase, cycle + 1, verbosePlan);
       this.saveLoopState(archiveBase, { ...previousState, score, highestScore: Math.max(previousState.highestScore, score), cycle, status: 'looping', nextAction: 'dispatch_build', plan: verbosePlan });
-      return { cycle, score, previousScore, findingsFixed, findingsRemaining, nextAction: 'dispatch_build', status: 'looping' };
+      return { cycle, score, previousScore, findingsFixed, findingsRemaining, nextAction: 'dispatch_build', status: 'looping', stallDetected };
     }
   }
 

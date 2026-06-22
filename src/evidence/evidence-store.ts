@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { MerkleChain } from './merkle-chain.js';
+import { tridentLog } from '../utils.js';
 
 export interface EvidenceEntry {
   id: number; sessionId: string; mode: string; layer: string;
@@ -68,6 +69,83 @@ export class EvidenceStore {
     };
     this.entries.push(marker);
     return { deleted: oldEntries.length, newRootHash: markerHash };
+  }
+
+  /**
+   * v4.4.1: Evidence Gate — wraps verifyChain() with passRate enforcement.
+   * Called in the VERIFY phase of the GOD loop.
+   * If passRate < 0.96, the gate BLOCKS state transition.
+   * 
+   * [P3] Error handling: never throws, returns failure result on error.
+   * [P10] Output contract: always returns EvidenceGateResult in all paths.
+   */
+  async verifyAndGate(): Promise<{
+    passed: boolean;
+    passRate: number;
+    brokenAt: number | null;
+    totalEntries: number;
+    validEntries: number;
+  }> {
+    try {
+      const total = this.entries.length;
+      if (total === 0) {
+        // [P3] Empty chain — technically valid (nothing to break)
+        return { passed: true, passRate: 1.0, brokenAt: null, totalEntries: 0, validEntries: 0 };
+      }
+
+      // Walk the chain and count valid entries
+      let validCount = 0;
+      let firstBroken: number | null = null;
+
+      for (let i = 0; i < this.entries.length; i++) {
+        const entry = this.entries[i];
+        
+        // [P2] Validate entry structure
+        if (!entry || typeof entry !== 'object') {
+          if (firstBroken === null) firstBroken = i;
+          break;
+        }
+
+        // Verify hash chain linkage
+        if (i > 0 && entry.previousHash !== this.entries[i - 1].currentHash) {
+          if (firstBroken === null) firstBroken = i;
+          break;
+        }
+
+        // Recompute hash and verify
+        const hashInput = entry.sessionId + entry.mode + entry.layer +
+          entry.eventType + entry.payload + entry.previousHash + entry.timestamp;
+        const computedHash = createHash('sha256').update(hashInput).digest('hex');
+        
+        if (computedHash !== entry.currentHash) {
+          if (firstBroken === null) firstBroken = i;
+          break;
+        }
+
+        validCount++;
+      }
+
+      const passRate = validCount / total;
+      const passed = passRate >= 0.96;
+
+      if (!passed) {
+        tridentLog('WARN', 'evidence-store', 
+          `Evidence gate FAILED: passRate=${passRate.toFixed(4)}, broken at entry ${firstBroken}, valid=${validCount}/${total}`);
+      }
+
+      return {
+        passed,
+        passRate,
+        brokenAt: firstBroken,
+        totalEntries: total,
+        validEntries: validCount,
+      };
+    } catch (e) {
+      // [P3] Log and return failure — never throw from gate
+      const msg = e instanceof Error ? e.message : String(e);
+      tridentLog('ERROR', 'evidence-store', `verifyAndGate crashed: ${msg}`);
+      return { passed: false, passRate: 0, brokenAt: null, totalEntries: 0, validEntries: 0 };
+    }
   }
 
   async verifyChain(): Promise<{ valid: boolean; brokenAt: number | null }> {

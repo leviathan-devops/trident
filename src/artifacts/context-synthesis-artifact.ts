@@ -126,7 +126,9 @@ export function generateT2Knowledge(
   patterns: string[],
   keyFacts: (string | KnowledgeFact)[],
   targetPath?: string,
-  discovery?: DiscoveryResult | null
+  discovery?: DiscoveryResult | null,
+  targetLines?: number,
+  realCodeMap?: Map<string, string>
 ): string {
   const now = new Date().toISOString();
   const projectLabel = projectName.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
@@ -148,76 +150,27 @@ export function generateT2Knowledge(
     }
   };
 
-  /** Synthesize a representative code snippet for a discovered pattern. */
-  const codeExample = (name: string, t: string): string => {
-    switch (t) {
-      case 'class':
-        return [
-          'export class ' + name + ' {',
-          '  private state: Record<string, unknown> = {};',
-          '  constructor(config?: Record<string, unknown>) {',
-          '    if (config) Object.assign(this.state, config);',
-          '  }',
-          '  /** Primary accessor — downstream code calls this. */',
-          '  getState(): Record<string, unknown> { return this.state; }',
-          '}'
-        ].join('\n');
-      case 'interface':
-        return [
-          'export interface ' + name + ' {',
-          '  /** Unique identifier for the entity. */',
-          '  id: string;',
-          '  /** Optional metadata bag; validate before use. */',
-          '  metadata?: Record<string, unknown>;',
-          '  /** Timestamps in ISO 8601. */',
-          '  createdAt?: string;',
-          '}'
-        ].join('\n');
-      case 'function':
-        return [
-          'export function ' + name + '(input: unknown): Promise<void> {',
-          '  if (!input) throw new Error(`' + name + ': input required`);',
-          '  // ... core transformation or side effect ...',
-          '  return Promise.resolve();',
-          '}'
-        ].join('\n');
-      case 'import':
-        return [
-          "import { " + name + " } from './module';",
-          '// ' + name + ' establishes a dependency edge consumed by the caller.'
-        ].join('\n');
-      case 'export':
-        return [
-          'export const ' + name + ' = (data: unknown) => ({',
-          '  ok: true as const,',
-          '  data,',
-          '});'
-        ].join('\n');
-      default:
-        return '// ' + name + ': recognized construct (detail not extractable from static scan).';
-    }
+  /** v4.4.1: FABRICATED CODE KILLED. Returns empty — real code comes from realCodeMap lookup. */
+  const codeExample = (_name: string, _t: string): string => {
+    return ''; // Killed: never fabricate skeleton code
   };
 
-  /** Human-readable description of what a pattern does. */
-  const describePattern = (name: string, t: string): string => {
+  /** v4.4.1: Return real location info, not fabricated descriptions. */
+  const describePattern = (name: string, t: string, file?: string, line?: number): string => {
+    const location = file ? ' (at `' + file + ':' + (line || '?') + '`)' : '';
     switch (t) {
       case 'class':
-        return 'The `' + name + '` class encapsulates state and behavior. It manages lifecycle, '
-          + 'holds configuration, and exposes methods invoked by downstream consumers.';
+        return 'The `' + name + '` class is a structural construct' + location + '.';
       case 'interface':
-        return 'The `' + name + '` interface defines a structural contract. Implementations must '
-          + 'conform to its shape; mismatches surface at compile time.';
+        return 'The `' + name + '` interface defines a structural contract' + location + '.';
       case 'function':
-        return 'The `' + name + '` function performs a discrete transformation or side effect. '
-          + 'It is a callable unit, importable and reusable.';
+        return 'The `' + name + '` function is a callable unit' + location + '.';
       case 'import':
-        return 'The `' + name + '` symbol is imported from another module, establishing a '
-          + 'dependency edge in the import graph.';
+        return 'The `' + name + '` symbol is imported' + location + ', establishing a dependency edge.';
       case 'export':
-        return 'The `' + name + '` binding is exported as a module boundary, consumable by '
-          + 'importers across the codebase.';
+        return 'The `' + name + '` binding is exported as a module boundary' + location + '.';
       default:
-        return 'The `' + name + '` construct is a recognized code pattern at this location.';
+        return 'The `' + name + '` construct (' + t + ')' + location + '.';
     }
   };
 
@@ -350,12 +303,22 @@ export function generateT2Knowledge(
     + 'Read it in full before modifying this project.\n\n';
 
   // ============================================================
-  // Section 1: Agent Identity
+  // Section 1: Agent Identity (v4.4.1: describes the PROJECT, not Trident)
   // ============================================================
   b += '## Agent Identity\n\n';
-  b += projectLabel + ' is a Trident-managed agent/project. This T2 knowledge base captures '
-    + 'the identity, critical facts, behavioral patterns, failure modes, prohibitions, '
-    + 'interface contracts, and architecture discovered during context synthesis.\n\n';
+  // v4.4.1: Derive identity from discovery data, not hardcoded Trident boilerplate
+  const langList = discovery ? Object.keys(discovery.languages).join('/') : 'TypeScript';
+  const fileCount = discovery ? discovery.totalFiles : 'unknown';
+  const lineCount = discovery ? discovery.totalLines.toLocaleString() : 'unknown';
+  b += '**' + projectLabel + '** is a ' + langList + ' project with ' + fileCount
+    + ' files and ' + lineCount + ' lines of code.\n\n';
+  if (discovery && discovery.entryPoints.length > 0) {
+    b += 'Entry points: ' + discovery.entryPoints.map(e => '`' + e + '`').join(', ') + '\n\n';
+  }
+  if (discovery && discovery.warheads.length > 0) {
+    b += 'Contains ' + discovery.warheads.length + ' warhead system(s) and '
+      + discovery.auditLayers.length + ' audit layer(s).\n\n';
+  }
   b += '| Property | Value |\n';
   b += '|----------|-------|\n';
   b += '| Name | ' + projectName + ' |\n';
@@ -462,7 +425,7 @@ export function generateT2Knowledge(
     + 'guidance.\n\n';
 
   if (discovery && discovery.patterns.length > 0) {
-    const shown = discovery.patterns.slice(0, 30);
+    const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((targetLines || 1000) / 3)));
     b += '_' + shown.length + ' of ' + discovery.patterns.length + ' discovered patterns '
       + 'shown below._\n\n';
     for (const p of shown) {
@@ -470,10 +433,17 @@ export function generateT2Knowledge(
       b += '### ' + p.name + ' (' + cat + ')\n';
       b += '- **Location:** `' + p.file + ':' + p.line + '`\n';
       b += '- **Type:** ' + cat + ' (discovery type: `' + p.type + '`)\n';
-      b += '- **What It Does:** ' + describePattern(p.name, p.type) + '\n';
+      b += '- **What It Does:** ' + describePattern(p.name, p.type, p.file, p.line) + '\n';
       b += '- **Code Example:**\n';
       b += '```typescript\n';
-      b += codeExample(p.name, p.type) + '\n';
+      // v4.4.1: Show REAL source code from realCodeMap, never fabricated skeletons
+      const _realCodeKey = p.file + ':' + p.line;
+      const _realSnippet = realCodeMap?.get(_realCodeKey);
+      if (_realSnippet) {
+        b += _realSnippet + '\n';
+      } else {
+        b += '// Real source not available for this pattern.\n';
+      }
       b += '```\n';
       b += '- **When to Follow:** When implementing functionality that interacts with `'
         + p.name + '` or builds a similar construct (type: `' + p.type + '`).\n';
@@ -504,7 +474,7 @@ export function generateT2Knowledge(
     + 'impact, recommended fix, and a prevention rule.\n\n';
 
   if (discovery && discovery.failureModes.length > 0) {
-    const shown = discovery.failureModes.slice(0, 20);
+    const shown = discovery.failureModes.slice(0, Math.max(20, Math.floor((targetLines || 1000) / 5)));
     b += '_' + shown.length + ' of ' + discovery.failureModes.length + ' failure modes '
       + 'shown below._\n\n';
     for (const f of shown) {
@@ -708,7 +678,7 @@ export function generateT2Knowledge(
     b += 'Import edges discovered among patterns (derived from import-type discoveries):\n\n';
     const imports = discovery.patterns.filter((p: DiscoveredPattern) => p.type === 'import');
     if (imports.length > 0) {
-      for (const imp of imports.slice(0, 15)) {
+      for (const imp of imports.slice(0, Math.max(15, Math.floor((targetLines || 1000) / 6)))) {
         b += '- `' + imp.file + ':' + imp.line + '` imports `' + imp.name + '`\n';
       }
     } else {
@@ -766,7 +736,7 @@ export function generateT2Knowledge(
       b += '### Exported Symbols\n\n';
       b += '| Symbol | Type | Location | Inferred Signature |\n';
       b += '|-------|------|----------|-------------------|\n';
-      for (const p of exported.slice(0, 25)) {
+      for (const p of exported.slice(0, Math.max(25, Math.floor((targetLines || 1000) / 4)))) {
         let sig = '';
         switch (p.type) {
           case 'function':
@@ -795,7 +765,7 @@ export function generateT2Knowledge(
         b += '### Consumer Map\n\n';
         b += '| Imported Symbol | Imported By | Location |\n';
         b += '|----------------|-------------|----------|\n';
-        for (const imp of importSyms.slice(0, 20)) {
+        for (const imp of importSyms.slice(0, Math.max(20, Math.floor((targetLines || 1000) / 5)))) {
           b += '| `' + imp.name + '` | `' + imp.file + '` | line ' + imp.line + ' |\n';
         }
         b += '\n';
@@ -841,9 +811,11 @@ export async function generateT2Artifact(
   patterns: string[],
   keyFacts: (string | KnowledgeFact)[],
   targetPath?: string,
-  discovery?: DiscoveryResult | null
+  discovery?: DiscoveryResult | null,
+  targetLines?: number,
+  realCodeMap?: Map<string, string>
 ): Promise<T2ArtifactResult> {
-  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery);
+  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap);
 
   // Determine artifact directory from config (fall back to cwd + GENERATED_ARTIFACTS)
   const base = TRIDENT_CONFIG.artifactsBase || path.join(process.cwd(), 'GENERATED_ARTIFACTS');

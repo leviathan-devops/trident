@@ -11,6 +11,7 @@ const ALLOWED_TOOLS = new Set([
   'trident-problem-solving',
   'trident-context-synthesis',
   'trident-poseidon',
+  'build-status',
 ]);
 
 const ALLOWED_EXTERNAL_TOOLS = new Set([
@@ -20,6 +21,7 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'webfetch',
   'question',
   'task',
+  'todowrite',
   'hive_context',
   'hive-context',
   'hive_status',

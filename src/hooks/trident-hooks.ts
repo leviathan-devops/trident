@@ -8,13 +8,13 @@ import { isTridentAgent } from '../identity/agent-identity.js';
 import { createSessionHook } from './session-hook.js';
 import { checkGuardian } from './guardian-hook.js';
 import { checkIdentityBeforeTool, notifyIdentityLoaded } from './identity-enforcer-hook.js';
-import { invalidateT1Cache, synthesizeT1Injectables } from '../shared/trident-warhead-synthesizer.js';
 import { hookRegistry } from '../shared/warhead-registry.js';
 import { ConcurrencyManager } from '../warheads/concurrency/index.js';
 import { NLPPipeline } from '../warheads/nlp-pipeline/index.js';
 import { SevenQEnforcement } from '../warheads/seven-q-enforcement/index.js';
 import { PoseidonDetector } from '../warheads/nlp-pipeline/poseidon-detector.js';
 import { poseidonState } from '../poseidon/poseidon-state.js';
+
 
 // ── INLINE UTILITY TYPES (replace as any casts) ──
 type InputMessage = Record<string, unknown> & {
@@ -23,8 +23,8 @@ type InputMessage = Record<string, unknown> & {
   agentName?: string;
   tool?: string;
   args?: Record<string, unknown>;
-  info?: { agent?: string };
-  message?: { role?: string; content?: string; agent?: string };
+  info?: { agent?: string; sessionID?: string };
+  message?: { role?: string; content?: string; agent?: string; sessionID?: string };
   command?: string;
   arguments?: string;
   input?: Record<string, unknown>;
@@ -441,8 +441,18 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
       subagentType = (rawArgs as Record<string, unknown>)?.subagent_type as string || (rawArgs as Record<string, unknown>)?.subagentType as string || '';
     }
     // STEP 4: EXACT MATCH ONLY
-    if (subagentType === 'trident_explore' || subagentType === 'trident_build') {
+    // trident_explore: always allowed (read-only research)
+    // trident_build: ONLY allowed when Poseidon mode is active (build execution requires GOD loop supervision)
+    if (subagentType === 'trident_explore') {
       isExploreTask = true;
+    } else if (subagentType === 'trident_build') {
+      // Check if Poseidon is active for this session
+      const sid = (input as InputMessage)?.sessionID || (input as InputMessage)?.info?.sessionID || (input as InputMessage)?.message?.sessionID || 'default';
+      if (poseidonState.isActive(sid)) {
+        isExploreTask = true;
+      } else {
+        throw new Error('[TRIDENT POSEIDON GATE] trident_build requires Poseidon Mode to be active. Activate Poseidon Mode first, then dispatch build agents.');
+      }
     }
 
     // TASK SUBAGENT GATE: Only trident_explore and trident_build subagents allowed for task tool
@@ -590,21 +600,6 @@ var systemTransformHook = async function(input: Record<string, unknown>, output:
   if (!isTridentAgent(sessionAgent)) return;
   try { appendFileSync('/tmp/trident-hook-debug.log', `[${Date.now()}] agent=${sessionAgent} | tridentCheck=${isTridentAgent(sessionAgent)} | system.length=${systemOut.system?.length}\n`); } catch { /* Debug logging non-fatal — plugin loading continues regardless */ }
 
-  // Deload: remove trident content if this is not a trident session
-  if (!isTridentAgent(sessionAgent)) {
-    for (let i = systemOut.system.length - 1; i >= 0; i--) {
-      const s = systemOut.system[i];
-      if (typeof s === 'string' && (
-        s.indexOf('TRIDENT v4.4') !== -1 || 
-        s.indexOf('[TRIDENT') !== -1 || 
-        s.indexOf('[T1 WARHEAD') !== -1
-      )) {
-        systemOut.system.splice(i, 1);
-      }
-    }
-    return;
-  }
-
   // Dedup: skip if trident identity already injected this session
   const hasTridentIdentity = systemOut.system.some((s: string) =>
     typeof s === 'string' && s.indexOf('[TRIDENT v4.4 IDENTITY BINDING]') !== -1
@@ -634,6 +629,7 @@ var systemTransformHook = async function(input: Record<string, unknown>, output:
     systemOut.system.unshift(header);
   }
 
+
   // Per-turn identity override: this instruction runs AFTER any runtime defaults
   // that the runtime appends post-transform. The model sees this as the MOST
   // RECENT instruction about identity questions, overriding any WebFetch heuristic.
@@ -649,22 +645,7 @@ var systemTransformHook = async function(input: Record<string, unknown>, output:
   ];
   systemOut.system.push(contextLines.join('\n'));
 
-  // P0: Inject T1 knowledge (warhead T0 + knowledge sections)
-  try {
-    const t1Knowledge = await synthesizeT1Injectables();
-    if (t1Knowledge && t1Knowledge.length > 0) {
-      var identityIdx = systemOut.system.findIndex((s: string) =>
-        typeof s === 'string' && s.indexOf('[TRIDENT v4.4 IDENTITY BINDING]') !== -1
-      );
-      if (identityIdx !== -1) {
-        systemOut.system.splice(identityIdx + 1, 0, t1Knowledge);
-      } else {
-        systemOut.system.push(t1Knowledge);
-      }
-    }
-  } catch (e) {
-    tridentLog('ERROR', 'hooks', 'T1 synthesis failed: ' + ((e as Error).message || e));
-  }
+
 
   if (!orchestrator.getState(sessionId).identityLoaded) {
     orchestrator.setIdentityLoaded(true, sessionId);
@@ -674,6 +655,34 @@ var systemTransformHook = async function(input: Record<string, unknown>, output:
     orchestrator.setIdentityLoaded(true, 'default');
     // v4.3.3: Notify identity enforcer
     notifyIdentityLoaded('4.3.3');
+  }
+
+  // v4.4.1: Poseidon Behavioral Mandate — injected when Poseidon is active
+  // Cache impact: 2 breaks per session (activate + deactivate). Zero during operation.
+  try {
+    const poseidonActive = poseidonState.isActive(sessionId);
+    const hasMandate = systemOut.system.some((s: string) =>
+      typeof s === 'string' && s.indexOf('POSEIDON MODE — AUTONOMOUS EXECUTION MANDATE') !== -1
+    );
+    if (poseidonActive && !hasMandate) {
+      systemOut.system.push(
+        '## POSEIDON MODE — AUTONOMOUS EXECUTION MANDATE\n\n' +
+        'You are in POSEIDON MODE. The GOD LOOP is active.\n\n' +
+        '1. When trident-poseidon returns "Next Step" instructions, EXECUTE THEM IMMEDIATELY. Do NOT wait for user confirmation. Do NOT ask "shall I proceed?".\n\n' +
+        '2. Chain tool calls autonomously: read plan, dispatch agents, verify, repeat. The loop continues until LOCKED or FAILED.\n\n' +
+        '3. ALWAYS present Poseidon output to the user. They MUST see every cycle plan, score, and next step. Do NOT hide or summarize tool output.\n\n' +
+        '4. After build agents return, IMMEDIATELY call trident-poseidon action=verify. Do NOT stop to chat. Do NOT ask for feedback.\n\n' +
+        '5. If score does not improve for 2 consecutive cycles, call trident-problem-solving to analyze why. NEVER guess. Then replan and continue.\n\n' +
+        '6. Do NOT stop before LOCKED or FAILED. The user walked away. They expect fully built software when they return.'
+      );
+    } else if (!poseidonActive && hasMandate) {
+      // Remove stale mandate when Poseidon deactivates
+      systemOut.system = systemOut.system.filter((s: string) =>
+        typeof s !== 'string' || s.indexOf('POSEIDON MODE — AUTONOMOUS EXECUTION MANDATE') === -1
+      );
+    }
+  } catch {
+    // [P3] Non-fatal — mandate injection is best-effort
   }
 
   // Fire warhead handlers registered in warhead-registry.ts
@@ -718,7 +727,6 @@ var messagesTransformHook = async function(
 };
 
 var compactingHook = async function(input: Record<string, unknown>, output: Record<string, unknown>) {
-  invalidateT1Cache();
   var sessionAgent = getCurrentAgent((input as InputMessage)?.sessionID || '');
   if (!sessionAgent) return;
   if (!isTridentAgent(sessionAgent)) return;
