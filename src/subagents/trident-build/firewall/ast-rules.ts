@@ -126,10 +126,10 @@ export class ASTFirewall {
       }
     }
 
-    // Recurse into children
-    ts.forEachChild(node, function(child) {
+    // Recurse into children — use arrow function to preserve `this` binding
+    ts.forEachChild(node, (child) => {
       this.walkNode(child, sourceFile, findings);
-    }, this);
+    });
   }
 
   private findEnclosingFunction(node: ts.Node): ts.FunctionLikeDeclaration | null {

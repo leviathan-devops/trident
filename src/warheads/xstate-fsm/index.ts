@@ -154,13 +154,42 @@ export class AuditFSM {
   /** Convenience: run full audit cycle */
   async runFullCycle(targetPath: string): Promise<{ state: string; context: AuditContext }> {
     this.send({ type: 'START_SCAN', targetPath });
-    // Simulate scan
-    this.send({ type: 'SCAN_COMPLETE', filesFound: 42 });
+
+    // [P6] Verify fs exists
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+
+    // Real filesystem scan — count .ts files
+    let filesFound = 0;
+    const skipDirs = new Set(['node_modules', 'dist', '.git', '.trident']);
+    const walk = (dir: string) => {
+      try {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (skipDirs.has(entry.name)) continue;
+          const full = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            walk(full);
+          } else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) {
+            filesFound++;
+          }
+        }
+      } catch {
+        // [P3] Skip unreadable directories
+      }
+    };
+    walk(targetPath);
+
+    this.send({ type: 'SCAN_COMPLETE', filesFound });
     this.send({ type: 'START_ANALYSIS', mode: 'full' });
-    this.send({ type: 'ANALYSIS_COMPLETE', findings: 7 });
+
+    // Findings count determined by actual audit — use 0 as placeholder
+    // The real audit engine will report actual findings
+    this.send({ type: 'ANALYSIS_COMPLETE', findings: 0 });
     this.send({ type: 'START_REPORT', format: 'markdown' });
     this.send({ type: 'REPORT_COMPLETE' });
-    tridentLog('INFO', 'xstate-fsm', `Audit cycle complete for ${targetPath}`);
+
+    tridentLog('INFO', 'xstate-fsm', `Audit cycle complete for ${targetPath} (${filesFound} files found)`);
     return { state: this.getState(), context: this.getContext() };
   }
 }

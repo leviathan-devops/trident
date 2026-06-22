@@ -2,9 +2,9 @@
  * TRIDENT STATE MACHINE v2 — Pure TypeScript (Spec Phase 6)
  * 
  * Programmatic transition logic with validation.
- * The orchestrator is a REPORTER, not a GATE: transitions are recorded
- * but never block tool execution. Irregular transitions are logged, not thrown.
- * This is the PRIMARY state tracker. XState machine is secondary.
+ * The orchestrator is a GATE: illegal transitions THROW. This is the
+ * PRIMARY state tracker. XState machine is secondary.
+ * v4.4.1: Changed from reporter to gate — illegal transitions now throw.
  */
 
 export type TridentMode =
@@ -77,8 +77,16 @@ export class OrchestratorMachineV2 {
   private transition(newStatus: TridentStatus, trigger: string): void {
     const allowed = STATUS_TRANSITIONS[this.state.status];
     if (!allowed || !allowed.has(newStatus)) {
-      // Reporter, not gate: record the irregular transition but DO NOT throw.
-      this.state.error = `Irregular transition: ${this.state.status} → ${newStatus} (trigger: ${trigger})`;
+      // v4.4.1: GATE, not reporter. Illegal transitions now THROW.
+      const msg = `Illegal transition: ${this.state.status} → ${newStatus} (trigger: ${trigger})`;
+      this.state.error = msg;
+      this.state.transitionHistory.push({
+        from: `${this.state.mode}:${this.state.status}`,
+        to: `${this.state.mode}:${newStatus}`,
+        at: Date.now(),
+        trigger,
+      });
+      throw new Error(`[ORCHESTRATOR GATE] ${msg}`);
     }
     this.state.transitionHistory.push({
       from: `${this.state.mode}:${this.state.status}`,

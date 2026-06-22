@@ -10,6 +10,8 @@ import { generateCodeReviewArtifact } from '../artifacts/code-review-artifact.ts
 import { generateBuildSpecArtifact, generateLayer1InitialPlan, generateLayer2DetailedWorkflow, generateContextLibraryManifest } from '../artifacts/deep-planning-artifact.ts';
 import { generatePlanArtifact } from '../artifacts/problem-solving-artifact.ts';
 import { generateT1Injectable, generateT2Artifact } from '../artifacts/context-synthesis-artifact.ts';
+import { contextSynthesisEngine } from '../modes/context-synthesis-engine.js';
+import * as fsSync from 'fs';
 import { TRIDENT_CONFIG } from '../config.js';
 import { deepPlanningModule } from '../modes/deep-planning.js';
 import { problemSolvingModule } from '../modes/problem-solving.js';
@@ -237,8 +239,8 @@ export function createTridentTools() {
         }
         // ISSUE 4 FIX: Timeout wrapper prevents audit from hanging indefinitely
         const auditTimeout = setTimeout(() => {
-          throw new Error('[TIMEOUT] Audit exceeded 120s');
-        }, 120000);
+          throw new Error('[TIMEOUT] Audit exceeded 600s');
+        }, 600000);
         try {
           orchestrator.startAudit();
           const projectName = await resolveProjectName(args.targetPath);
@@ -594,6 +596,7 @@ export function createTridentTools() {
         targetPath: z.string().optional().describe('Absolute path to the project root (used in T2 mode for architecture discovery)'),
         targetPaths: z.array(z.string()).optional().describe('File paths for trident_explore subagent dispatch (T2 mode only)'),
         outputMode: z.enum(['T1', 'T2']).default('T1').describe('T1 (default) = lightweight injectable config. T2 = dense, bible-style standalone knowledge file written to disk.'),
+        targetLines: z.number().min(100).max(16000).default(1000).optional().describe('Target line count for T2 artifact. Controls how many patterns, failure modes, imports, etc. are sampled. Higher = more discovery data included.'),
       },
       execute: async (args: {
         projectName: string;
@@ -603,6 +606,7 @@ export function createTridentTools() {
         targetPath?: string;
         targetPaths?: string[];
         outputMode: 'T1' | 'T2';
+        targetLines?: number;
       }) => {
         try {
           orchestrator.startContextSynthesis();
@@ -632,14 +636,85 @@ export function createTridentTools() {
             }
 
             // ---- T2: Dense knowledge file written to disk ----
+            // v4.4.1: Kill fabricated code examples. Read REAL source files and feed through engine.
+            const realCodeMap = new Map<string, string>();
+
+            // Build a basename → fullpath index for the project so we can resolve pattern.file
+            const _basePath = args.targetPath || '';
+            if (_basePath && discovery && discovery.patterns.length > 0) {
+              const fileIndex = new Map<string, string[]>();
+              const buildIndex = (dir: string, depth: number) => {
+                if (depth > 10) return;
+                try {
+                  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) buildIndex(full, depth + 1);
+                    else if (entry.isFile()) {
+                      const arr = fileIndex.get(entry.name) || [];
+                      arr.push(full);
+                      fileIndex.set(entry.name, arr);
+                    }
+                  }
+                } catch { /* skip unreadable dirs */ }
+              };
+              buildIndex(_basePath, 0);
+
+              // For each discovered pattern, read the ACTUAL source file
+              const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((args.targetLines || 1000) / 10)));
+              for (const pat of shown) {
+                try {
+                  const candidates = fileIndex.get(pat.file);
+                  if (!candidates || candidates.length === 0) continue;
+                  const content = fsSync.readFileSync(candidates[0], 'utf-8');
+                  const lines = content.split('\n');
+                  const startLine = Math.max(0, pat.line - 1);
+                  // v4.4.1: Scale code examples to meet targetLines (75-90% of target)
+                  const scaleFactor = Math.max(1, Math.floor((args.targetLines || 1000) / 500));
+                  const snippetLines = Math.min(30 * scaleFactor, 80); // 30, 60, 80 lines based on scale
+                  const snippet = lines.slice(startLine, startLine + snippetLines).join('\n');
+                  realCodeMap.set(pat.file + ':' + pat.line, snippet);
+                } catch {
+                  // Skip unreadable files
+                }
+              }
+              tridentLog('INFO', 'trident-context-synthesis', `T2 real source: read ${realCodeMap.size} actual code snippets from disk`);
+            }
+
+            // Build source material from REAL code for engine synthesis
+            const t2SourceMap = new Map<string, string>();
+            if ((args.keyFacts || []).length > 0) t2SourceMap.set('key-facts', (args.keyFacts || []).join('\n'));
+            if ((args.patterns || []).length > 0) t2SourceMap.set('user-patterns', (args.patterns || []).join('\n'));
+            for (const [key, snippet] of realCodeMap) {
+              t2SourceMap.set('code/' + key, snippet);
+            }
+
+            // Synthesize through engine: collect → score → compress → inject
+            let t2EngineSections: string[] = [];
+            try {
+              if (t2SourceMap.size > 0) {
+                const t2EngineResult = await contextSynthesisEngine.synthesize(t2SourceMap);
+                t2EngineSections = t2EngineResult.sections;
+                tridentLog('INFO', 'trident-context-synthesis', `T2 engine: synthesized ${t2EngineResult.totalTokens} tokens across ${t2EngineSections.length} sections`);
+              }
+            } catch (e) {
+              tridentLog('WARN', 'trident-context-synthesis', `T2 engine synthesis failed: ${(e as Error).message}`);
+            }
+
             const t2 = await generateT2Artifact(
               args.projectName,
               args.patterns || [],
               args.keyFacts || [],
               args.targetPath,
-              discovery
+              discovery,
+              args.targetLines,
+              realCodeMap,
             );
-            csMachineActor.send({ type: 'COLLECT', context: t2.content });
+            // Append engine-synthesized sections to T2 content if produced
+            const t2Content = t2EngineSections.length > 0
+              ? t2.content + '\n\n## Engine-Synthesized Context (Real Source)\n\n' + t2EngineSections.join('\n\n') + '\n'
+              : t2.content;
+            csMachineActor.send({ type: 'COLLECT', context: t2Content });
 
             // Auto-dispatch trident_explore subagents if targetPaths provided and outputMode is T2
             if (args.targetPaths && args.targetPaths.length > 0 && mode === 'T2') {
@@ -656,20 +731,25 @@ export function createTridentTools() {
             const validations: Array<{ layer: number; name: string; valid: boolean; missing: string[] }> = [];
             for (let layer = 1; layer <= 4; layer++) {
               const config = contextSynthesisModule.getLayerConfig(layer);
-              const v = contextSynthesisModule.validateLayerContent(layer, t2.content);
+              const v = contextSynthesisModule.validateLayerContent(layer, t2Content);
               validations.push({ layer, name: config?.name || `Layer ${layer}`, ...v });
               // Validation failure is a WARNING, not an error — always advance
               orchestrator.completeLayer();
 
               // Wire FSM events for CS layers
-              if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: t2.content });
+              if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: t2Content });
               else if (layer === 2) csMachineActor.send({ type: 'SCORE' });
-              else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: t2.content });
+              else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: t2Content });
               else if (layer === 4) csMachineActor.send({ type: 'FORMAT', sections: t2.sections });
             }
 
+            // v4.4.1: Re-write artifact to disk with engine-enriched content
+            if (t2Content !== t2.content) {
+              try { await fs.writeFile(t2.path, t2Content, 'utf-8'); } catch { /* non-fatal */ }
+            }
+
             storeArtifacts({
-              't2-knowledge': t2.content,
+              't2-knowledge': t2Content,
               't2-artifact-path': t2.path,
               'validation-report': JSON.stringify(validations),
               't2-metadata': JSON.stringify({ lineCount: t2.lineCount, sizeKB: t2.sizeKB, sections: t2.sections }),
@@ -694,37 +774,60 @@ export function createTridentTools() {
           }
 
           // ---- T1 (default): Lightweight injectable ----
+          // v4.4.1: Use ACTUAL engine pipeline instead of dead artifact generators
+          // Build source material from user input
+          const t1SourceMap = new Map<string, string>();
+          if ((args.patterns || []).length > 0) t1SourceMap.set('user-patterns', (args.patterns || []).join('\n'));
+          if ((args.keyFacts || []).length > 0) t1SourceMap.set('key-facts', (args.keyFacts || []).join('\n'));
+
+          // Run through engine: collect → score → compress → inject
+          let t1EngineOutput = '';
+          try {
+            if (t1SourceMap.size > 0) {
+              const t1Result = await contextSynthesisEngine.synthesize(t1SourceMap);
+              t1EngineOutput = t1Result.sections.join('\n\n');
+              tridentLog('INFO', 'trident-context-synthesis', `T1 engine: synthesized ${t1Result.totalTokens} tokens across ${t1Result.sections.length} sections`);
+            }
+          } catch (e) {
+            tridentLog('WARN', 'trident-context-synthesis', `T1 engine synthesis failed: ${(e as Error).message}`);
+          }
+
+          // Generate base config + append engine output as enrichment
           const artifact = generateT1Injectable(
             args.projectName,
             args.config || { model: 'deepseek/deepseek-v4-flash' },
             args.patterns || [],
             args.keyFacts || []
           );
-          csMachineActor.send({ type: 'COLLECT', context: artifact });
+          // Append engine-synthesized context if produced
+          const finalArtifact = t1EngineOutput
+            ? artifact + '\n\n## Engine-Synthesized Context (NLP Pipeline)\n\n' + t1EngineOutput + '\n'
+            : artifact;
+          csMachineActor.send({ type: 'COLLECT', context: finalArtifact });
 
           const validations: Array<{ layer: number; name: string; valid: boolean; missing: string[] }> = [];
           for (let layer = 1; layer <= 4; layer++) {
             const config = contextSynthesisModule.getLayerConfig(layer);
-            const v = contextSynthesisModule.validateLayerContent(layer, artifact);
+            const v = contextSynthesisModule.validateLayerContent(layer, finalArtifact);
             validations.push({ layer, name: config?.name || `Layer ${layer}`, ...v });
             // Validation failure is a WARNING, not an error — always advance
             orchestrator.completeLayer();
 
             // Wire FSM events for CS layers
-            if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: artifact });
+            if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: finalArtifact });
             else if (layer === 2) csMachineActor.send({ type: 'SCORE' });
-            else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: artifact });
-            else if (layer === 4) csMachineActor.send({ type: 'FORMAT', sections: [artifact] });
+            else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: finalArtifact });
+            else if (layer === 4) csMachineActor.send({ type: 'FORMAT', sections: [finalArtifact] });
           }
 
-          const mdPath = await writeArtifactFile('T1_INJECTABLE', artifact);
+          const mdPath = await writeArtifactFile('T1_INJECTABLE', finalArtifact);
           storeArtifacts({
-            't1-injectable': artifact,
+            't1-injectable': finalArtifact,
             'artifact-path': mdPath,
             'validation-report': JSON.stringify(validations),
           });
 
-          return artifact + (mdPath ? `\n\n---\n📄 Artifact saved: \`${mdPath}\`` : '') + '\n\n---\n\n' + formatValidationReport(validations, 'CONTEXT_SYNTHESIS');
+          return finalArtifact + (mdPath ? `\n\n---\n📄 Artifact saved: \`${mdPath}\`` : '') + '\n\n---\n\n' + formatValidationReport(validations, 'CONTEXT_SYNTHESIS');
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errorId = `CS-ERR-${Date.now()}`;

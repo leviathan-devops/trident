@@ -57,9 +57,9 @@ export class SnapshotDiffClass {
     // Check for newly created files
     for (var entry of after.files) {
       var filePath = entry[0];
-      var afterHash = entry[1];
+      var newAfterHash = entry[1];
       if (!this.before.files.has(filePath)) {
-        diff.push({ file: filePath, beforeHash: '', afterHash, status: 'created' });
+        diff.push({ file: filePath, beforeHash: '', afterHash: newAfterHash, status: 'created' });
       }
     }
 

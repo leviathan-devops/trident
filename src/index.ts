@@ -7,7 +7,7 @@ import { TRIDENT_AGENTS, getAgentConfig } from './agents/definitions.js';
 import { getEvidenceStore, tridentLog } from './utils.js';
 import { setCurrentAgent, getCurrentAgent } from './hooks/agent-state.js';
 import { isTridentBuildAgent } from './identity/agent-identity.js';
-import { registerWarheadHooks, synthesizeT1Injectables } from './shared/trident-warhead-synthesizer.js';
+import { registerWarheadHooks } from './shared/trident-warhead-synthesizer.js';
 import { TRIDENT_BUILD_T1 } from './subagents/trident-build/identity/t1-prompt.js';
 import { createTridentBuildHooks } from './subagents/trident-build/hooks/index.js';
 import { createBuildStatusTool } from './subagents/trident-build/tools/build-status.js';

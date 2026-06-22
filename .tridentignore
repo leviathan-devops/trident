@@ -1,0 +1,34 @@
+# .tridentignore — Exclude from Poseidon/trident-code-audit scanning
+# Same syntax as .gitignore
+
+# Build artifacts
+dist/
+build/
+out/
+
+# Dependencies
+node_modules/
+
+# Plugin bundles (generated, not source)
+plugins/
+
+# Manta agent workspace
+.manta/
+
+# Map files
+*.js.map
+*.min.js
+
+# Generated artifacts
+.trident/
+GENERATED_ARTIFACTS/
+
+# Documentation (not code)
+*.md
+!src/**/*.md
+
+# Data files
+*.json
+!tsconfig.json
+!package.json
+!*.config.json

@@ -1,6 +1,6 @@
 {
   "name": "trident-v4.4",
-  "version": "v4.4.0",
+  "version": "v4.4.1",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
@@ -16,7 +16,7 @@
     "wink-eng-lite-web-model": "^1.8.1",
     "wink-nlp": "^2.4.0",
     "xstate": "^5.32.1",
-    "zod": "^4.1.8"
+    "zod": "4.1.8"
   },
   "devDependencies": {
     "@stryker-mutator/core": "^8.7.1",
