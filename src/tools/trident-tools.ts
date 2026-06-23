@@ -346,6 +346,7 @@ export function createTridentTools() {
         patterns: z.array(z.string()).optional().describe('Known patterns to include in context library (merged with auto-discovered patterns)'),
         failures: z.array(z.string()).optional().describe('Known failure modes to document (merged with auto-discovered failures)'),
         decisions: z.array(z.string()).optional().describe('Design decisions already made (merged with auto-discovered decisions)'),
+        layer: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('Explicit layer override: 1=Initial Plan, 2=Detailed Workflow, 3=Context Library (auto-detected from requirements if omitted)'),
       },
       execute: async (args: {
         targetPath?: string;
@@ -354,6 +355,7 @@ export function createTridentTools() {
         patterns?: string[];
         failures?: string[];
         decisions?: string[];
+        layer?: number;
       }) => {
         // Forward-mapping mode: when targetPath is omitted, generate from requirements alone
         const isForwardMode = !args.targetPath;
@@ -368,7 +370,8 @@ export function createTridentTools() {
         
         try {
           // Detect which layer the user wants via semantic analysis of requirements
-          const layer = detectDeepPlanningLayer(args.requirements || '');
+          // Explicit layer parameter overrides auto-detection
+          const layer = (args.layer as 1 | 2 | 3) || detectDeepPlanningLayer(args.requirements || '');
           const layerNames: Record<number, string> = {
             1: 'INITIAL PLAN (Generative Prompt)',
             2: 'DETAILED WORKFLOW (Implementation Build Spec)',
@@ -434,6 +437,38 @@ export function createTridentTools() {
             } catch { /* Non-fatal: layer completion state update is best-effort; artifact already generated */ }
           } else if (layer === 2) {
             // Layer 2: Detailed Workflow — save as .md via writeArtifactFile
+            // Populate realCodeMap for Layer 2 (same pattern as context-synthesis T2)
+            const dpRealCodeMap = new Map<string, string>();
+            if (args.targetPath && discovery && discovery.patterns.length > 0) {
+              const dpFileIndex = new Map<string, string[]>();
+              const dpBuildIndex = (dir: string, depth: number) => {
+                if (depth > 10) return;
+                try {
+                  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+                    const full = path.join(dir, entry.name);
+                    if (entry.isDirectory()) dpBuildIndex(full, depth + 1);
+                    else if (entry.isFile()) {
+                      const arr = dpFileIndex.get(entry.name) || [];
+                      arr.push(full);
+                      dpFileIndex.set(entry.name, arr);
+                    }
+                  }
+                } catch { /* skip */ }
+              };
+              dpBuildIndex(args.targetPath, 0);
+              for (const pat of discovery.patterns.slice(0, 30)) {
+                try {
+                  const candidates = dpFileIndex.get(pat.file);
+                  if (!candidates || candidates.length === 0) continue;
+                  const content = fsSync.readFileSync(candidates[0], 'utf-8');
+                  const lines = content.split('\n');
+                  const startLine = Math.max(0, pat.line - 1);
+                  const snippet = lines.slice(startLine, startLine + 20).join('\n');
+                  dpRealCodeMap.set(pat.file + ':' + pat.line, snippet);
+                } catch { /* skip */ }
+              }
+            }
             output = generateLayer2DetailedWorkflow(targetPathForGen, projectName, requirements, architecture, discovery);
             artifactPath = await writeArtifactFile('BUILD_SPEC', output);
             try {
@@ -489,19 +524,19 @@ export function createTridentTools() {
             3: 'Layer 3 (Context Library) complete. All deep-planning layers finished. Context library files written to disk.',
           };
 
-          return JSON.stringify({
+          return {
             layer,
             layerName: layerNames[layer],
             output,
-            artifactPath: artifactPath || null,
+            artifactPath: artifactPath || undefined,
             nextLayers: nextLayersMap[layer],
             hint: layerHints[layer],
-          }, null, 2);
+          };
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errorId = `PLAN-ERR-${Date.now()}`;
           tridentLog('ERROR', 'trident-deep-planning', `[${errorId}] ${errMsg}`);
-          return JSON.stringify({ error: 'Deep planning failed', errorId, message: (err instanceof Error ? err.message : String(err)) }, null, 2);
+          return { error: 'Deep planning failed', errorId, message: (err instanceof Error ? err.message : String(err)) };
         }
       },
     }),
@@ -538,6 +573,39 @@ export function createTridentTools() {
           } catch {
             discovery = undefined;
             // Safe to continue — discovery stays undefined, artifact generator handles null discovery
+          }
+
+          // Populate realCodeMap for reasoning chain evidence (same pattern as context-synthesis T2)
+          const psRealCodeMap = new Map<string, string>();
+          if (args.targetPath && discovery && discovery.patterns.length > 0) {
+            const psFileIndex = new Map<string, string[]>();
+            const psBuildIndex = (dir: string, depth: number) => {
+              if (depth > 10) return;
+              try {
+                for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                  if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
+                  const full = path.join(dir, entry.name);
+                  if (entry.isDirectory()) psBuildIndex(full, depth + 1);
+                  else if (entry.isFile()) {
+                    const arr = psFileIndex.get(entry.name) || [];
+                    arr.push(full);
+                    psFileIndex.set(entry.name, arr);
+                  }
+                }
+              } catch { /* skip */ }
+            };
+            psBuildIndex(args.targetPath, 0);
+            for (const pat of discovery.patterns.slice(0, 30)) {
+              try {
+                const candidates = psFileIndex.get(pat.file);
+                if (!candidates || candidates.length === 0) continue;
+                const content = fsSync.readFileSync(candidates[0], 'utf-8');
+                const lines = content.split('\n');
+                const startLine = Math.max(0, pat.line - 1);
+                const snippet = lines.slice(startLine, startLine + 20).join('\n');
+                psRealCodeMap.set(pat.file + ':' + pat.line, snippet);
+              } catch { /* skip */ }
+            }
           }
 
           const iteration = problemSolvingModule.getIteration();
@@ -770,7 +838,14 @@ export function createTridentTools() {
             summary += `\`\`\`markdown\n${t2.preview}\n\`\`\`\n\n`;
             summary += `---\n📄 T2 Knowledge File saved: \`${t2.path}\`\n\n`;
             summary += `---\n\n` + formatValidationReport(validations, 'CONTEXT_SYNTHESIS (T2)');
-            return summary;
+            return {
+              output: t2Content,
+              summary,
+              artifactPath: t2.path,
+              sections: t2.sections,
+              lineCount: t2.lineCount,
+              sizeKB: t2.sizeKB,
+            };
           }
 
           // ---- T1 (default): Lightweight injectable ----

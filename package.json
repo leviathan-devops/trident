@@ -5,7 +5,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build:check": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
+    "build": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --sourcemap --external:@opencode-ai/plugin --external:zod --external:xstate --external:@xstate/fsm --banner:js=\"import{createRequire as __cr}from'module';import{fileURLToPath as __ftp}from'url';import{dirname as __dn}from'path';const require=__cr(import.meta.url);const __filename=__ftp(import.meta.url);const __dirname=__dn(__filename);\"",
+    "build:bun": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
     "test": "npx tsx ../tests/properties.ts"
   },
   "dependencies": {
