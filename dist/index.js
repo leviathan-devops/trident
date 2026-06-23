@@ -89463,7 +89463,7 @@ ${lanes.join(`
             if (!links2.hasReportedStatementInAmbientContext) {
               return links2.hasReportedStatementInAmbientContext = grammarErrorOnFirstToken(node, Diagnostics.Statements_are_not_allowed_in_ambient_contexts);
             }
-          }
+          } else {}
         }
         return false;
       }
@@ -99236,7 +99236,7 @@ ${lanes.join(`
               ], 2));
               setParentRecursive(requireStatement, false);
               statements = insertStatementAfterCustomPrologue(statements.slice(), requireStatement);
-            }
+            } else {}
           }
         }
         if (statements !== visited.statements) {
@@ -191447,11 +191447,11 @@ var require_util = __commonJS((exports) => {
     return computeRelativeURL(base, newPath);
   }
   exports.join = join21;
-  function relative3(rootURL, targetURL) {
+  function relative4(rootURL, targetURL) {
     const result = relativeIfPossible(rootURL, targetURL);
     return typeof result === "string" ? result : normalize(targetURL);
   }
-  exports.relative = relative3;
+  exports.relative = relative4;
   function relativeIfPossible(rootURL, targetURL) {
     const urlType = getURLType(rootURL);
     if (urlType !== getURLType(targetURL)) {
@@ -199311,7 +199311,9 @@ var ALLOWED_EXTERNAL_TOOLS = new Set([
 ]);
 var ALLOWED_TOOL_PREFIXES = [
   "reasoning-bus_",
-  "vc-visual-mcp_"
+  "visual-cortex_",
+  "vc-visual-mcp_",
+  "manta-"
 ];
 function isToolAllowed(toolName) {
   if (!toolName || typeof toolName !== "string")
@@ -200233,7 +200235,6 @@ var DESCRIPTIVE_SIGNALS = [
   "broken",
   "banned",
   "not allowed",
-  "prohibited",
   "enforce against",
   "guard against"
 ];
@@ -200761,6 +200762,7 @@ var systemTransformHook = async function(input, output) {
 6. Do NOT stop before LOCKED or FAILED. The user walked away. They expect fully built software when they return.`);
     } else if (!poseidonActive && hasMandate) {
       systemOut.system = systemOut.system.filter((s2) => typeof s2 !== "string" || s2.indexOf("POSEIDON MODE \u2014 AUTONOMOUS EXECUTION MANDATE") === -1);
+      tridentLog("DEBUG", "trident-hooks", "Poseidon mandate removed (stale)");
     }
   } catch {}
   await hookRegistry.fire("system.transform", input, output);
@@ -200818,6 +200820,9 @@ var compactingHook = async function(input, output) {
   await hookRegistry.fire("experimental.session.compacting", input, output);
 };
 var commandExecuteHook = async function(input, output) {
+  var sessionAgent = getCurrentAgent(input?.sessionID || "");
+  if (!sessionAgent || !isTridentAgent(sessionAgent))
+    return;
   var cmd = input.command;
   var args = input.arguments || "";
   if (cmd === "run" && args.indexOf("--agent") !== -1 && args.indexOf("trident") !== -1) {
@@ -200826,11 +200831,6 @@ var commandExecuteHook = async function(input, output) {
       checkGuardian("opencode-run", message, "trident", "PLAN");
     }
   }
-  var sessionAgent = getCurrentAgent(input?.sessionID || "");
-  if (!sessionAgent)
-    return;
-  if (!isTridentAgent(sessionAgent))
-    return;
   await hookRegistry.fire("command.execute.before", input, output);
 };
 function createTridentHooks() {
@@ -211577,7 +211577,7 @@ class JSONSchemaGenerator {
               if (val === undefined) {
                 if (this.unrepresentable === "throw") {
                   throw new Error("Literal `undefined` cannot be represented in JSON Schema");
-                }
+                } else {}
               } else if (typeof val === "bigint") {
                 if (this.unrepresentable === "throw") {
                   throw new Error("BigInt literals cannot be represented in JSON Schema");
@@ -213364,1059 +213364,114 @@ ${requirements || "Auto-derived from project structure and discovery data."}
 
 `;
   }
-  if (requirements && requirements.length > 200) {
-    a += `## Build Phases (Derived from Requirements)
+  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
+    a += `## Existing Code Inventory
 
 `;
-    a += `The following phases are derived from the specific requirements provided.
+    a += `The target project already contains ${discovery.codeSections.length} code sections across ${discovery.totalFiles} files.
 `;
-    a += `Each phase must be independently verifiable and follow P1-P10 principles.
+    a += `Phases below describe CHANGES to existing code, not greenfield builds.
 
 `;
-    a += `${requirements}
+    for (const section of discovery.codeSections.slice(0, 10)) {
+      a += `### ${section.sectionName}
+`;
+      a += `**Location:** \`${section.filePath}:${section.lineStart}-${section.lineEnd}\`
+`;
+      a += `**Type:** ${section.type}
 
 `;
-    a += `## Reference Phase Templates (Fallback)
-
-`;
-    a += `*The following are generic templates. Use them only if the requirements above don't provide specific guidance.*
-
-`;
+      a += "```typescript\n" + section.code.substring(0, 400) + "\n```\n\n";
+    }
   }
-  if (requirements && requirements.length > 100) {
-    a += `## Build Requirements
+  a += `## Dynamic Build Phases
 
 `;
-    a += `${requirements}
+  a += `Phases derived from requirements cross-referenced against discovered code.
 
 `;
-    a += `---
+  const reqLines = (requirements || "").split(`
+`).filter((l) => {
+    const trimmed = l.trim();
+    return trimmed.length > 20 && /^(\d+\.|-|[A-Z])/.test(trimmed);
+  });
+  let phaseNum = 1;
+  if (reqLines.length > 0) {
+    for (const req of reqLines.slice(0, 12)) {
+      const reqText = req.replace(/^\d+\.\s*/, "").replace(/^\-\s*/, "").trim();
+      const reqLower = reqText.toLowerCase();
+      const existingMatch = discovery?.codeSections?.find((s) => {
+        const sectionText = (s.sectionName + " " + s.code.substring(0, 500)).toLowerCase();
+        return reqLower.split(/\s+/).filter((w) => w.length > 4).some((word) => sectionText.includes(word));
+      });
+      const similarPatterns = discovery?.patterns?.filter((p) => {
+        const patternText = (p.name + " " + p.file).toLowerCase();
+        return reqLower.split(/\s+/).filter((w) => w.length > 4).some((word) => patternText.includes(word));
+      }) || [];
+      if (existingMatch) {
+        a += `### Phase ${phaseNum}: Modify \u2014 ${reqText.substring(0, 80)}
 
 `;
-    a += `## Reference Phase Templates (use as guide, adapt to requirements above)
+        a += `**Status:** EXISTS at \`${existingMatch.filePath}:${existingMatch.lineStart}\`
 
 `;
+        a += `**Current implementation:**
+`;
+        a += "```typescript\n" + existingMatch.code.substring(0, 500) + "\n```\n\n";
+        a += `**Required changes:** Apply the requirements above to this existing code.
+
+`;
+        a += `**Verification:** Run audit and container test after modification.
+
+`;
+      } else if (similarPatterns.length > 0) {
+        a += `### Phase ${phaseNum}: Build \u2014 ${reqText.substring(0, 80)}
+
+`;
+        a += `**Status:** NEW \u2014 no existing implementation found
+
+`;
+        a += `**Reference patterns from codebase:**
+
+`;
+        for (const p of similarPatterns.slice(0, 3)) {
+          a += `- \`${p.name}\` (${p.type}) at ${p.file}:${p.line}
+`;
+          if (p.codeSnippet) {
+            a += "\n```typescript\n" + p.codeSnippet.substring(0, 300) + "\n```\n\n";
+          }
+        }
+      } else {
+        a += `### Phase ${phaseNum}: ${reqText.substring(0, 80)}
+
+`;
+        a += `**Status:** NEW
+`;
+        a += `${reqText}
+
+`;
+        a += `**Verification:** Type check + bundle + container test.
+
+`;
+      }
+      phaseNum++;
+    }
+  } else {
+    if (discovery && discovery.codeSections) {
+      for (const section of discovery.codeSections.slice(0, 7)) {
+        a += `### Phase ${phaseNum}: ${section.sectionName}
+
+`;
+        a += `**Location:** \`${section.filePath}:${section.lineStart}\`
+`;
+        a += `**Type:** ${section.type}
+
+`;
+        a += "```typescript\n" + section.code.substring(0, 400) + "\n```\n\n";
+        phaseNum++;
+      }
+    }
   }
-  a += `## Phase 1: Plugin Entry Point and Hook Registration
-
-`;
-  a += `**Goal:** Create the plugin entry point that registers all hooks and tools.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/index.ts\` \u2014 Plugin entry (default export)
-`;
-  a += `- \`src/config.ts\` \u2014 Configuration constants
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/index.ts
-`;
-  a += `import type { Plugin } from '@opencode-ai/plugin';
-`;
-  a += `import { TRIDENT_CONFIG } from './config.js';
-`;
-  a += `import { ${className}Hooks } from './hooks/${safeName}-hooks.js';
-`;
-  a += `import { ${className}Tools } from './tools/${safeName}-tools.js';
-
-`;
-  a += `export const ${safeName}Plugin: Plugin = {
-`;
-  a += `  init(ctx) {
-`;
-  a += `    const hooks = new ${className}Hooks(ctx);
-`;
-  a += `    const tools = new ${className}Tools(ctx);
-
-`;
-  a += `    // Register lifecycle hooks
-`;
-  a += `    ctx.hook('chat.message', hooks.onChatMessage.bind(hooks));
-`;
-  a += `    ctx.hook('tool.execute.before', hooks.onToolBefore.bind(hooks));
-`;
-  a += `    ctx.hook('tool.execute.after', hooks.onToolAfter.bind(hooks));
-`;
-  a += `    ctx.hook('experimental.chat.system.transform', hooks.onSystemTransform.bind(hooks));
-
-`;
-  a += `    // Register tools
-`;
-  a += `    for (const tool of tools.definitions()) {
-`;
-  a += `      ctx.tool(tool.name, tool.schema, tool.handler);
-`;
-  a += `    }
-
-`;
-  a += `    ctx.logger.info('${projectName} plugin initialized');
-`;
-  a += `    return { name: '${projectName}', version: TRIDENT_CONFIG.version };
-`;
-  a += `  },
-`;
-  a += `};
-
-`;
-  a += `export default ${safeName}Plugin;
-`;
-  a += "```\n\n";
-  a += "```typescript\n";
-  a += `// src/config.ts
-`;
-  a += `export const TRIDENT_CONFIG = {
-`;
-  a += `  name: '${projectName}',
-`;
-  a += `  version: '${version2}',
-`;
-  a += `  safeName: '${safeName}',
-`;
-  a += `  containerImage: process.env.TRIDENT_CONTAINER_IMAGE || 'opencode-test:1.14.34',
-`;
-  a += `  artifactsDir: process.env.TRIDENT_ARTIFACTS_BASE || '/tmp/${safeName}-artifacts',
-`;
-  a += `  identityString: 'You are ${projectName} v${version2}.',
-`;
-  a += `} as const;
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| \`import(plugin)\` | \u2014 | dist/index.js | Plugin object with \`init\` function |
-`;
-  a += `| \`plugin.init(ctx)\` | \u2014 | mock context | Returns {name, version} |
-`;
-  a += `| hook registration | \u2014 | ctx.hook called 4x | 4 hooks registered |
-`;
-  a += `| tool registration | \u2014 | ctx.tool called Nx | All tools registered |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep -c "ctx.hook" src/index.ts  # >= 4
-`;
-  a += `grep -c "ctx.tool" src/index.ts  # >= 1
-`;
-  a += "```\n\n";
-  a += `## Phase 2: Orchestrator State Machine
-
-`;
-  a += `**Goal:** Implement a pure TypeScript state machine that tracks mode progress
-`;
-  a += `and routes tool calls through layer pipelines.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/orchestrator.ts\` \u2014 State machine + mode management
-`;
-  a += `- \`src/types.ts\` \u2014 Shared type definitions
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/orchestrator.ts
-`;
-  a += `export type Mode = 'idle' | 'deep-planning' | 'problem-solving' | 'context-synthesis' | 'code-review';
-`;
-  a += `export type LayerState = 'pending' | 'in-progress' | 'complete' | 'failed';
-
-`;
-  a += `export interface OrchestratorState {
-`;
-  a += `  mode: Mode;
-`;
-  a += `  currentLayer: number;
-`;
-  a += `  layerStates: Record<number, LayerState>;
-`;
-  a += `  startTime: number;
-`;
-  a += `}
-
-`;
-  a += `export class ${className}Orchestrator {
-`;
-  a += `  private state: OrchestratorState;
-`;
-  a += `  private readonly maxLayers: Record<Mode, number> = {
-`;
-  a += `    'idle': 0,
-`;
-  a += `    'deep-planning': 3,
-`;
-  a += `    'problem-solving': 6,
-`;
-  a += `    'context-synthesis': 4,
-`;
-  a += `    'code-review': 3,
-`;
-  a += `  };
-
-`;
-  a += `  constructor() {
-`;
-  a += `    this.state = {
-`;
-  a += `      mode: 'idle',
-`;
-  a += `      currentLayer: 0,
-`;
-  a += `      layerStates: {},
-`;
-  a += `      startTime: Date.now(),
-`;
-  a += `    };
-`;
-  a += `  }
-
-`;
-  a += `  startMode(mode: Mode): void {
-`;
-  a += `    this.state.mode = mode;
-`;
-  a += `    this.state.currentLayer = 1;
-`;
-  a += `    this.state.layerStates = { 1: 'pending' };
-`;
-  a += `  }
-
-`;
-  a += `  completeLayer(): void {
-`;
-  a += `    const max = this.maxLayers[this.state.mode];
-`;
-  a += `    if (this.state.currentLayer < 1 || this.state.currentLayer > max) {
-`;
-  a += `      throw new Error(\`Layer \${this.state.currentLayer} out of range [1, \${max}]\`);
-`;
-  a += `    }
-`;
-  a += `    this.state.layerStates[this.state.currentLayer] = 'complete';
-`;
-  a += `    if (this.state.currentLayer < max) {
-`;
-  a += `      this.state.currentLayer++;
-`;
-  a += `      this.state.layerStates[this.state.currentLayer] = 'pending';
-`;
-  a += `    }
-`;
-  a += `  }
-
-`;
-  a += `  getState(): Readonly<OrchestratorState> {
-`;
-  a += `    return { ...this.state };
-`;
-  a += `  }
-
-`;
-  a += `  reset(): void {
-`;
-  a += `    this.state = { mode: 'idle', currentLayer: 0, layerStates: {}, startTime: Date.now() };
-`;
-  a += `  }
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| startMode('deep-planning') | orchestrator | state.mode | 'deep-planning' |
-`;
-  a += `| completeLayer() x3 | orchestrator | layerStates | {1:'complete',2:'complete',3:'complete'} |
-`;
-  a += `| completeLayer() x4 (overflow) | orchestrator | throw | Error: out of range |
-`;
-  a += `| reset() | orchestrator | state.mode | 'idle' |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep -c "completeLayer" src/orchestrator.ts  # method defined
-`;
-  a += `grep "throw new Error" src/orchestrator.ts  # overflow guard exists
-`;
-  a += "```\n\n";
-  a += `## Phase 3: Audit Engine (Layer Skeleton)
-
-`;
-  a += `**Goal:** Implement the mechanical audit engine with layer definitions that
-`;
-  a += `scan source code for specific defect patterns.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/audit-engine/types.ts\` \u2014 Audit types and interfaces
-`;
-  a += `- \`src/audit-engine/layer-engine.ts\` \u2014 Sequential layer executor
-`;
-  a += `- \`src/audit-engine/layers/r5-empty-catch.ts\` \u2014 Sample layer
-
-`;
-  if (discovery && discovery.auditLayers.length > 0) {
-    a += `**Discovered layers:** ${discovery.auditLayers.join(", ")}
-
-`;
-  }
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/audit-engine/types.ts
-`;
-  a += `export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';
-
-`;
-  a += `export interface AuditFinding {
-`;
-  a += `  layer: string;
-`;
-  a += `  severity: Severity;
-`;
-  a += `  file: string;
-`;
-  a += `  line: number;
-`;
-  a += `  message: string;
-`;
-  a += `  rule: string;
-`;
-  a += `  confidence: number; // 0-100
-`;
-  a += `}
-
-`;
-  a += `export interface AuditLayer {
-`;
-  a += `  id: string;
-`;
-  a += `  name: string;
-`;
-  a += `  description: string;
-`;
-  a += `  scan(files: string[]): AuditFinding[];
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += "```typescript\n";
-  a += `// src/audit-engine/layer-engine.ts
-`;
-  a += `import * as fs from 'fs';
-`;
-  a += `import type { AuditLayer, AuditFinding } from './types.js';
-
-`;
-  a += `export class LayerEngine {
-`;
-  a += `  private layers: AuditLayer[] = [];
-
-`;
-  a += `  register(layer: AuditLayer): void {
-`;
-  a += `    this.layers.push(layer);
-`;
-  a += `  }
-
-`;
-  a += `  async run(targetPath: string): Promise<{ findings: AuditFinding[]; score: number }> {
-`;
-  a += `    const files = this.collectFiles(targetPath);
-`;
-  a += `    const findings: AuditFinding[] = [];
-`;
-  a += `    for (const layer of this.layers) {
-`;
-  a += `      const layerFindings = layer.scan(files);
-`;
-  a += `      findings.push(...layerFindings);
-`;
-  a += `    }
-`;
-  a += `    const score = this.computeScore(findings);
-`;
-  a += `    return { findings, score };
-`;
-  a += `  }
-
-`;
-  a += `  private computeScore(findings: AuditFinding[]): number {
-`;
-  a += `    let penalty = 0;
-`;
-  a += `    for (const f of findings) {
-`;
-  a += `      const weights: Record<string, number> = { critical: 25, high: 10, medium: 5, low: 2, info: 0 };
-`;
-  a += `      penalty += weights[f.severity] || 0;
-`;
-  a += `    }
-`;
-  a += `    return Math.max(0, 100 - penalty);
-`;
-  a += `  }
-
-`;
-  a += `  private collectFiles(dir: string): string[] {
-`;
-  a += `    const result: string[] = [];
-`;
-  a += `    const skip = new Set(['node_modules', 'dist', '.git']);
-`;
-  a += `    const walk = (d: string) => {
-`;
-  a += `      try {
-`;
-  a += `        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {
-`;
-  a += `          if (skip.has(entry.name)) continue;
-`;
-  a += `          const full = d + '/' + entry.name;
-`;
-  a += `          if (entry.isDirectory()) walk(full);
-`;
-  a += `          else if (entry.name.endsWith('.ts')) result.push(full);
-`;
-  a += `        }
-`;
-  a += `      } catch { /* skip unreadable */ }
-`;
-  a += `    };
-`;
-  a += `    walk(dir);
-`;
-  a += `    return result;
-`;
-  a += `  }
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += "```typescript\n";
-  a += `// src/audit-engine/layers/r5-empty-catch.ts
-`;
-  a += `import * as fs from 'fs';
-`;
-  a += `import type { AuditLayer, AuditFinding } from '../types.js';
-
-`;
-  a += `export const EmptyCatchLayer: AuditLayer = {
-`;
-  a += `  id: 'R5',
-`;
-  a += `  name: 'Empty Catch Block Detection',
-`;
-  a += `  description: 'Flags catch blocks that silently swallow errors without logging or re-throwing.',
-`;
-  a += `  scan(files: string[]): AuditFinding[] {
-`;
-  a += `    const findings: AuditFinding[] = [];
-`;
-  a += `    const emptyCatchRe = /catch\\s*\\([^)]*\\)\\s*\\{\\s*\\}/g;
-`;
-  a += `    for (const file of files) {
-`;
-  a += `      try {
-`;
-  a += `        const lines = fs.readFileSync(file, 'utf-8').split('\\n');
-`;
-  a += `        for (let i = 0; i < lines.length; i++) {
-`;
-  a += `          if (emptyCatchRe.test(lines[i])) {
-`;
-  a += `            findings.push({
-`;
-  a += `              layer: 'R5', severity: 'critical', file, line: i + 1,
-`;
-  a += `              message: 'Empty catch block \u2014 error silently swallowed',
-`;
-  a += `              rule: 'catch-must-handle', confidence: 95,
-`;
-  a += `            });
-`;
-  a += `          }
-`;
-  a += `        }
-`;
-  a += `      } catch { /* skip unreadable file */ }
-`;
-  a += `    }
-`;
-  a += `    return findings;
-`;
-  a += `  },
-`;
-  a += `};
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| file with \`catch(e){}\` | R5 layer | scan() | 1 CRITICAL finding |
-`;
-  a += `| file with \`catch(e){throw e}\` | R5 layer | scan() | 0 findings |
-`;
-  a += `| 5 critical findings | LayerEngine | computeScore | score = 0 (clamped) |
-`;
-  a += `| 0 findings | LayerEngine | computeScore | score = 100 |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep -c "AuditLayer" src/audit-engine/types.ts  # interface defined
-`;
-  a += `grep "computeScore" src/audit-engine/layer-engine.ts  # scoring method
-`;
-  a += "```\n\n";
-  a += `## Phase 4: Mode Tool Definitions
-
-`;
-  a += `**Goal:** Define tool schemas and handlers using zod for runtime validation.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/tools/${safeName}-tools.ts\` \u2014 All tool definitions
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/tools/${safeName}-tools.ts
-`;
-  a += `import { z } from 'zod';
-`;
-  a += `import type { ToolContext } from '../types.js';
-
-`;
-  a += `export interface ToolDefinition {
-`;
-  a += `  name: string;
-`;
-  a += `  schema: z.ZodSchema;
-`;
-  a += `  description: string;
-`;
-  a += `  handler: (args: any, ctx: ToolContext) => Promise<any>;
-`;
-  a += `}
-
-`;
-  a += `export class ${className}Tools {
-`;
-  a += `  definitions(): ToolDefinition[] {
-`;
-  a += `    return [
-`;
-  a += `      {
-`;
-  a += `        name: '${safeName}-status',
-`;
-  a += `        schema: z.object({}).strict(),
-`;
-  a += `        description: 'Show current orchestrator state and mode.',
-`;
-  a += `        handler: async (_args, ctx) => {
-`;
-  a += `          const state = ctx.orchestrator.getState();
-`;
-  a += `          return {
-`;
-  a += `            mode: state.mode,
-`;
-  a += `            currentLayer: state.currentLayer,
-`;
-  a += `            uptime: Date.now() - state.startTime,
-`;
-  a += `          };
-`;
-  a += `        },
-`;
-  a += `      },
-`;
-  a += `      {
-`;
-  a += `        name: '${safeName}-help',
-`;
-  a += `        schema: z.object({}).strict(),
-`;
-  a += `        description: 'List all available tools and modes.',
-`;
-  a += `        handler: async (_args, _ctx) => {
-`;
-  a += `          return {
-`;
-  a += `            tools: this.definitions().map(t => ({ name: t.name, desc: t.description })),
-`;
-  a += `            modes: ['deep-planning', 'problem-solving', 'context-synthesis', 'code-review'],
-`;
-  a += `          };
-`;
-  a += `        },
-`;
-  a += `      },
-`;
-  a += `      {
-`;
-  a += `        name: '${safeName}-audit',
-`;
-  a += `        schema: z.object({
-`;
-  a += `          targetPath: z.string().min(1),
-`;
-  a += `          action: z.enum(['full', 'quick']).default('full'),
-`;
-  a += `        }).strict(),
-`;
-  a += `        description: 'Run mechanical code audit.',
-`;
-  a += `        handler: async (args, ctx) => {
-`;
-  a += `          const result = await ctx.auditEngine.run(args.targetPath);
-`;
-  a += `          return {
-`;
-  a += `            score: result.score,
-`;
-  a += `            findingCount: result.findings.length,
-`;
-  a += `            criticalCount: result.findings.filter(f => f.severity === 'critical').length,
-`;
-  a += `          };
-`;
-  a += `        },
-`;
-  a += `      },
-`;
-  a += `    ];
-`;
-  a += `  }
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| \`{action:'full', targetPath:'/x'}\` | ${safeName}-audit | handler | {score, findingCount, criticalCount} |
-`;
-  a += `| \`{action:'invalid'}\` | ${safeName}-audit | zod | Schema validation error |
-`;
-  a += `| \`{}\` | ${safeName}-status | handler | {mode, currentLayer, uptime} |
-`;
-  a += `| \`{extra:'field'}\` | ${safeName}-status | zod | Strict mode rejects extra fields |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep -c "z.object" src/tools/${safeName}-tools.ts  # >= 3 schemas
-`;
-  a += `grep -c "handler:" src/tools/${safeName}-tools.ts  # matches tool count
-`;
-  a += "```\n\n";
-  a += `## Phase 5: Identity Injection (SCAN+REPLACE)
-
-`;
-  a += `**Goal:** Implement the system.transform hook that injects and maintains
-`;
-  a += `agent identity across compaction events using idempotent SCAN+REPLACE.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/hooks/${safeName}-hooks.ts\` \u2014 All hook handlers
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/hooks/${safeName}-hooks.ts
-`;
-  a += `import { TRIDENT_CONFIG } from '../config.js';
-
-`;
-  a += `const IDENTITY_BLOCK_START = '[IDENTITY_BLOCK_START]';
-`;
-  a += `const IDENTITY_BLOCK_END = '[IDENTITY_BLOCK_END]';
-
-`;
-  a += `export class ${className}Hooks {
-`;
-  a += `  private buildIdentityBlock(): string {
-`;
-  a += `    return [
-`;
-  a += `      IDENTITY_BLOCK_START,
-`;
-  a += `      \`You are ${projectName} v${TRIDENT_CONFIG.version}.\`,
-`;
-  a += `      '',
-`;
-  a += `      'Identity Rules:',
-`;
-  a += `      \`- "who are you" response: "I am ${projectName} v${TRIDENT_CONFIG.version}."\`,
-`;
-  a += `      '- Never claim to be a generic assistant.',
-`;
-  a += `      '- Maintain this identity across all responses.',
-`;
-  a += `      IDENTITY_BLOCK_END,
-`;
-  a += `    ].join('\\n');
-`;
-  a += `  }
-
-`;
-  a += `  private scanReplace(system: string[], identity: string): string[] {
-`;
-  a += `    const startIdx = system.findIndex(s => s.includes(IDENTITY_BLOCK_START));
-`;
-  a += `    if (startIdx >= 0) {
-`;
-  a += `      const endIdx = system.findIndex((s, i) => i > startIdx && s.includes(IDENTITY_BLOCK_END));
-`;
-  a += `      if (endIdx >= 0) {
-`;
-  a += `        const before = system.slice(0, startIdx);
-`;
-  a += `        const after = system.slice(endIdx + 1);
-`;
-  a += `        return [...before, identity, ...after];
-`;
-  a += `      }
-`;
-  a += `    }
-`;
-  a += `    return [...system, identity];
-`;
-  a += `  }
-
-`;
-  a += `  async onSystemTransform(input: any, output: any): Promise<void> {
-`;
-  a += `    const agent = input?.agent || input?.agentName;
-`;
-  a += `    if (!agent) return; // Guard: do not inject before agent is known
-
-`;
-  a += `    const identity = this.buildIdentityBlock();
-`;
-  a += `    if (!output.system) output.system = [];
-`;
-  a += `    output.system = this.scanReplace(output.system, identity);
-`;
-  a += `  }
-
-`;
-  a += `  async onChatMessage(input: any, _output: any): Promise<void> {
-`;
-  a += `    const { sessionID, message } = input || {};
-`;
-  a += `    if (sessionID && message) {
-`;
-  a += `      // Track session for context persistence (side effect only)
-`;
-  a += `    }
-`;
-  a += `  }
-
-`;
-  a += `  async onToolBefore(input: any, output: any): Promise<void> {
-`;
-  a += `    const { tool, sessionID } = input || {};
-`;
-  a += `    if (tool && sessionID && output?.args) {
-`;
-  a += `      // Optionally modify args (inject defaults)
-`;
-  a += `    }
-`;
-  a += `  }
-
-`;
-  a += `  async onToolAfter(input: any, _output: any): Promise<void> {
-`;
-  a += `    const { tool, sessionID } = input || {};
-`;
-  a += `    if (tool && sessionID) {
-`;
-  a += `      // Evidence recording (side effect)
-`;
-  a += `    }
-`;
-  a += `  }
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| system=[] | onSystemTransform | scanReplace | system=[identityBlock] |
-`;
-  a += `| system=[oldBlock] | onSystemTransform | scanReplace | system=[newBlock] (replaced, not duplicated) |
-`;
-  a += `| 2x calls | onSystemTransform | scanReplace | Same as 1x (idempotent) |
-`;
-  a += `| input.agent=null | onSystemTransform | early return | No mutation |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep "scanReplace" src/hooks/${safeName}-hooks.ts  # method exists
-`;
-  a += `grep "IDENTITY_BLOCK_START" src/hooks/${safeName}-hooks.ts  # markers exist
-`;
-  a += `grep "!agent" src/hooks/${safeName}-hooks.ts  # guard clause exists
-`;
-  a += "```\n\n";
-  a += `## Phase 6: Artifact Generators and Utilities
-
-`;
-  a += `**Goal:** Implement artifact generation functions and shared utilities
-`;
-  a += `that produce dense, reference-quality markdown from analysis data.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/utils.ts\` \u2014 Shared utilities (writeArtifactFile, tridentLog)
-`;
-  a += `- \`src/artifacts/index.ts\` \u2014 Re-exports for artifact generators
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/utils.ts
-`;
-  a += `import * as fs from 'fs';
-`;
-  a += `import * as path from 'path';
-`;
-  a += `import { TRIDENT_CONFIG } from './config.js';
-
-`;
-  a += `export function tridentLog(level: string, module: string, msg: string): void {
-`;
-  a += `  const ts = new Date().toISOString();
-`;
-  a += `  const prefix = \`[\${ts}] [\${level.toUpperCase()}] [\${module}]\`;
-`;
-  a += `  console.error(\`\${prefix} \${msg}\`);
-`;
-  a += `}
-
-`;
-  a += `export async function writeArtifactFile(type: string, content: string): Promise<string> {
-`;
-  a += `  const dir = TRIDENT_CONFIG.artifactsDir;
-`;
-  a += `  fs.mkdirSync(dir, { recursive: true });
-`;
-  a += `  const ts = new Date().toISOString().replace(/[:.]/g, '-');
-`;
-  a += `  const filename = \`\${type}_\${ts}.md\`;
-`;
-  a += `  const fullPath = path.join(dir, filename);
-`;
-  a += `  fs.writeFileSync(fullPath, content, 'utf-8');
-`;
-  a += `  tridentLog('INFO', 'artifact', \`Written: \${fullPath} (\${content.split('\\n').length} lines)\`);
-`;
-  a += `  return fullPath;
-`;
-  a += `}
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| writeArtifactFile('TEST', 'content') | utils | fs.writeFileSync | Returns path, file exists |
-`;
-  a += `| tridentLog('INFO', 'test', 'msg') | utils | console.error | Logs to stderr with timestamp |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep "writeArtifactFile" src/utils.ts  # function exists
-`;
-  a += `grep "tridentLog" src/utils.ts  # logger exists
-`;
-  a += "```\n\n";
-  a += `## Phase 7: Context Library Integration
-
-`;
-  a += `**Goal:** Wire the context library generation into the deep-planning mode
-`;
-  a += `so that 9 dense files are written to disk on every deep-planning run.
-
-`;
-  a += `**Files:**
-`;
-  a += `- \`src/artifacts/deep-planning-artifact.ts\` \u2014 Context library writer
-`;
-  a += `- \`src/modes/deep-planning.ts\` \u2014 Mode pipeline integration
-
-`;
-  a += `**Implementation:**
-
-`;
-  a += "```typescript\n";
-  a += `// src/modes/deep-planning.ts (excerpt)
-`;
-  a += `import { generateBuildSpecArtifact, generateContextLibraryManifest } from '../artifacts/deep-planning-artifact.js';
-
-`;
-  a += `export const deepPlanningModule = {
-`;
-  a += `  async execute(targetPath: string, projectName: string, requirements: string, architecture: string, discovery: any) {
-`;
-  a += `    // Layer 1+2: Build Spec
-`;
-  a += `    const buildSpec = generateBuildSpecArtifact(targetPath, projectName, requirements, architecture, discovery);
-`;
-  a += `    this.validateLayerContent(1, buildSpec);
-`;
-  a += `    this.validateLayerContent(2, buildSpec);
-
-`;
-  a += `    // Layer 3: Context Library (writes 9 files to disk)
-`;
-  a += `    const contextLib = generateContextLibraryManifest(
-`;
-  a += `      projectName, architecture,
-`;
-  a += `      discovery?.patterns.map((p: { name: string; file: string; line: number }) => p.name) || [],
-`;
-  a += `      discovery?.failureModes.map((f: { message: string }) => f.message) || [],
-`;
-  a += `      discovery?.decisions.map((d: { rationale: string }) => d.rationale) || [],
-`;
-  a += `      targetPath, discovery,
-`;
-  a += `    );
-`;
-  a += `    this.validateLayerContent(3, contextLib);
-
-`;
-  a += `    return { buildSpec, contextLib };
-`;
-  a += `  },
-
-`;
-  a += `  validateLayerContent(layer: number, content: string): { valid: boolean; missing: string[] } {
-`;
-  a += `    const requiredHeadings: Record<number, string[]> = {
-`;
-  a += `      1: ['Problem Statement', 'Core Insight', 'Scope', 'User Profile', 'Success Criteria'],
-`;
-  a += `      2: ['Phase 1', 'Phase 2', 'Implementation', 'Verification'],
-`;
-  a += `      3: ['00_INDEX', '01_ARCHITECTURE', '02_PATTERNS', '05_BUILD_PLAN'],
-`;
-  a += `    };
-`;
-  a += `    const headings = requiredHeadings[layer] || [];
-`;
-  a += `    const missing = headings.filter(h => !content.includes(h));
-`;
-  a += `    return { valid: missing.length === 0, missing };
-`;
-  a += `  },
-`;
-  a += `};
-`;
-  a += "```\n\n";
-  a += `**Test Cases:**
-
-`;
-  a += `| Input | Agent | Path | Expected |
-`;
-  a += `|-------|-------|------|----------|
-`;
-  a += `| full pipeline | deepPlanningModule | execute | buildSpec + contextLib + 9 files |
-`;
-  a += `| buildSpec content | validateLayerContent(1) | headings | missing=[] |
-`;
-  a += `| contextLib content | validateLayerContent(3) | headings | missing=[] |
-
-`;
-  a += `**Verification:**
-
-`;
-  a += "```bash\n";
-  a += `tsc --noEmit  # 0 errors
-`;
-  a += `grep "generateContextLibraryManifest" src/modes/deep-planning.ts  # wired
-`;
-  a += `grep "validateLayerContent" src/modes/deep-planning.ts  # validator exists
-`;
-  a += "```\n\n";
   a += `## Dependency Table
 
 `;
@@ -214631,7 +213686,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns, fai
       fs8.writeFileSync(path11.join(contextLibDir, "04_DECISIONS.md"), decisionsContent, "utf-8");
       const buildPlanContent = buildBuildPlanFile(projectName, safeName, version2, discovery);
       fs8.writeFileSync(path11.join(contextLibDir, "05_BUILD_PLAN.md"), buildPlanContent, "utf-8");
-      const hookApiContent = buildHookApiFile(projectName, safeName, version2);
+      const hookApiContent = buildHookApiFile(projectName, safeName, version2, discovery);
       fs8.writeFileSync(path11.join(contextLibDir, "06_HOOK_API.md"), hookApiContent, "utf-8");
       const containerContent = buildContainerTestingFile(projectName, safeName, version2);
       fs8.writeFileSync(path11.join(contextLibDir, "07_CONTAINER_TESTING.md"), containerContent, "utf-8");
@@ -214916,24 +213971,20 @@ function buildArchitectureFile(projectName, safeName, version2, architecture, di
   f += `## System Purpose
 
 `;
-  f += `${projectName} is a precision engineering system built on the principle
-`;
-  f += `that mechanical verification produces more reliable software than human
-`;
-  f += `judgment alone. It provides:
+  if (architecture && architecture.length > 20 && !architecture.includes("Auto-derived") && !architecture.includes("Forward-mapping")) {
+    f += architecture + `
 
 `;
-  f += `- **Mechanical code auditing** via sequential layers
-`;
-  f += `- **Mode-based workflows** with sequential layer pipelines
-`;
-  f += `- **Persistent context** that survives session boundaries via artifact files
-`;
-  f += `- **Identity enforcement** via SCAN+REPLACE hooks on system transform
-`;
-  f += `- **Container-grade testing** with evidence collection
+  } else if (discovery && discovery.entryPoints.length > 0) {
+    f += `${projectName} is a software project with entry points at ${discovery.entryPoints.join(", ")}. `;
+    f += `It contains ${discovery.totalFiles} files and ${discovery.totalLines.toLocaleString()} lines of code.
 
 `;
+  } else {
+    f += `${projectName} \u2014 see discovery data for project structure.
+
+`;
+  }
   if (discovery) {
     f += `## Directory Structure
 
@@ -215233,7 +214284,7 @@ function buildPatternsFile(projectName, safeName, version2, patterns, discovery)
   const allPatterns = [];
   if (discovery) {
     for (const p of discovery.patterns) {
-      allPatterns.push({ name: p.name, file: p.file, line: p.line, type: p.type });
+      allPatterns.push({ name: p.name, file: p.file, line: p.line, type: p.type, codeSnippet: p.codeSnippet });
     }
   }
   for (const p of patterns) {
@@ -215289,105 +214340,13 @@ creates a coupling that must be maintained.`,
 
 `;
       f += "```typescript\n";
-      if (p.type === "class") {
-        f += `// Pattern: ${p.name} (class-based encapsulation)
+      if (p.codeSnippet) {
+        f += `// Actual code from ${p.file}:${p.line}
 `;
-        f += `export class ${p.name} {
-`;
-        f += `  private state: Record<string, unknown> = {};
-
-`;
-        f += `  constructor(initialState?: Record<string, unknown>) {
-`;
-        f += `    if (initialState) this.state = { ...initialState };
-`;
-        f += `  }
-
-`;
-        f += `  getValue<T>(key: string): T | undefined {
-`;
-        f += `    return this.state[key] as T | undefined;
-`;
-        f += `  }
-
-`;
-        f += `  setValue(key: string, value: unknown): void {
-`;
-        f += `    if (typeof key !== 'string' || key.length === 0) {
-`;
-        f += `      throw new Error(\`Invalid key: \${key}\`);
-`;
-        f += `    }
-`;
-        f += `    this.state[key] = value;
-`;
-        f += `  }
-`;
-        f += `}
-`;
-      } else if (p.type === "interface") {
-        f += `// Pattern: ${p.name} (interface contract)
-`;
-        f += `export interface ${p.name} {
-`;
-        f += `  id: string;
-`;
-        f += `  timestamp: number;
-`;
-        f += `  metadata?: Record<string, unknown>;
-`;
-        f += `  validate(): boolean;
-`;
-        f += `  serialize(): string;
-`;
-        f += `}
-`;
-      } else if (p.type === "function") {
-        f += `// Pattern: ${p.name} (function capability)
-`;
-        f += `export function ${p.name}(input: string, options?: {
-`;
-        f += `  strict?: boolean;
-`;
-        f += `  timeout?: number;
-`;
-        f += `}): { result: string; warnings: string[] } {
-`;
-        f += `  const warnings: string[] = [];
-`;
-        f += `  if (!input || input.length === 0) {
-`;
-        f += `    throw new Error('${p.name}: input cannot be empty');
-`;
-        f += `  }
-`;
-        f += `  const result = options?.strict
-`;
-        f += `    ? input.trim().toLowerCase()
-`;
-        f += `    : input;
-`;
-        f += `  return { result, warnings };
-`;
-        f += `}
-`;
-      } else if (p.type === "export") {
-        f += `// Pattern: ${p.name} (exported constant)
-`;
-        f += `export const ${p.name}: Readonly<Record<string, unknown>> = Object.freeze({
-`;
-        f += `  version: '1.0.0',
-`;
-        f += `  features: ['audit', 'planning', 'review'],
-`;
-        f += `});
+        f += p.codeSnippet + `
 `;
       } else {
-        f += `// Pattern: ${p.name}
-`;
-        f += `// Structural element discovered via AST scan
-`;
-        f += `export const ${p.name} = Symbol('${p.name}');
+        f += `// Source not available for ${p.name}
 `;
       }
       f += "```\n\n";
@@ -215400,26 +214359,10 @@ creates a coupling that must be maintained.`,
       f += `- When a new developer asks "how do we typically structure X?"
 
 `;
-      f += `**Anti-Pattern (What NOT to Do):**
-
+      f += `**Anti-Pattern:**
 `;
-      f += "```typescript\n";
-      f += `// WRONG: ${p.name} without proper error handling
-`;
-      f += `export function bad${p.name.charAt(0).toUpperCase() + p.name.slice(1)}(input: any): any {
-`;
-      f += `  // No validation, no error handling, no return type
-`;
-      f += `  return input?.property; // May return undefined silently
-`;
-      f += `}
-`;
-      f += "```\n\n";
-      f += `This anti-pattern violates: input validation, error handling,
-`;
-      f += `and type safety. The correct pattern validates, throws on invalid
-`;
-      f += `input, and has a strict return type.
+      f += `Avoid using \`${p.name}\` in ways that violate its type contract or error handling conventions. `;
+      f += `See the code example above for the correct usage pattern.
 
 `;
       f += `---
@@ -215875,158 +214818,160 @@ function buildDecisionsFile(projectName, safeName, version2, decisions, discover
 
 `;
   }
-  f += `## Architectural Decisions
+  if (!discovery || discovery.decisions.length === 0) {
+    f += `## Architectural Decisions
 
 `;
-  f += `These are system-level decisions that govern the architecture.
+    f += `These are system-level decisions that govern the architecture.
 
 `;
-  f += `### ADR-1: Single-File Bundle Strategy
+    f += `### ADR-1: Single-File Bundle Strategy
 
 `;
-  f += `**Decision:** Use esbuild with \`--bundle --format=esm\` to produce a
+    f += `**Decision:** Use esbuild with \`--bundle --format=esm\` to produce a
 `;
-  f += `single \`dist/index.js\` file with all internal modules inlined.
+    f += `single \`dist/index.js\` file with all internal modules inlined.
 
 `;
-  f += `**Location:** Build configuration (package.json scripts)
+    f += `**Location:** Build configuration (package.json scripts)
 
 `;
-  f += `**Rationale:** Container deployment copies one file. No path issues.
+    f += `**Rationale:** Container deployment copies one file. No path issues.
 `;
-  f += `External dependencies (\`@opencode-ai/plugin\`, \`zod\`) are provided by
+    f += `External dependencies (\`@opencode-ai/plugin\`, \`zod\`) are provided by
 `;
-  f += `the runtime and must be marked \`--external\`.
+    f += `the runtime and must be marked \`--external\`.
 
 `;
-  f += `**Alternatives Considered:**
+    f += `**Alternatives Considered:**
 `;
-  f += `- Alternative A: Multiple files with \`tsc\` output.
+    f += `- Alternative A: Multiple files with \`tsc\` output.
 `;
-  f += `  *Rejected:* Relative imports break in container ESM resolution.
+    f += `  *Rejected:* Relative imports break in container ESM resolution.
 `;
-  f += `- Alternative B: Webpack with code splitting.
+    f += `- Alternative B: Webpack with code splitting.
 `;
-  f += `  *Rejected:* Async chunks not supported by opencode plugin loader.
+    f += `  *Rejected:* Async chunks not supported by opencode plugin loader.
 `;
-  f += `- Alternative C: Rollup with tree-shaking.
+    f += `- Alternative C: Rollup with tree-shaking.
 `;
-  f += `  *Rejected:* More complex config for same result as esbuild.
+    f += `  *Rejected:* More complex config for same result as esbuild.
 
 `;
-  f += `**Cost of Reversal:** MEDIUM \u2014 switching bundlers requires updating
+    f += `**Cost of Reversal:** MEDIUM \u2014 switching bundlers requires updating
 `;
-  f += `build scripts, CI/CD, and testing all imports resolve correctly.
+    f += `build scripts, CI/CD, and testing all imports resolve correctly.
 
 `;
-  f += `### ADR-2: Hook-Based Identity Injection (SCAN+REPLACE)
+    f += `### ADR-2: Hook-Based Identity Injection (SCAN+REPLACE)
 
 `;
-  f += `**Decision:** Use \`experimental.chat.system.transform\` hook with
+    f += `**Decision:** Use \`experimental.chat.system.transform\` hook with
 `;
-  f += `SCAN+REPLACE logic to inject identity on every transform event.
+    f += `SCAN+REPLACE logic to inject identity on every transform event.
 
 `;
-  f += `**Rationale:** The transform hook fires on every compaction, ensuring
+    f += `**Rationale:** The transform hook fires on every compaction, ensuring
 `;
-  f += `identity is re-injected exactly when it would be lost. SCAN+REPLACE
+    f += `identity is re-injected exactly when it would be lost. SCAN+REPLACE
 `;
-  f += `is idempotent \u2014 no duplicate blocks accumulate.
+    f += `is idempotent \u2014 no duplicate blocks accumulate.
 
 `;
-  f += `**Alternatives Considered:**
+    f += `**Alternatives Considered:**
 `;
-  f += `- Alternative A: Static system prompt in agent config.
+    f += `- Alternative A: Static system prompt in agent config.
 `;
-  f += `  *Rejected:* Gets overwritten by platform on compaction.
+    f += `  *Rejected:* Gets overwritten by platform on compaction.
 `;
-  f += `- Alternative B: messages.transform for identity injection.
+    f += `- Alternative B: messages.transform for identity injection.
 `;
-  f += `  *Rejected:* Noisier; identity in user message is confusing.
+    f += `  *Rejected:* Noisier; identity in user message is confusing.
 `;
-  f += `- Alternative C: Prepend on every tool.execute.before event.
+    f += `- Alternative C: Prepend on every tool.execute.before event.
 `;
-  f += `  *Rejected:* Wrong lifecycle; does not fire on compaction.
+    f += `  *Rejected:* Wrong lifecycle; does not fire on compaction.
 
 `;
-  f += `**Cost of Reversal:** LOW \u2014 change the hook implementation. Logic is
+    f += `**Cost of Reversal:** LOW \u2014 change the hook implementation. Logic is
 `;
-  f += `isolated to the hooks file.
+    f += `isolated to the hooks file.
 
 `;
-  f += `### ADR-3: Sequential Layer Pipeline
+    f += `### ADR-3: Sequential Layer Pipeline
 
 `;
-  f += `**Decision:** Mode pipelines execute layers sequentially.
+    f += `**Decision:** Mode pipelines execute layers sequentially.
 
 `;
-  f += `**Rationale:** Dependencies are linear (Layer N+1 depends on Layer N).
+    f += `**Rationale:** Dependencies are linear (Layer N+1 depends on Layer N).
 `;
-  f += `Sequential execution gives deterministic ordering and clear traces.
+    f += `Sequential execution gives deterministic ordering and clear traces.
 
 `;
-  f += `**Alternatives Considered:**
+    f += `**Alternatives Considered:**
 `;
-  f += `- Alternative A: Parallel execution with Promise.all.
+    f += `- Alternative A: Parallel execution with Promise.all.
 `;
-  f += `  *Rejected:* Requires mock inputs for dependent layers.
+    f += `  *Rejected:* Requires mock inputs for dependent layers.
 `;
-  f += `- Alternative B: Event-driven pipeline.
+    f += `- Alternative B: Event-driven pipeline.
 `;
-  f += `  *Rejected:* Harder to debug; unclear execution order.
+    f += `  *Rejected:* Harder to debug; unclear execution order.
 
 `;
-  f += `**Cost of Reversal:** MEDIUM \u2014 requires restructuring mode pipeline
+    f += `**Cost of Reversal:** MEDIUM \u2014 requires restructuring mode pipeline
 `;
-  f += `and adding mock input generation.
+    f += `and adding mock input generation.
 
 `;
-  f += `### ADR-4: DiscoveryResult as Single Source of Truth
+    f += `### ADR-4: DiscoveryResult as Single Source of Truth
 
 `;
-  f += `**Decision:** All mode tools receive a unified DiscoveryResult.
+    f += `**Decision:** All mode tools receive a unified DiscoveryResult.
 
 `;
-  f += `**Rationale:** Single scan, shared result, consistent data.
+    f += `**Rationale:** Single scan, shared result, consistent data.
 
 `;
-  f += `**Alternatives Considered:**
+    f += `**Alternatives Considered:**
 `;
-  f += `- Alternative A: Each tool scans independently.
+    f += `- Alternative A: Each tool scans independently.
 `;
-  f += `  *Rejected:* Redundant I/O, inconsistent data.
+    f += `  *Rejected:* Redundant I/O, inconsistent data.
 `;
-  f += `- Alternative B: Pre-computed intelligence in files.
+    f += `- Alternative B: Pre-computed intelligence in files.
 `;
-  f += `  *Rejected:* Files go stale between invocations.
+    f += `  *Rejected:* Files go stale between invocations.
 
 `;
-  f += `**Cost of Reversal:** LOW \u2014 change the discovery call to per-tool.
+    f += `**Cost of Reversal:** LOW \u2014 change the discovery call to per-tool.
 
 `;
-  f += `### ADR-5: Validation as Warning, Not Error
+    f += `### ADR-5: Validation as Warning, Not Error
 
 `;
-  f += `**Decision:** Validation returns warnings; pipeline always advances.
+    f += `**Decision:** Validation returns warnings; pipeline always advances.
 
 `;
-  f += `**Rationale:** Missing headings should not block the pipeline.
+    f += `**Rationale:** Missing headings should not block the pipeline.
 
 `;
-  f += `**Alternatives Considered:**
+    f += `**Alternatives Considered:**
 `;
-  f += `- Alternative A: Hard fail on missing sections.
+    f += `- Alternative A: Hard fail on missing sections.
 `;
-  f += `  *Rejected:* Too brittle; blocks forward progress.
+    f += `  *Rejected:* Too brittle; blocks forward progress.
 `;
-  f += `- Alternative B: Silent ignore.
+    f += `- Alternative B: Silent ignore.
 `;
-  f += `  *Rejected:* No feedback loop for improvement.
+    f += `  *Rejected:* No feedback loop for improvement.
 
 `;
-  f += `**Cost of Reversal:** LOW \u2014 change validateLayerContent to throw.
+    f += `**Cost of Reversal:** LOW \u2014 change validateLayerContent to throw.
 
 `;
+  }
   f += `
 ---
 *Generated by Trident v${version2}*
@@ -216079,202 +215024,96 @@ function buildBuildPlanFile(projectName, safeName, version2, discovery) {
   f += `## Phase Details
 
 `;
-  f += `### Phase 1: Entry Point Setup
+  f += `Phases derived from discovered code structure.
 
 `;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `mkdir -p src/hooks src/tools src/audit-engine/layers src/artifacts
-`;
-  f += `touch src/index.ts src/config.ts src/types.ts src/orchestrator.ts src/utils.ts
-`;
-  f += `# Implement index.ts with hook registration
-`;
-  f += `# Implement config.ts with TRIDENT_CONFIG
-`;
-  f += `tsc --noEmit  # Verify: 0 errors
-`;
-  f += "```\n\n";
-  f += `**Gate:** \`tsc --noEmit\` exits 0
-`;
-  f += `**Rollback:** \`rm src/index.ts src/config.ts\`
+  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
+    let phaseNum = 1;
+    for (const section of discovery.codeSections.slice(0, 8)) {
+      f += `### Phase ${phaseNum}: ${section.sectionName}
 
 `;
-  f += `### Phase 2: State Machine
+      f += `**Target:** \`${section.filePath}:${section.lineStart}-${section.lineEnd}\`
+`;
+      f += `**Type:** ${section.type}
 
 `;
-  f += `**Commands:**
+      f += `**Current code:**
 `;
-  f += "```bash\n";
-  f += `# Implement orchestrator.ts with state machine
+      f += "```typescript\n" + section.code.substring(0, 300) + "\n```\n\n";
+      f += `**Commands:**
 `;
-  f += `tsc --noEmit  # Verify: 0 errors
+      f += "```bash\n";
+      f += `# Modify ${section.filePath} at line ${section.lineStart}
 `;
-  f += `# Test: create instance, call startMode, completeLayer
+      f += `tsc --noEmit  # Verify: 0 errors
 `;
-  f += `node -e "import('./dist/index.js').then(() => console.log('OK'))"
+      f += "```\n\n";
+      f += `**Gate:** \`tsc --noEmit\` exits 0
 `;
-  f += "```\n\n";
-  f += `**Gate:** orchestrator methods work without errors
-`;
-  f += `**Rollback:** Revert orchestrator.ts
+      f += `**Rollback:** \`git checkout HEAD -- ${section.filePath}\`
 
 `;
-  f += `### Phase 3: Audit Engine
+      phaseNum++;
+    }
+  } else {
+    f += `### Phase 1: Type Check
 
 `;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `mkdir -p src/audit-engine/layers
-`;
-  f += `touch src/audit-engine/types.ts src/audit-engine/layer-engine.ts
-`;
-  f += `touch src/audit-engine/layers/r5-empty-catch.ts
-`;
-  f += `# Implement types, engine, and at least R5 layer
-`;
-  f += `tsc --noEmit  # Verify: 0 errors
-`;
-  f += "```\n\n";
-  f += `**Gate:** \`LayerEngine.run()\` returns score
-`;
-  f += `**Rollback:** \`rm -rf src/audit-engine\`
+    f += "```bash\ntsc --noEmit\n```\n\n";
+    f += `**Gate:** Exit code 0
 
 `;
-  f += `### Phase 4: Mode Tools
+    f += `### Phase 2: Bundle
 
 `;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `touch src/tools/${safeName}-tools.ts
-`;
-  f += `# Implement tool definitions with zod schemas
-`;
-  f += `tsc --noEmit  # Verify: 0 errors
-`;
-  f += `grep -c "z.object" src/tools/${safeName}-tools.ts  # >= 3
-`;
-  f += "```\n\n";
-  f += `**Gate:** All tools have schemas with \`.strict()\`
-`;
-  f += `**Rollback:** Revert tools file
+    f += "```bash\nnpx esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --sourcemap --external:@opencode-ai/plugin --external:zod\n```\n\n";
+    f += `**Gate:** dist/index.js exists
 
 `;
-  f += `### Phase 5: Identity Hooks
+    f += `### Phase 3: Load Test
 
 `;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `touch src/hooks/${safeName}-hooks.ts
-`;
-  f += `# Implement SCAN+REPLACE identity injection
-`;
-  f += `tsc --noEmit  # Verify: 0 errors
-`;
-  f += `grep "scanReplace" src/hooks/${safeName}-hooks.ts  # Must exist
-`;
-  f += "```\n\n";
-  f += `**Gate:** SCAN+REPLACE method exists, identity block markers present
-`;
-  f += `**Rollback:** Revert hooks file
+    f += "```bash\nnode -e \"import('./dist/index.js').then(m => console.log('OK:', Object.keys(m)))\"\n```\n\n";
+    f += `**Gate:** Prints module keys
 
 `;
-  f += `### Phase 6: Artifact Generation
-
-`;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `# Implement utils.ts (tridentLog, writeArtifactFile)
-`;
-  f += `# Implement artifact generators
-`;
-  f += `tsc --noEmit  # Verify: 0 errors
-`;
-  f += `# Test artifact writing
-`;
-  f += `node -e "import('./dist/index.js').then(m => console.log('OK'))"
-`;
-  f += "```\n\n";
-  f += `**Gate:** writeArtifactFile creates files on disk
-`;
-  f += `**Rollback:** Revert utils and artifacts
-
-`;
-  f += `### Phase 7: Bundle and Deploy
-
-`;
-  f += `**Commands:**
-`;
-  f += "```bash\n";
-  f += `# Full bundle
-`;
-  f += `npx esbuild src/index.ts --bundle --platform=node --format=esm \\
-`;
-  f += `  --target=node20 --outfile=dist/index.js --sourcemap \\
-`;
-  f += `  --external:@opencode-ai/plugin --external:zod
-`;
-  f += `# Verify no relative imports
-`;
-  f += `grep "from '\\\\.\\." dist/index.js && echo "FAIL" || echo "OK"
-`;
-  f += `# Load test
-`;
-  f += `node -e "import('./dist/index.js').then(m => console.log('OK:', Object.keys(m)))"
-`;
-  f += "```\n\n";
-  f += `**Gate:** Bundle loads without errors
-`;
-  f += `**Rollback:** Rebuild from last known good
-
-`;
+  }
   f += `## Dependencies Table
 
 `;
-  f += `| Phase | Depends On | Blocks | Gate |
+  f += `| Phase | Depends On | Gate |
 `;
-  f += `|-------|-----------|--------|------|
+  f += `|-------|-----------|------|
 `;
-  f += `| 1 | \u2014 | 2,3,4,5,6 | tsc passes |
+  if (discovery && discovery.codeSections) {
+    const count = Math.min(discovery.codeSections.length, 8);
+    for (let i = 0;i < count; i++) {
+      f += `| ${i + 1} | ${i > 0 ? String(i) : "\u2014"} | tsc passes |
 `;
-  f += `| 2 | 1 | 4,7 | FSM methods work |
+    }
+  } else {
+    f += `| 1 | \u2014 | tsc passes |
 `;
-  f += `| 3 | 1 | 4 | Engine returns score |
+    f += `| 2 | 1 | bundle exists |
 `;
-  f += `| 4 | 1,2,3 | 7 | Schemas exist |
+    f += `| 3 | 2 | loads OK |
 `;
-  f += `| 5 | 1 | \u2014 | SCAN+REPLACE exists |
-`;
-  f += `| 6 | 1 | 7 | Artifacts write to disk |
-`;
-  f += `| 7 | 1,2,4,6 | \u2014 | Bundle loads |
-
-`;
+  }
   f += `## Rollback Procedures
 
 `;
-  f += `| Scenario | Rollback Action | Data Loss |
+  f += `| Scenario | Rollback Action |
 `;
-  f += `|----------|----------------|-----------|
+  f += `|----------|----------------|
 `;
-  f += `| Phase 1 fails | Delete created files | None (nothing built yet) |
+  f += `| Type error | Fix the error, re-run tsc |
 `;
-  f += `| Phase 2 fails | Revert orchestrator.ts | Phase 1 work intact |
+  f += `| Bundle fails | Check imports, re-run esbuild |
 `;
-  f += `| Phase 3 fails | Delete audit-engine/ | Phases 1-2 intact |
+  f += `| Load fails | Check export/import mismatch |
 `;
-  f += `| Phase 4 fails | Revert tools file | Phases 1-3 intact |
-`;
-  f += `| Phase 5 fails | Revert hooks file | Phases 1-4 intact |
-`;
-  f += `| Phase 6 fails | Revert utils/artifacts | Phases 1-5 intact |
-`;
-  f += `| Phase 7 fails | Rebuild from Phase 6 state | No source loss |
+  f += `| Runtime error | Revert to last known good commit |
 
 `;
   f += `## Verification Gates Summary
@@ -216308,7 +215147,7 @@ function buildBuildPlanFile(projectName, safeName, version2, discovery) {
 `;
   return f;
 }
-function buildHookApiFile(projectName, safeName, version2) {
+function buildHookApiFile(projectName, safeName, version2, discovery) {
   let f = "";
   f += `# Hook API \u2014 ${projectName}
 
@@ -216321,6 +215160,37 @@ function buildHookApiFile(projectName, safeName, version2) {
   f += `---
 
 `;
+  if (discovery) {
+    f += `## Discovered Hooks in ${projectName}
+
+`;
+    const hookPatterns = discovery.patterns.filter((p) => p.type === "function" && /hook|transform|before|after|message|compacting/i.test(p.name));
+    if (hookPatterns.length > 0) {
+      f += `| Hook Handler | Location | Type |
+`;
+      f += `|-------------|----------|------|
+`;
+      for (const p of hookPatterns.slice(0, 15)) {
+        f += `| \`${p.name}\` | \`${p.file}:${p.line}\` | ${p.type} |
+`;
+      }
+      f += `
+`;
+      if (hookPatterns[0] && hookPatterns[0].codeSnippet) {
+        f += `### Example: ${hookPatterns[0].name}
+
+`;
+        f += `**Location:** \`${hookPatterns[0].file}:${hookPatterns[0].line}\`
+
+`;
+        f += "```typescript\n" + hookPatterns[0].codeSnippet + "\n```\n\n";
+      }
+    } else {
+      f += `No hook-like patterns discovered in source code.
+
+`;
+    }
+  }
   f += `## Overview
 
 `;
@@ -217230,6 +216100,14 @@ function generateReasoningChain(reasoning, discovery) {
     if (matchedPatterns.length > 0) {
       const bestMatch = matchedPatterns[0];
       step.evidence = `Found: ${bestMatch.name} (${bestMatch.type}) at ${bestMatch.file}:${bestMatch.line}`;
+      if (bestMatch.codeSnippet) {
+        step.evidence += `
+
+Code:
+\`\`\`typescript
+${bestMatch.codeSnippet.substring(0, 400)}
+\`\`\``;
+      }
       step.conclusion = `${step.hypothesis.substring(0, 60)} \u2014 confirmed by ${bestMatch.name}`;
     } else {
       step.evidence = "No code pattern match found \u2014 manual verification needed";
@@ -217278,7 +216156,11 @@ function generateFindingsLog(findings, discovery) {
     const relevantFailures = discovery.failureModes.filter((f) => f.pattern && !f.pattern.includes("Invalid key")).slice(0, 5);
     for (const f of relevantFailures) {
       result.push({
-        finding: f.message,
+        finding: f.message + (f.codeSnippet ? `
+
+Code:
+\`\`\`typescript
+` + f.codeSnippet.substring(0, 300) + "\n```" : ""),
         severity: classifySeverity(f.message),
         source: `${f.file}:${f.line}`
       });
@@ -217292,6 +216174,14 @@ function generatePlanArtifact(targetPath, problem, reasoning, workingPlan, findi
   const phases = parseWorkingPlan(workingPlan);
   const rca = generateRCA(steps, problem, targetPath, findings);
   const findingsLog = generateFindingsLog(findings, discovery);
+  let relevantCodePatterns = [];
+  if (discovery && discovery.patterns) {
+    const problemWords = problem.toLowerCase().split(/\s+/).filter((w) => w.length > 4);
+    relevantCodePatterns = discovery.patterns.filter((p) => {
+      const patternText = (p.name + " " + p.file + " " + (p.codeSnippet || "").substring(0, 200)).toLowerCase();
+      return problemWords.some((word) => patternText.includes(word));
+    }).slice(0, 5).map((p) => ({ name: p.name, file: p.file, line: p.line, codeSnippet: p.codeSnippet, type: p.type }));
+  }
   let a = `# PROBLEM-SOLVING PLAN
 
 `;
@@ -217369,32 +216259,66 @@ function generatePlanArtifact(targetPath, problem, reasoning, workingPlan, findi
   }
   a += `
 `;
+  if (relevantCodePatterns.length > 0) {
+    a += `## Relevant Code Patterns
+
+`;
+    a += `> Auto-discovered code relevant to the problem: "${problem.substring(0, 80)}"
+
+`;
+    for (const p of relevantCodePatterns) {
+      a += `### ${p.name} (${p.type})
+`;
+      a += `**Location:** \`${p.file}:${p.line}\`
+
+`;
+      if (p.codeSnippet) {
+        a += "```typescript\n" + p.codeSnippet.substring(0, 400) + "\n```\n\n";
+      }
+    }
+  }
   a += `## Verification Checklist
 
 `;
-  a += `- [ ] Symptom no longer reproduces
+  a += `- [ ] Root cause confirmed by code analysis (not just symptom matching)
 `;
-  a += `- [ ] Root cause confirmed fixed (not just symptom masked)
+  a += `- [ ] Fix applied to the correct file and line
 `;
-  a += `- [ ] No new regressions introduced
+  if (discovery && discovery.entryPoints.length > 0) {
+    a += `- [ ] Entry points still load: ${discovery.entryPoints.join(", ")}
 `;
-  a += `- [ ] Test suite passes (or new tests added)
+  }
+  a += `- [ ] \`tsc --noEmit\` passes with 0 errors
 `;
-  a += `- [ ] Container TUI test passes
+  a += `- [ ] Bundle builds successfully
 `;
-  a += `- [ ] Evidence collected from external source (not self-created)
+  a += `- [ ] No new findings introduced (re-run audit)
+`;
+  if (discovery && discovery.failureModes.length > 0) {
+    a += `- [ ] No new failure modes introduced (currently ${discovery.failureModes.length} known)
+`;
+  }
+  a += `- [ ] Container TUI test passes with real model
 
 `;
   a += `## Regression Prevention
 
 `;
-  a += `- Add test case that reproduces original symptom
+  if (discovery && discovery.patterns.length > 0) {
+    a += `**Related patterns to verify:**
 `;
-  a += `- Add audit layer check for this failure pattern
+    const relatedCount = Math.min(discovery.patterns.length, 5);
+    for (let i = 0;i < relatedCount; i++) {
+      const p = discovery.patterns[i];
+      a += `- Verify \`${p.name}\` at \`${p.file}:${p.line}\` still works correctly
 `;
-  a += `- Update context library with this failure mode
+    }
+    a += `
 `;
-  a += `- Review related code paths for similar issues
+  }
+  a += `- Add test case that reproduces the original symptom
+`;
+  a += `- Re-run audit to verify no new findings
 `;
   a += `
 ---
@@ -219959,6 +218883,7 @@ async function discoverProject(targetPath) {
   const decisions = extractDecisions(files.slice(0, 100));
   const warheads = findWarheads(files);
   const auditLayers = findAuditLayers(files);
+  const codeSections = extractCodeSections(files, projectRoot);
   return {
     projectRoot,
     totalFiles: files.length,
@@ -219971,7 +218896,8 @@ async function discoverProject(targetPath) {
     failureModes,
     decisions,
     warheads,
-    auditLayers
+    auditLayers,
+    codeSections
   };
 }
 function collectFiles(dir, root, depth) {
@@ -220092,7 +219018,11 @@ function extractPatterns(files) {
           re.lastIndex = 0;
           const match = re.exec(lines[i]);
           if (match) {
-            patterns.push({ name: match[1], file: path17.basename(file2), line: i + 1, type });
+            const start = Math.max(0, i - 2);
+            const end = Math.min(lines.length, i + 18);
+            const codeSnippet = lines.slice(start, end).join(`
+`);
+            patterns.push({ name: match[1], file: path17.basename(file2), line: i + 1, type, codeSnippet, signature: lines[i].trim() });
             if (patterns.length >= 50)
               return patterns;
           }
@@ -220119,11 +219049,16 @@ function extractFailureModes(files) {
         for (const re of patterns) {
           const match = re.exec(lines[i]);
           if (match) {
+            const start = Math.max(0, i - 3);
+            const end = Math.min(lines.length, i + 8);
+            const codeSnippet = lines.slice(start, end).join(`
+`);
             failures.push({
               pattern: match[0].substring(0, 80),
               file: path17.basename(file2),
               line: i + 1,
-              message: match[1]?.substring(0, 100) || match[0].substring(0, 100)
+              message: match[1]?.substring(0, 100) || match[0].substring(0, 100),
+              codeSnippet
             });
             if (failures.length >= 30)
               return failures;
@@ -220193,6 +219128,66 @@ function findAuditLayers(files) {
     }
   }
   return layers;
+}
+function extractCodeSections(files, projectRoot) {
+  const sections = [];
+  const mainFiles = files.filter((f) => f.endsWith("index.ts") || f.includes("/tools/") || f.includes("/hooks/") || f.endsWith("config.ts") || f.endsWith("orchestrator.ts") || f.endsWith("types.ts"));
+  for (const file2 of mainFiles.slice(0, 15)) {
+    try {
+      const lines = fs12.readFileSync(file2, "utf-8").split(`
+`);
+      const relPath = path17.relative(projectRoot, file2);
+      let sectionStart = 0;
+      let sectionName = relPath + " (header)";
+      for (let i = 0;i < lines.length; i++) {
+        const line = lines[i].trim();
+        const isBoundary = /^(export\s+)?(async\s+)?(function|class|const|interface|tool\(|hook\()/i.test(line);
+        if (isBoundary && i > sectionStart + 5) {
+          const code = lines.slice(sectionStart, i).join(`
+`);
+          sections.push({
+            filePath: relPath,
+            sectionName,
+            lineStart: sectionStart + 1,
+            lineEnd: i,
+            code,
+            type: classifySection(sectionName, lines[sectionStart])
+          });
+          sectionStart = i;
+          const nameMatch = line.match(/(?:export\s+)?(?:async\s+)?(?:function|class|const)\s+(\w+)/);
+          sectionName = nameMatch ? nameMatch[1] : line.substring(0, 60);
+        }
+      }
+      if (sectionStart < lines.length - 1) {
+        sections.push({
+          filePath: relPath,
+          sectionName,
+          lineStart: sectionStart + 1,
+          lineEnd: lines.length,
+          code: lines.slice(sectionStart).join(`
+`),
+          type: classifySection(sectionName, lines[sectionStart])
+        });
+      }
+    } catch {}
+  }
+  return sections;
+}
+function classifySection(name, firstLine) {
+  const lower = (name + " " + firstLine).toLowerCase();
+  if (lower.includes("tool") || lower.includes("spawn") || lower.includes("audit"))
+    return "tool";
+  if (lower.includes("hook") || lower.includes("transform") || lower.includes("before"))
+    return "hook";
+  if (lower.includes("class ") || lower.includes("export class"))
+    return "class";
+  if (lower.includes("config") || lower.includes("trident_config"))
+    return "config";
+  if (lower.includes("export "))
+    return "export";
+  if (lower.includes("function"))
+    return "function";
+  return "unknown";
 }
 
 // src/tools/trident-tools.ts
@@ -221375,7 +220370,8 @@ function createTridentTools() {
         architecture: exports_external.string().optional().describe("Architecture description \u2014 how the system is structured (auto-discovered if omitted)"),
         patterns: exports_external.array(exports_external.string()).optional().describe("Known patterns to include in context library (merged with auto-discovered patterns)"),
         failures: exports_external.array(exports_external.string()).optional().describe("Known failure modes to document (merged with auto-discovered failures)"),
-        decisions: exports_external.array(exports_external.string()).optional().describe("Design decisions already made (merged with auto-discovered decisions)")
+        decisions: exports_external.array(exports_external.string()).optional().describe("Design decisions already made (merged with auto-discovered decisions)"),
+        layer: exports_external.union([exports_external.literal(1), exports_external.literal(2), exports_external.literal(3)]).optional().describe("Explicit layer override: 1=Initial Plan, 2=Detailed Workflow, 3=Context Library (auto-detected from requirements if omitted)")
       },
       execute: async (args) => {
         const isForwardMode = !args.targetPath;
@@ -221386,7 +220382,7 @@ function createTridentTools() {
           throw new Error('requirements required when targetPath is omitted (forward-mapping mode). Pass a minimal idea like "build a GUI for X"');
         }
         try {
-          const layer = detectDeepPlanningLayer(args.requirements || "");
+          const layer = args.layer || detectDeepPlanningLayer(args.requirements || "");
           const layerNames = {
             1: "INITIAL PLAN (Generative Prompt)",
             2: "DETAILED WORKFLOW (Implementation Build Spec)",
@@ -221427,6 +220423,43 @@ function createTridentTools() {
               orchestrator.completeLayer();
             } catch {}
           } else if (layer === 2) {
+            const dpRealCodeMap = new Map;
+            if (args.targetPath && discovery && discovery.patterns.length > 0) {
+              const dpFileIndex = new Map;
+              const dpBuildIndex = (dir, depth) => {
+                if (depth > 10)
+                  return;
+                try {
+                  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                    if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist")
+                      continue;
+                    const full = path20.join(dir, entry.name);
+                    if (entry.isDirectory())
+                      dpBuildIndex(full, depth + 1);
+                    else if (entry.isFile()) {
+                      const arr = dpFileIndex.get(entry.name) || [];
+                      arr.push(full);
+                      dpFileIndex.set(entry.name, arr);
+                    }
+                  }
+                } catch {}
+              };
+              dpBuildIndex(args.targetPath, 0);
+              for (const pat of discovery.patterns.slice(0, 30)) {
+                try {
+                  const candidates = dpFileIndex.get(pat.file);
+                  if (!candidates || candidates.length === 0)
+                    continue;
+                  const content = fsSync.readFileSync(candidates[0], "utf-8");
+                  const lines = content.split(`
+`);
+                  const startLine = Math.max(0, pat.line - 1);
+                  const snippet = lines.slice(startLine, startLine + 20).join(`
+`);
+                  dpRealCodeMap.set(pat.file + ":" + pat.line, snippet);
+                } catch {}
+              }
+            }
             output = generateLayer2DetailedWorkflow(targetPathForGen, projectName, requirements, architecture, discovery);
             artifactPath = await writeArtifactFile("BUILD_SPEC", output);
             try {
@@ -221470,19 +220503,19 @@ function createTridentTools() {
             2: 'Layer 2 (Detailed Workflow) complete. For context library, call with requirements mentioning "context library", "reference doc", or "documentation".',
             3: "Layer 3 (Context Library) complete. All deep-planning layers finished. Context library files written to disk."
           };
-          return JSON.stringify({
+          return {
             layer,
             layerName: layerNames[layer],
             output,
-            artifactPath: artifactPath || null,
+            artifactPath: artifactPath || undefined,
             nextLayers: nextLayersMap[layer],
             hint: layerHints[layer]
-          }, null, 2);
+          };
         } catch (err) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errorId = `PLAN-ERR-${Date.now()}`;
           tridentLog("ERROR", "trident-deep-planning", `[${errorId}] ${errMsg}`);
-          return JSON.stringify({ error: "Deep planning failed", errorId, message: err instanceof Error ? err.message : String(err) }, null, 2);
+          return { error: "Deep planning failed", errorId, message: err instanceof Error ? err.message : String(err) };
         }
       }
     }),
@@ -221508,6 +220541,43 @@ function createTridentTools() {
             discovery = await discoverProject(args.targetPath || process.cwd());
           } catch {
             discovery = undefined;
+          }
+          const psRealCodeMap = new Map;
+          if (args.targetPath && discovery && discovery.patterns.length > 0) {
+            const psFileIndex = new Map;
+            const psBuildIndex = (dir, depth) => {
+              if (depth > 10)
+                return;
+              try {
+                for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
+                  if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist")
+                    continue;
+                  const full = path20.join(dir, entry.name);
+                  if (entry.isDirectory())
+                    psBuildIndex(full, depth + 1);
+                  else if (entry.isFile()) {
+                    const arr = psFileIndex.get(entry.name) || [];
+                    arr.push(full);
+                    psFileIndex.set(entry.name, arr);
+                  }
+                }
+              } catch {}
+            };
+            psBuildIndex(args.targetPath, 0);
+            for (const pat of discovery.patterns.slice(0, 30)) {
+              try {
+                const candidates = psFileIndex.get(pat.file);
+                if (!candidates || candidates.length === 0)
+                  continue;
+                const content = fsSync.readFileSync(candidates[0], "utf-8");
+                const lines = content.split(`
+`);
+                const startLine = Math.max(0, pat.line - 1);
+                const snippet = lines.slice(startLine, startLine + 20).join(`
+`);
+                psRealCodeMap.set(pat.file + ":" + pat.line, snippet);
+              } catch {}
+            }
           }
           const iteration = problemSolvingModule.getIteration();
           const artifact = generatePlanArtifact(args.targetPath, args.problem, args.reasoning, args.workingPlan, args.findings || [], discovery);
@@ -221734,7 +220804,14 @@ ${t2.preview}
             summary += `---
 
 ` + formatValidationReport(validations2, "CONTEXT_SYNTHESIS (T2)");
-            return summary;
+            return {
+              output: t2Content,
+              summary,
+              artifactPath: t2.path,
+              sections: t2.sections,
+              lineCount: t2.lineCount,
+              sizeKB: t2.sizeKB
+            };
           }
           const t1SourceMap = new Map;
           if ((args.patterns || []).length > 0)
