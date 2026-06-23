@@ -19,6 +19,7 @@ export interface DiscoveryResult {
   decisions: DiscoveredDecision[];
   warheads: string[];
   auditLayers: string[];
+  codeSections: CodeSection[];
 }
 
 export interface DiscoveredPattern {
@@ -26,6 +27,8 @@ export interface DiscoveredPattern {
   file: string;
   line: number;
   type: 'class' | 'interface' | 'function' | 'import' | 'export' | 'comment';
+  codeSnippet: string;
+  signature: string;
 }
 
 export interface DiscoveredFailure {
@@ -33,6 +36,16 @@ export interface DiscoveredFailure {
   file: string;
   line: number;
   message: string;
+  codeSnippet: string;
+}
+
+export interface CodeSection {
+  filePath: string;
+  sectionName: string;
+  lineStart: number;
+  lineEnd: number;
+  code: string;
+  type: 'tool' | 'hook' | 'class' | 'config' | 'export' | 'function' | 'unknown';
 }
 
 export interface DiscoveredDecision {
@@ -59,6 +72,7 @@ export async function discoverProject(targetPath: string): Promise<DiscoveryResu
   const decisions = extractDecisions(files.slice(0, 100));
   const warheads = findWarheads(files);
   const auditLayers = findAuditLayers(files);
+  const codeSections = extractCodeSections(files, projectRoot);
 
   return {
     projectRoot,
@@ -73,6 +87,7 @@ export async function discoverProject(targetPath: string): Promise<DiscoveryResu
     decisions,
     warheads,
     auditLayers,
+    codeSections,
   };
 }
 
@@ -193,7 +208,10 @@ function extractPatterns(files: string[]): DiscoveredPattern[] {
           re.lastIndex = 0;
           const match = re.exec(lines[i]);
           if (match) {
-            patterns.push({ name: match[1], file: path.basename(file), line: i + 1, type });
+            const start = Math.max(0, i - 2);
+            const end = Math.min(lines.length, i + 18);
+            const codeSnippet = lines.slice(start, end).join('\n');
+            patterns.push({ name: match[1], file: path.basename(file), line: i + 1, type, codeSnippet, signature: lines[i].trim() });
             if (patterns.length >= 50) return patterns;
           }
         }
@@ -221,11 +239,15 @@ function extractFailureModes(files: string[]): DiscoveredFailure[] {
         for (const re of patterns) {
           const match = re.exec(lines[i]);
           if (match) {
+            const start = Math.max(0, i - 3);
+            const end = Math.min(lines.length, i + 8);
+            const codeSnippet = lines.slice(start, end).join('\n');
             failures.push({
               pattern: match[0].substring(0, 80),
               file: path.basename(file),
               line: i + 1,
               message: match[1]?.substring(0, 100) || match[0].substring(0, 100),
+              codeSnippet,
             });
             if (failures.length >= 30) return failures;
           }
@@ -298,4 +320,63 @@ function findAuditLayers(files: string[]): string[] {
     }
   }
   return layers;
+}
+
+function extractCodeSections(files: string[], projectRoot: string): CodeSection[] {
+  const sections: CodeSection[] = [];
+  const mainFiles = files.filter(f =>
+    f.endsWith('index.ts') || f.includes('/tools/') ||
+    f.includes('/hooks/') || f.endsWith('config.ts') ||
+    f.endsWith('orchestrator.ts') || f.endsWith('types.ts')
+  );
+  for (const file of mainFiles.slice(0, 15)) {
+    try {
+      const lines = fs.readFileSync(file, 'utf-8').split('\n');
+      const relPath = path.relative(projectRoot, file);
+      let sectionStart = 0;
+      let sectionName = relPath + ' (header)';
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        const isBoundary = /^(export\s+)?(async\s+)?(function|class|const|interface|tool\(|hook\()/i.test(line);
+        if (isBoundary && i > sectionStart + 5) {
+          const code = lines.slice(sectionStart, i).join('\n');
+          sections.push({
+            filePath: relPath,
+            sectionName,
+            lineStart: sectionStart + 1,
+            lineEnd: i,
+            code,
+            type: classifySection(sectionName, lines[sectionStart]),
+          });
+          sectionStart = i;
+          const nameMatch = line.match(/(?:export\s+)?(?:async\s+)?(?:function|class|const)\s+(\w+)/);
+          sectionName = nameMatch ? nameMatch[1] : line.substring(0, 60);
+        }
+      }
+      if (sectionStart < lines.length - 1) {
+        sections.push({
+          filePath: relPath,
+          sectionName,
+          lineStart: sectionStart + 1,
+          lineEnd: lines.length,
+          code: lines.slice(sectionStart).join('\n'),
+          type: classifySection(sectionName, lines[sectionStart]),
+        });
+      }
+    } catch {
+      // Skip unreadable files
+    }
+  }
+  return sections;
+}
+
+function classifySection(name: string, firstLine: string): CodeSection['type'] {
+  const lower = (name + ' ' + firstLine).toLowerCase();
+  if (lower.includes('tool') || lower.includes('spawn') || lower.includes('audit')) return 'tool';
+  if (lower.includes('hook') || lower.includes('transform') || lower.includes('before')) return 'hook';
+  if (lower.includes('class ') || lower.includes('export class')) return 'class';
+  if (lower.includes('config') || lower.includes('trident_config')) return 'config';
+  if (lower.includes('export ')) return 'export';
+  if (lower.includes('function')) return 'function';
+  return 'unknown';
 }

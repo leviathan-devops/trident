@@ -23,7 +23,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { TRIDENT_CONFIG } from '../config.js';
-import type { DiscoveryResult } from '../shared/auto-discover.js';
+import type { DiscoveryResult, DiscoveredPattern, CodeSection } from '../shared/auto-discover.js';
 import { tridentLog } from '../utils.js';
 
 // ============================================================================
@@ -200,550 +200,81 @@ export function generateLayer2DetailedWorkflow(
   }
 
   // v4.4.1: If requirements contain specific build instructions, use them instead of generic phases
-  if (requirements && requirements.length > 200) {
-    // Requirements are detailed enough to drive phase generation
-    a += `## Build Phases (Derived from Requirements)\n\n`;
-    a += `The following phases are derived from the specific requirements provided.\n`;
-    a += `Each phase must be independently verifiable and follow P1-P10 principles.\n\n`;
-    a += `${requirements}\n\n`;
-    // Still include the generic phase templates as reference, but mark them as fallback
-    a += `## Reference Phase Templates (Fallback)\n\n`;
-    a += `*The following are generic templates. Use them only if the requirements above don't provide specific guidance.*\n\n`;
+  // -- DYNAMIC PHASES (from requirements × existing code) --
+  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
+    a += `## Existing Code Inventory\n\n`;
+    a += `The target project already contains ${discovery.codeSections.length} code sections across ${discovery.totalFiles} files.\n`;
+    a += `Phases below describe CHANGES to existing code, not greenfield builds.\n\n`;
+    for (const section of discovery.codeSections.slice(0, 10)) {
+      a += `### ${section.sectionName}\n`;
+      a += `**Location:** \`${section.filePath}:${section.lineStart}-${section.lineEnd}\`\n`;
+      a += `**Type:** ${section.type}\n\n`;
+      a += '```typescript\n' + section.code.substring(0, 400) + '\n```\n\n';
+    }
   }
 
-  // v4.4.1: If detailed requirements exist, present them as the primary build driver
-  if (requirements && requirements.length > 100) {
-    a += `## Build Requirements\n\n`;
-    a += `${requirements}\n\n`;
-    a += `---\n\n`;
-    a += `## Reference Phase Templates (use as guide, adapt to requirements above)\n\n`;
+  a += `## Dynamic Build Phases\n\n`;
+  a += `Phases derived from requirements cross-referenced against discovered code.\n\n`;
+
+  const reqLines = (requirements || '').split('\n').filter((l: string) => {
+    const trimmed = l.trim();
+    return trimmed.length > 20 && /^(\d+\.|-|[A-Z])/.test(trimmed);
+  });
+
+  let phaseNum = 1;
+  if (reqLines.length > 0) {
+    for (const req of reqLines.slice(0, 12)) {
+      const reqText = req.replace(/^\d+\.\s*/, '').replace(/^\-\s*/, '').trim();
+      const reqLower = reqText.toLowerCase();
+
+      const existingMatch = discovery?.codeSections?.find((s: CodeSection) => {
+        const sectionText = (s.sectionName + ' ' + s.code.substring(0, 500)).toLowerCase();
+        return reqLower.split(/\s+/).filter((w: string) => w.length > 4)
+          .some((word: string) => sectionText.includes(word));
+      });
+
+      const similarPatterns = discovery?.patterns?.filter((p: DiscoveredPattern) => {
+        const patternText = (p.name + ' ' + p.file).toLowerCase();
+        return reqLower.split(/\s+/).filter((w: string) => w.length > 4)
+          .some((word: string) => patternText.includes(word));
+      }) || [];
+
+      if (existingMatch) {
+        a += `### Phase ${phaseNum}: Modify — ${reqText.substring(0, 80)}\n\n`;
+        a += `**Status:** EXISTS at \`${existingMatch.filePath}:${existingMatch.lineStart}\`\n\n`;
+        a += `**Current implementation:**\n`;
+        a += '```typescript\n' + existingMatch.code.substring(0, 500) + '\n```\n\n';
+        a += `**Required changes:** Apply the requirements above to this existing code.\n\n`;
+        a += `**Verification:** Run audit and container test after modification.\n\n`;
+      } else if (similarPatterns.length > 0) {
+        a += `### Phase ${phaseNum}: Build — ${reqText.substring(0, 80)}\n\n`;
+        a += `**Status:** NEW — no existing implementation found\n\n`;
+        a += `**Reference patterns from codebase:**\n\n`;
+        for (const p of similarPatterns.slice(0, 3)) {
+          a += `- \`${p.name}\` (${p.type}) at ${p.file}:${p.line}\n`;
+          if (p.codeSnippet) {
+            a += '\n```typescript\n' + p.codeSnippet.substring(0, 300) + '\n```\n\n';
+          }
+        }
+      } else {
+        a += `### Phase ${phaseNum}: ${reqText.substring(0, 80)}\n\n`;
+        a += `**Status:** NEW\n`;
+        a += `${reqText}\n\n`;
+        a += `**Verification:** Type check + bundle + container test.\n\n`;
+      }
+      phaseNum++;
+    }
+  } else {
+    if (discovery && discovery.codeSections) {
+      for (const section of discovery.codeSections.slice(0, 7)) {
+        a += `### Phase ${phaseNum}: ${section.sectionName}\n\n`;
+        a += `**Location:** \`${section.filePath}:${section.lineStart}\`\n`;
+        a += `**Type:** ${section.type}\n\n`;
+        a += '```typescript\n' + section.code.substring(0, 400) + '\n```\n\n';
+        phaseNum++;
+      }
+    }
   }
-
-  // -- PHASE 1: PLUGIN ENTRY POINT --
-  a += `## Phase 1: Plugin Entry Point and Hook Registration\n\n`;
-  a += `**Goal:** Create the plugin entry point that registers all hooks and tools.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/index.ts\` — Plugin entry (default export)\n`;
-  a += `- \`src/config.ts\` — Configuration constants\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/index.ts\n`;
-  a += `import type { Plugin } from '@opencode-ai/plugin';\n`;
-  a += `import { TRIDENT_CONFIG } from './config.js';\n`;
-  a += `import { ${className}Hooks } from './hooks/${safeName}-hooks.js';\n`;
-  a += `import { ${className}Tools } from './tools/${safeName}-tools.js';\n\n`;
-  a += `export const ${safeName}Plugin: Plugin = {\n`;
-  a += `  init(ctx) {\n`;
-  a += `    const hooks = new ${className}Hooks(ctx);\n`;
-  a += `    const tools = new ${className}Tools(ctx);\n\n`;
-  a += `    // Register lifecycle hooks\n`;
-  a += `    ctx.hook('chat.message', hooks.onChatMessage.bind(hooks));\n`;
-  a += `    ctx.hook('tool.execute.before', hooks.onToolBefore.bind(hooks));\n`;
-  a += `    ctx.hook('tool.execute.after', hooks.onToolAfter.bind(hooks));\n`;
-  a += `    ctx.hook('experimental.chat.system.transform', hooks.onSystemTransform.bind(hooks));\n\n`;
-  a += `    // Register tools\n`;
-  a += `    for (const tool of tools.definitions()) {\n`;
-  a += `      ctx.tool(tool.name, tool.schema, tool.handler);\n`;
-  a += `    }\n\n`;
-  a += `    ctx.logger.info('${projectName} plugin initialized');\n`;
-  a += `    return { name: '${projectName}', version: TRIDENT_CONFIG.version };\n`;
-  a += `  },\n`;
-  a += `};\n\n`;
-  a += `export default ${safeName}Plugin;\n`;
-  a += '```\n\n';
-
-  a += '```typescript\n';
-  a += `// src/config.ts\n`;
-  a += `export const TRIDENT_CONFIG = {\n`;
-  a += `  name: '${projectName}',\n`;
-  a += `  version: '${version}',\n`;
-  a += `  safeName: '${safeName}',\n`;
-  a += `  containerImage: process.env.TRIDENT_CONTAINER_IMAGE || 'opencode-test:1.14.34',\n`;
-  a += `  artifactsDir: process.env.TRIDENT_ARTIFACTS_BASE || '/tmp/${safeName}-artifacts',\n`;
-  a += `  identityString: 'You are ${projectName} v${version}.',\n`;
-  a += `} as const;\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| \`import(plugin)\` | — | dist/index.js | Plugin object with \`init\` function |\n`;
-  a += `| \`plugin.init(ctx)\` | — | mock context | Returns {name, version} |\n`;
-  a += `| hook registration | — | ctx.hook called 4x | 4 hooks registered |\n`;
-  a += `| tool registration | — | ctx.tool called Nx | All tools registered |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep -c "ctx.hook" src/index.ts  # >= 4\n`;
-  a += `grep -c "ctx.tool" src/index.ts  # >= 1\n`;
-  a += '```\n\n';
-
-  // -- PHASE 2: STATE MACHINE --
-  a += `## Phase 2: Orchestrator State Machine\n\n`;
-  a += `**Goal:** Implement a pure TypeScript state machine that tracks mode progress\n`;
-  a += `and routes tool calls through layer pipelines.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/orchestrator.ts\` — State machine + mode management\n`;
-  a += `- \`src/types.ts\` — Shared type definitions\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/orchestrator.ts\n`;
-  a += `export type Mode = 'idle' | 'deep-planning' | 'problem-solving' | 'context-synthesis' | 'code-review';\n`;
-  a += `export type LayerState = 'pending' | 'in-progress' | 'complete' | 'failed';\n\n`;
-  a += `export interface OrchestratorState {\n`;
-  a += `  mode: Mode;\n`;
-  a += `  currentLayer: number;\n`;
-  a += `  layerStates: Record<number, LayerState>;\n`;
-  a += `  startTime: number;\n`;
-  a += `}\n\n`;
-  a += `export class ${className}Orchestrator {\n`;
-  a += `  private state: OrchestratorState;\n`;
-  a += `  private readonly maxLayers: Record<Mode, number> = {\n`;
-  a += `    'idle': 0,\n`;
-  a += `    'deep-planning': 3,\n`;
-  a += `    'problem-solving': 6,\n`;
-  a += `    'context-synthesis': 4,\n`;
-  a += `    'code-review': 3,\n`;
-  a += `  };\n\n`;
-  a += `  constructor() {\n`;
-  a += `    this.state = {\n`;
-  a += `      mode: 'idle',\n`;
-  a += `      currentLayer: 0,\n`;
-  a += `      layerStates: {},\n`;
-  a += `      startTime: Date.now(),\n`;
-  a += `    };\n`;
-  a += `  }\n\n`;
-  a += `  startMode(mode: Mode): void {\n`;
-  a += `    this.state.mode = mode;\n`;
-  a += `    this.state.currentLayer = 1;\n`;
-  a += `    this.state.layerStates = { 1: 'pending' };\n`;
-  a += `  }\n\n`;
-  a += `  completeLayer(): void {\n`;
-  a += `    const max = this.maxLayers[this.state.mode];\n`;
-  a += `    if (this.state.currentLayer < 1 || this.state.currentLayer > max) {\n`;
-  a += `      throw new Error(\`Layer \${this.state.currentLayer} out of range [1, \${max}]\`);\n`;
-  a += `    }\n`;
-  a += `    this.state.layerStates[this.state.currentLayer] = 'complete';\n`;
-  a += `    if (this.state.currentLayer < max) {\n`;
-  a += `      this.state.currentLayer++;\n`;
-  a += `      this.state.layerStates[this.state.currentLayer] = 'pending';\n`;
-  a += `    }\n`;
-  a += `  }\n\n`;
-  a += `  getState(): Readonly<OrchestratorState> {\n`;
-  a += `    return { ...this.state };\n`;
-  a += `  }\n\n`;
-  a += `  reset(): void {\n`;
-  a += `    this.state = { mode: 'idle', currentLayer: 0, layerStates: {}, startTime: Date.now() };\n`;
-  a += `  }\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| startMode('deep-planning') | orchestrator | state.mode | 'deep-planning' |\n`;
-  a += `| completeLayer() x3 | orchestrator | layerStates | {1:'complete',2:'complete',3:'complete'} |\n`;
-  a += `| completeLayer() x4 (overflow) | orchestrator | throw | Error: out of range |\n`;
-  a += `| reset() | orchestrator | state.mode | 'idle' |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep -c "completeLayer" src/orchestrator.ts  # method defined\n`;
-  a += `grep "throw new Error" src/orchestrator.ts  # overflow guard exists\n`;
-  a += '```\n\n';
-
-  // -- PHASE 3: AUDIT ENGINE --
-  a += `## Phase 3: Audit Engine (Layer Skeleton)\n\n`;
-  a += `**Goal:** Implement the mechanical audit engine with layer definitions that\n`;
-  a += `scan source code for specific defect patterns.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/audit-engine/types.ts\` — Audit types and interfaces\n`;
-  a += `- \`src/audit-engine/layer-engine.ts\` — Sequential layer executor\n`;
-  a += `- \`src/audit-engine/layers/r5-empty-catch.ts\` — Sample layer\n\n`;
-
-  if (discovery && discovery.auditLayers.length > 0) {
-    a += `**Discovered layers:** ${discovery.auditLayers.join(', ')}\n\n`;
-  }
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/audit-engine/types.ts\n`;
-  a += `export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info';\n\n`;
-  a += `export interface AuditFinding {\n`;
-  a += `  layer: string;\n`;
-  a += `  severity: Severity;\n`;
-  a += `  file: string;\n`;
-  a += `  line: number;\n`;
-  a += `  message: string;\n`;
-  a += `  rule: string;\n`;
-  a += `  confidence: number; // 0-100\n`;
-  a += `}\n\n`;
-  a += `export interface AuditLayer {\n`;
-  a += `  id: string;\n`;
-  a += `  name: string;\n`;
-  a += `  description: string;\n`;
-  a += `  scan(files: string[]): AuditFinding[];\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += '```typescript\n';
-  a += `// src/audit-engine/layer-engine.ts\n`;
-  a += `import * as fs from 'fs';\n`;
-  a += `import type { AuditLayer, AuditFinding } from './types.js';\n\n`;
-  a += `export class LayerEngine {\n`;
-  a += `  private layers: AuditLayer[] = [];\n\n`;
-  a += `  register(layer: AuditLayer): void {\n`;
-  a += `    this.layers.push(layer);\n`;
-  a += `  }\n\n`;
-  a += `  async run(targetPath: string): Promise<{ findings: AuditFinding[]; score: number }> {\n`;
-  a += `    const files = this.collectFiles(targetPath);\n`;
-  a += `    const findings: AuditFinding[] = [];\n`;
-  a += `    for (const layer of this.layers) {\n`;
-  a += `      const layerFindings = layer.scan(files);\n`;
-  a += `      findings.push(...layerFindings);\n`;
-  a += `    }\n`;
-  a += `    const score = this.computeScore(findings);\n`;
-  a += `    return { findings, score };\n`;
-  a += `  }\n\n`;
-  a += `  private computeScore(findings: AuditFinding[]): number {\n`;
-  a += `    let penalty = 0;\n`;
-  a += `    for (const f of findings) {\n`;
-  a += `      const weights: Record<string, number> = { critical: 25, high: 10, medium: 5, low: 2, info: 0 };\n`;
-  a += `      penalty += weights[f.severity] || 0;\n`;
-  a += `    }\n`;
-  a += `    return Math.max(0, 100 - penalty);\n`;
-  a += `  }\n\n`;
-  a += `  private collectFiles(dir: string): string[] {\n`;
-  a += `    const result: string[] = [];\n`;
-  a += `    const skip = new Set(['node_modules', 'dist', '.git']);\n`;
-  a += `    const walk = (d: string) => {\n`;
-  a += `      try {\n`;
-  a += `        for (const entry of fs.readdirSync(d, { withFileTypes: true })) {\n`;
-  a += `          if (skip.has(entry.name)) continue;\n`;
-  a += `          const full = d + '/' + entry.name;\n`;
-  a += `          if (entry.isDirectory()) walk(full);\n`;
-  a += `          else if (entry.name.endsWith('.ts')) result.push(full);\n`;
-  a += `        }\n`;
-  a += `      } catch { /* skip unreadable */ }\n`;
-  a += `    };\n`;
-  a += `    walk(dir);\n`;
-  a += `    return result;\n`;
-  a += `  }\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += '```typescript\n';
-  a += `// src/audit-engine/layers/r5-empty-catch.ts\n`;
-  a += `import * as fs from 'fs';\n`;
-  a += `import type { AuditLayer, AuditFinding } from '../types.js';\n\n`;
-  a += `export const EmptyCatchLayer: AuditLayer = {\n`;
-  a += `  id: 'R5',\n`;
-  a += `  name: 'Empty Catch Block Detection',\n`;
-  a += `  description: 'Flags catch blocks that silently swallow errors without logging or re-throwing.',\n`;
-  a += `  scan(files: string[]): AuditFinding[] {\n`;
-  a += `    const findings: AuditFinding[] = [];\n`;
-  a += `    const emptyCatchRe = /catch\\s*\\([^)]*\\)\\s*\\{\\s*\\}/g;\n`;
-  a += `    for (const file of files) {\n`;
-  a += `      try {\n`;
-  a += `        const lines = fs.readFileSync(file, 'utf-8').split('\\n');\n`;
-  a += `        for (let i = 0; i < lines.length; i++) {\n`;
-  a += `          if (emptyCatchRe.test(lines[i])) {\n`;
-  a += `            findings.push({\n`;
-  a += `              layer: 'R5', severity: 'critical', file, line: i + 1,\n`;
-  a += `              message: 'Empty catch block — error silently swallowed',\n`;
-  a += `              rule: 'catch-must-handle', confidence: 95,\n`;
-  a += `            });\n`;
-  a += `          }\n`;
-  a += `        }\n`;
-  a += `      } catch { /* skip unreadable file */ }\n`;
-  a += `    }\n`;
-  a += `    return findings;\n`;
-  a += `  },\n`;
-  a += `};\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| file with \`catch(e){}\` | R5 layer | scan() | 1 CRITICAL finding |\n`;
-  a += `| file with \`catch(e){throw e}\` | R5 layer | scan() | 0 findings |\n`;
-  a += `| 5 critical findings | LayerEngine | computeScore | score = 0 (clamped) |\n`;
-  a += `| 0 findings | LayerEngine | computeScore | score = 100 |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep -c "AuditLayer" src/audit-engine/types.ts  # interface defined\n`;
-  a += `grep "computeScore" src/audit-engine/layer-engine.ts  # scoring method\n`;
-  a += '```\n\n';
-
-  // -- PHASE 4: MODE TOOLS --
-  a += `## Phase 4: Mode Tool Definitions\n\n`;
-  a += `**Goal:** Define tool schemas and handlers using zod for runtime validation.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/tools/${safeName}-tools.ts\` — All tool definitions\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/tools/${safeName}-tools.ts\n`;
-  a += `import { z } from 'zod';\n`;
-  a += `import type { ToolContext } from '../types.js';\n\n`;
-  a += `export interface ToolDefinition {\n`;
-  a += `  name: string;\n`;
-  a += `  schema: z.ZodSchema;\n`;
-  a += `  description: string;\n`;
-  a += `  handler: (args: any, ctx: ToolContext) => Promise<any>;\n`;
-  a += `}\n\n`;
-  a += `export class ${className}Tools {\n`;
-  a += `  definitions(): ToolDefinition[] {\n`;
-  a += `    return [\n`;
-  a += `      {\n`;
-  a += `        name: '${safeName}-status',\n`;
-  a += `        schema: z.object({}).strict(),\n`;
-  a += `        description: 'Show current orchestrator state and mode.',\n`;
-  a += `        handler: async (_args, ctx) => {\n`;
-  a += `          const state = ctx.orchestrator.getState();\n`;
-  a += `          return {\n`;
-  a += `            mode: state.mode,\n`;
-  a += `            currentLayer: state.currentLayer,\n`;
-  a += `            uptime: Date.now() - state.startTime,\n`;
-  a += `          };\n`;
-  a += `        },\n`;
-  a += `      },\n`;
-  a += `      {\n`;
-  a += `        name: '${safeName}-help',\n`;
-  a += `        schema: z.object({}).strict(),\n`;
-  a += `        description: 'List all available tools and modes.',\n`;
-  a += `        handler: async (_args, _ctx) => {\n`;
-  a += `          return {\n`;
-  a += `            tools: this.definitions().map(t => ({ name: t.name, desc: t.description })),\n`;
-  a += `            modes: ['deep-planning', 'problem-solving', 'context-synthesis', 'code-review'],\n`;
-  a += `          };\n`;
-  a += `        },\n`;
-  a += `      },\n`;
-  a += `      {\n`;
-  a += `        name: '${safeName}-audit',\n`;
-  a += `        schema: z.object({\n`;
-  a += `          targetPath: z.string().min(1),\n`;
-  a += `          action: z.enum(['full', 'quick']).default('full'),\n`;
-  a += `        }).strict(),\n`;
-  a += `        description: 'Run mechanical code audit.',\n`;
-  a += `        handler: async (args, ctx) => {\n`;
-  a += `          const result = await ctx.auditEngine.run(args.targetPath);\n`;
-  a += `          return {\n`;
-  a += `            score: result.score,\n`;
-  a += `            findingCount: result.findings.length,\n`;
-  a += `            criticalCount: result.findings.filter(f => f.severity === 'critical').length,\n`;
-  a += `          };\n`;
-  a += `        },\n`;
-  a += `      },\n`;
-  a += `    ];\n`;
-  a += `  }\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| \`{action:'full', targetPath:'/x'}\` | ${safeName}-audit | handler | {score, findingCount, criticalCount} |\n`;
-  a += `| \`{action:'invalid'}\` | ${safeName}-audit | zod | Schema validation error |\n`;
-  a += `| \`{}\` | ${safeName}-status | handler | {mode, currentLayer, uptime} |\n`;
-  a += `| \`{extra:'field'}\` | ${safeName}-status | zod | Strict mode rejects extra fields |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep -c "z.object" src/tools/${safeName}-tools.ts  # >= 3 schemas\n`;
-  a += `grep -c "handler:" src/tools/${safeName}-tools.ts  # matches tool count\n`;
-  a += '```\n\n';
-
-  // -- PHASE 5: IDENTITY INJECTION --
-  a += `## Phase 5: Identity Injection (SCAN+REPLACE)\n\n`;
-  a += `**Goal:** Implement the system.transform hook that injects and maintains\n`;
-  a += `agent identity across compaction events using idempotent SCAN+REPLACE.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/hooks/${safeName}-hooks.ts\` — All hook handlers\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/hooks/${safeName}-hooks.ts\n`;
-  a += `import { TRIDENT_CONFIG } from '../config.js';\n\n`;
-  a += `const IDENTITY_BLOCK_START = '[IDENTITY_BLOCK_START]';\n`;
-  a += `const IDENTITY_BLOCK_END = '[IDENTITY_BLOCK_END]';\n\n`;
-  a += `export class ${className}Hooks {\n`;
-  a += `  private buildIdentityBlock(): string {\n`;
-  a += `    return [\n`;
-  a += `      IDENTITY_BLOCK_START,\n`;
-  a += `      \`You are ${projectName} v${TRIDENT_CONFIG.version}.\`,\n`;
-  a += `      '',\n`;
-  a += `      'Identity Rules:',\n`;
-  a += `      \`- "who are you" response: "I am ${projectName} v${TRIDENT_CONFIG.version}."\`,\n`;
-  a += `      '- Never claim to be a generic assistant.',\n`;
-  a += `      '- Maintain this identity across all responses.',\n`;
-  a += `      IDENTITY_BLOCK_END,\n`;
-  a += `    ].join('\\n');\n`;
-  a += `  }\n\n`;
-  a += `  private scanReplace(system: string[], identity: string): string[] {\n`;
-  a += `    const startIdx = system.findIndex(s => s.includes(IDENTITY_BLOCK_START));\n`;
-  a += `    if (startIdx >= 0) {\n`;
-  a += `      const endIdx = system.findIndex((s, i) => i > startIdx && s.includes(IDENTITY_BLOCK_END));\n`;
-  a += `      if (endIdx >= 0) {\n`;
-  a += `        const before = system.slice(0, startIdx);\n`;
-  a += `        const after = system.slice(endIdx + 1);\n`;
-  a += `        return [...before, identity, ...after];\n`;
-  a += `      }\n`;
-  a += `    }\n`;
-  a += `    return [...system, identity];\n`;
-  a += `  }\n\n`;
-  a += `  async onSystemTransform(input: any, output: any): Promise<void> {\n`;
-  a += `    const agent = input?.agent || input?.agentName;\n`;
-  a += `    if (!agent) return; // Guard: do not inject before agent is known\n\n`;
-  a += `    const identity = this.buildIdentityBlock();\n`;
-  a += `    if (!output.system) output.system = [];\n`;
-  a += `    output.system = this.scanReplace(output.system, identity);\n`;
-  a += `  }\n\n`;
-  a += `  async onChatMessage(input: any, _output: any): Promise<void> {\n`;
-  a += `    const { sessionID, message } = input || {};\n`;
-  a += `    if (sessionID && message) {\n`;
-  a += `      // Track session for context persistence (side effect only)\n`;
-  a += `    }\n`;
-  a += `  }\n\n`;
-  a += `  async onToolBefore(input: any, output: any): Promise<void> {\n`;
-  a += `    const { tool, sessionID } = input || {};\n`;
-  a += `    if (tool && sessionID && output?.args) {\n`;
-  a += `      // Optionally modify args (inject defaults)\n`;
-  a += `    }\n`;
-  a += `  }\n\n`;
-  a += `  async onToolAfter(input: any, _output: any): Promise<void> {\n`;
-  a += `    const { tool, sessionID } = input || {};\n`;
-  a += `    if (tool && sessionID) {\n`;
-  a += `      // Evidence recording (side effect)\n`;
-  a += `    }\n`;
-  a += `  }\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| system=[] | onSystemTransform | scanReplace | system=[identityBlock] |\n`;
-  a += `| system=[oldBlock] | onSystemTransform | scanReplace | system=[newBlock] (replaced, not duplicated) |\n`;
-  a += `| 2x calls | onSystemTransform | scanReplace | Same as 1x (idempotent) |\n`;
-  a += `| input.agent=null | onSystemTransform | early return | No mutation |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep "scanReplace" src/hooks/${safeName}-hooks.ts  # method exists\n`;
-  a += `grep "IDENTITY_BLOCK_START" src/hooks/${safeName}-hooks.ts  # markers exist\n`;
-  a += `grep "!agent" src/hooks/${safeName}-hooks.ts  # guard clause exists\n`;
-  a += '```\n\n';
-
-  // -- PHASE 6: ARTIFACT GENERATORS --
-  a += `## Phase 6: Artifact Generators and Utilities\n\n`;
-  a += `**Goal:** Implement artifact generation functions and shared utilities\n`;
-  a += `that produce dense, reference-quality markdown from analysis data.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/utils.ts\` — Shared utilities (writeArtifactFile, tridentLog)\n`;
-  a += `- \`src/artifacts/index.ts\` — Re-exports for artifact generators\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/utils.ts\n`;
-  a += `import * as fs from 'fs';\n`;
-  a += `import * as path from 'path';\n`;
-  a += `import { TRIDENT_CONFIG } from './config.js';\n\n`;
-  a += `export function tridentLog(level: string, module: string, msg: string): void {\n`;
-  a += `  const ts = new Date().toISOString();\n`;
-  a += `  const prefix = \`[\${ts}] [\${level.toUpperCase()}] [\${module}]\`;\n`;
-  a += `  console.error(\`\${prefix} \${msg}\`);\n`;
-  a += `}\n\n`;
-  a += `export async function writeArtifactFile(type: string, content: string): Promise<string> {\n`;
-  a += `  const dir = TRIDENT_CONFIG.artifactsDir;\n`;
-  // Safe: dir is from internal TRIDENT_CONFIG, not user input
-  a += `  fs.mkdirSync(dir, { recursive: true });\n`;
-  a += `  const ts = new Date().toISOString().replace(/[:.]/g, '-');\n`;
-  a += `  const filename = \`\${type}_\${ts}.md\`;\n`;
-  a += `  const fullPath = path.join(dir, filename);\n`;
-  // Safe: fullPath derived from internal config dir + sanitized timestamp filename
-  a += `  fs.writeFileSync(fullPath, content, 'utf-8');\n`;
-  a += `  tridentLog('INFO', 'artifact', \`Written: \${fullPath} (\${content.split('\\n').length} lines)\`);\n`;
-  a += `  return fullPath;\n`;
-  a += `}\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| writeArtifactFile('TEST', 'content') | utils | fs.writeFileSync | Returns path, file exists |\n`;
-  a += `| tridentLog('INFO', 'test', 'msg') | utils | console.error | Logs to stderr with timestamp |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep "writeArtifactFile" src/utils.ts  # function exists\n`;
-  a += `grep "tridentLog" src/utils.ts  # logger exists\n`;
-  a += '```\n\n';
-
-  // -- PHASE 7: CONTEXT LIBRARY INTEGRATION --
-  a += `## Phase 7: Context Library Integration\n\n`;
-  a += `**Goal:** Wire the context library generation into the deep-planning mode\n`;
-  a += `so that 9 dense files are written to disk on every deep-planning run.\n\n`;
-  a += `**Files:**\n`;
-  a += `- \`src/artifacts/deep-planning-artifact.ts\` — Context library writer\n`;
-  a += `- \`src/modes/deep-planning.ts\` — Mode pipeline integration\n\n`;
-
-  a += `**Implementation:**\n\n`;
-  a += '```typescript\n';
-  a += `// src/modes/deep-planning.ts (excerpt)\n`;
-  a += `import { generateBuildSpecArtifact, generateContextLibraryManifest } from '../artifacts/deep-planning-artifact.js';\n\n`;
-  a += `export const deepPlanningModule = {\n`;
-  a += `  async execute(targetPath: string, projectName: string, requirements: string, architecture: string, discovery: any) {\n`;
-  a += `    // Layer 1+2: Build Spec\n`;
-  a += `    const buildSpec = generateBuildSpecArtifact(targetPath, projectName, requirements, architecture, discovery);\n`;
-  a += `    this.validateLayerContent(1, buildSpec);\n`;
-  a += `    this.validateLayerContent(2, buildSpec);\n\n`;
-  a += `    // Layer 3: Context Library (writes 9 files to disk)\n`;
-  a += `    const contextLib = generateContextLibraryManifest(\n`;
-  a += `      projectName, architecture,\n`;
-  a += `      discovery?.patterns.map((p: { name: string; file: string; line: number }) => p.name) || [],\n`;
-  a += `      discovery?.failureModes.map((f: { message: string }) => f.message) || [],\n`;
-  a += `      discovery?.decisions.map((d: { rationale: string }) => d.rationale) || [],\n`;
-  a += `      targetPath, discovery,\n`;
-  a += `    );\n`;
-  a += `    this.validateLayerContent(3, contextLib);\n\n`;
-  a += `    return { buildSpec, contextLib };\n`;
-  a += `  },\n\n`;
-  a += `  validateLayerContent(layer: number, content: string): { valid: boolean; missing: string[] } {\n`;
-  a += `    const requiredHeadings: Record<number, string[]> = {\n`;
-  a += `      1: ['Problem Statement', 'Core Insight', 'Scope', 'User Profile', 'Success Criteria'],\n`;
-  a += `      2: ['Phase 1', 'Phase 2', 'Implementation', 'Verification'],\n`;
-  a += `      3: ['00_INDEX', '01_ARCHITECTURE', '02_PATTERNS', '05_BUILD_PLAN'],\n`;
-  a += `    };\n`;
-  a += `    const headings = requiredHeadings[layer] || [];\n`;
-  a += `    const missing = headings.filter(h => !content.includes(h));\n`;
-  a += `    return { valid: missing.length === 0, missing };\n`;
-  a += `  },\n`;
-  a += `};\n`;
-  a += '```\n\n';
-
-  a += `**Test Cases:**\n\n`;
-  a += `| Input | Agent | Path | Expected |\n`;
-  a += `|-------|-------|------|----------|\n`;
-  a += `| full pipeline | deepPlanningModule | execute | buildSpec + contextLib + 9 files |\n`;
-  a += `| buildSpec content | validateLayerContent(1) | headings | missing=[] |\n`;
-  a += `| contextLib content | validateLayerContent(3) | headings | missing=[] |\n\n`;
-
-  a += `**Verification:**\n\n`;
-  a += '```bash\n';
-  a += `tsc --noEmit  # 0 errors\n`;
-  a += `grep "generateContextLibraryManifest" src/modes/deep-planning.ts  # wired\n`;
-  a += `grep "validateLayerContent" src/modes/deep-planning.ts  # validator exists\n`;
-  a += '```\n\n';
 
   // -- DEPENDENCY TABLE --
   a += `## Dependency Table\n\n`;
@@ -915,7 +446,7 @@ export function generateContextLibraryManifest(
       const buildPlanContent = buildBuildPlanFile(projectName, safeName, version, discovery);
       fs.writeFileSync(path.join(contextLibDir, '05_BUILD_PLAN.md'), buildPlanContent, 'utf-8');
 
-      const hookApiContent = buildHookApiFile(projectName, safeName, version);
+      const hookApiContent = buildHookApiFile(projectName, safeName, version, discovery);
       fs.writeFileSync(path.join(contextLibDir, '06_HOOK_API.md'), hookApiContent, 'utf-8');
 
       const containerContent = buildContainerTestingFile(projectName, safeName, version);
@@ -1082,14 +613,14 @@ function buildArchitectureFile(
   f += `---\n\n`;
 
   f += `## System Purpose\n\n`;
-  f += `${projectName} is a precision engineering system built on the principle\n`;
-  f += `that mechanical verification produces more reliable software than human\n`;
-  f += `judgment alone. It provides:\n\n`;
-  f += `- **Mechanical code auditing** via sequential layers\n`;
-  f += `- **Mode-based workflows** with sequential layer pipelines\n`;
-  f += `- **Persistent context** that survives session boundaries via artifact files\n`;
-  f += `- **Identity enforcement** via SCAN+REPLACE hooks on system transform\n`;
-  f += `- **Container-grade testing** with evidence collection\n\n`;
+  if (architecture && architecture.length > 20 && !architecture.includes('Auto-derived') && !architecture.includes('Forward-mapping')) {
+    f += architecture + '\n\n';
+  } else if (discovery && discovery.entryPoints.length > 0) {
+    f += `${projectName} is a software project with entry points at ${discovery.entryPoints.join(', ')}. `;
+    f += `It contains ${discovery.totalFiles} files and ${discovery.totalLines.toLocaleString()} lines of code.\n\n`;
+  } else {
+    f += `${projectName} — see discovery data for project structure.\n\n`;
+  }
 
   if (discovery) {
     f += `## Directory Structure\n\n`;
@@ -1252,10 +783,10 @@ function buildPatternsFile(
   f += `Each pattern includes: name, location, type, description, code example,\n`;
   f += `when to use it, and what NOT to do (anti-pattern).\n\n`;
 
-  const allPatterns: { name: string; file?: string; line?: number; type?: string }[] = [];
+  const allPatterns: { name: string; file?: string; line?: number; type?: string; codeSnippet?: string }[] = [];
   if (discovery) {
     for (const p of discovery.patterns) {
-      allPatterns.push({ name: p.name, file: p.file, line: p.line, type: p.type });
+      allPatterns.push({ name: p.name, file: p.file, line: p.line, type: p.type, codeSnippet: p.codeSnippet });
     }
   }
   for (const p of patterns) {
@@ -1292,57 +823,11 @@ function buildPatternsFile(
 
       f += `**Code Example:**\n\n`;
       f += '```typescript\n';
-      if (p.type === 'class') {
-        f += `// Pattern: ${p.name} (class-based encapsulation)\n`;
-        f += `export class ${p.name} {\n`;
-        f += `  private state: Record<string, unknown> = {};\n\n`;
-        f += `  constructor(initialState?: Record<string, unknown>) {\n`;
-        f += `    if (initialState) this.state = { ...initialState };\n`;
-        f += `  }\n\n`;
-        f += `  getValue<T>(key: string): T | undefined {\n`;
-        f += `    return this.state[key] as T | undefined;\n`;
-        f += `  }\n\n`;
-        f += `  setValue(key: string, value: unknown): void {\n`;
-        f += `    if (typeof key !== 'string' || key.length === 0) {\n`;
-        f += `      throw new Error(\`Invalid key: \${key}\`);\n`;
-        f += `    }\n`;
-        f += `    this.state[key] = value;\n`;
-        f += `  }\n`;
-        f += `}\n`;
-      } else if (p.type === 'interface') {
-        f += `// Pattern: ${p.name} (interface contract)\n`;
-        f += `export interface ${p.name} {\n`;
-        f += `  id: string;\n`;
-        f += `  timestamp: number;\n`;
-        f += `  metadata?: Record<string, unknown>;\n`;
-        f += `  validate(): boolean;\n`;
-        f += `  serialize(): string;\n`;
-        f += `}\n`;
-      } else if (p.type === 'function') {
-        f += `// Pattern: ${p.name} (function capability)\n`;
-        f += `export function ${p.name}(input: string, options?: {\n`;
-        f += `  strict?: boolean;\n`;
-        f += `  timeout?: number;\n`;
-        f += `}): { result: string; warnings: string[] } {\n`;
-        f += `  const warnings: string[] = [];\n`;
-        f += `  if (!input || input.length === 0) {\n`;
-        f += `    throw new Error('${p.name}: input cannot be empty');\n`;
-        f += `  }\n`;
-        f += `  const result = options?.strict\n`;
-        f += `    ? input.trim().toLowerCase()\n`;
-        f += `    : input;\n`;
-        f += `  return { result, warnings };\n`;
-        f += `}\n`;
-      } else if (p.type === 'export') {
-        f += `// Pattern: ${p.name} (exported constant)\n`;
-        f += `export const ${p.name}: Readonly<Record<string, unknown>> = Object.freeze({\n`;
-        f += `  version: '1.0.0',\n`;
-        f += `  features: ['audit', 'planning', 'review'],\n`;
-        f += `});\n`;
+      if (p.codeSnippet) {
+        f += `// Actual code from ${p.file}:${p.line}\n`;
+        f += p.codeSnippet + '\n';
       } else {
-        f += `// Pattern: ${p.name}\n`;
-        f += `// Structural element discovered via AST scan\n`;
-        f += `export const ${p.name} = Symbol('${p.name}');\n`;
+        f += `// Source not available for ${p.name}\n`;
       }
       f += '```\n\n';
 
@@ -1351,17 +836,9 @@ function buildPatternsFile(
       f += `- When refactoring existing code to match established conventions\n`;
       f += `- When a new developer asks "how do we typically structure X?"\n\n`;
 
-      f += `**Anti-Pattern (What NOT to Do):**\n\n`;
-      f += '```typescript\n';
-      f += `// WRONG: ${p.name} without proper error handling\n`;
-      f += `export function bad${p.name.charAt(0).toUpperCase() + p.name.slice(1)}(input: any): any {\n`;
-      f += `  // No validation, no error handling, no return type\n`;
-      f += `  return input?.property; // May return undefined silently\n`;
-      f += `}\n`;
-      f += '```\n\n';
-      f += `This anti-pattern violates: input validation, error handling,\n`;
-      f += `and type safety. The correct pattern validates, throws on invalid\n`;
-      f += `input, and has a strict return type.\n\n`;
+      f += `**Anti-Pattern:**\n`;
+      f += `Avoid using \`${p.name}\` in ways that violate its type contract or error handling conventions. `;
+      f += `See the code example above for the correct usage pattern.\n\n`;
       f += `---\n\n`;
     }
   } else {
@@ -1623,6 +1100,8 @@ function buildDecisionsFile(
     f += `No design decisions discovered in source comments.\n\n`;
   }
 
+  // Only output hardcoded ADRs when no discovery data exists
+  if (!discovery || discovery.decisions.length === 0) {
   f += `## Architectural Decisions\n\n`;
   f += `These are system-level decisions that govern the architecture.\n\n`;
 
@@ -1690,6 +1169,7 @@ function buildDecisionsFile(
   f += `- Alternative B: Silent ignore.\n`;
   f += `  *Rejected:* No feedback loop for improvement.\n\n`;
   f += `**Cost of Reversal:** LOW — change validateLayerContent to throw.\n\n`;
+  }
 
   f += `\n---\n*Generated by Trident v${version}*\n`;
   return f;
@@ -1721,112 +1201,59 @@ function buildBuildPlanFile(
   f += `| 6 | \`grep -c "ctx.tool" dist/index.js\` | Tool count | >= 3 |\n\n`;
 
   f += `## Phase Details\n\n`;
+  f += `Phases derived from discovered code structure.\n\n`;
 
-  f += `### Phase 1: Entry Point Setup\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `mkdir -p src/hooks src/tools src/audit-engine/layers src/artifacts\n`;
-  f += `touch src/index.ts src/config.ts src/types.ts src/orchestrator.ts src/utils.ts\n`;
-  f += `# Implement index.ts with hook registration\n`;
-  f += `# Implement config.ts with TRIDENT_CONFIG\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += '```\n\n';
-  f += `**Gate:** \`tsc --noEmit\` exits 0\n`;
-  f += `**Rollback:** \`rm src/index.ts src/config.ts\`\n\n`;
-
-  f += `### Phase 2: State Machine\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `# Implement orchestrator.ts with state machine\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += `# Test: create instance, call startMode, completeLayer\n`;
-  f += `node -e "import('./dist/index.js').then(() => console.log('OK'))"\n`;
-  f += '```\n\n';
-  f += `**Gate:** orchestrator methods work without errors\n`;
-  f += `**Rollback:** Revert orchestrator.ts\n\n`;
-
-  f += `### Phase 3: Audit Engine\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `mkdir -p src/audit-engine/layers\n`;
-  f += `touch src/audit-engine/types.ts src/audit-engine/layer-engine.ts\n`;
-  f += `touch src/audit-engine/layers/r5-empty-catch.ts\n`;
-  f += `# Implement types, engine, and at least R5 layer\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += '```\n\n';
-  f += `**Gate:** \`LayerEngine.run()\` returns score\n`;
-  f += `**Rollback:** \`rm -rf src/audit-engine\`\n\n`;
-
-  f += `### Phase 4: Mode Tools\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `touch src/tools/${safeName}-tools.ts\n`;
-  f += `# Implement tool definitions with zod schemas\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += `grep -c "z.object" src/tools/${safeName}-tools.ts  # >= 3\n`;
-  f += '```\n\n';
-  f += `**Gate:** All tools have schemas with \`.strict()\`\n`;
-  f += `**Rollback:** Revert tools file\n\n`;
-
-  f += `### Phase 5: Identity Hooks\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `touch src/hooks/${safeName}-hooks.ts\n`;
-  f += `# Implement SCAN+REPLACE identity injection\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += `grep "scanReplace" src/hooks/${safeName}-hooks.ts  # Must exist\n`;
-  f += '```\n\n';
-  f += `**Gate:** SCAN+REPLACE method exists, identity block markers present\n`;
-  f += `**Rollback:** Revert hooks file\n\n`;
-
-  f += `### Phase 6: Artifact Generation\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `# Implement utils.ts (tridentLog, writeArtifactFile)\n`;
-  f += `# Implement artifact generators\n`;
-  f += `tsc --noEmit  # Verify: 0 errors\n`;
-  f += `# Test artifact writing\n`;
-  f += `node -e "import('./dist/index.js').then(m => console.log('OK'))"\n`;
-  f += '```\n\n';
-  f += `**Gate:** writeArtifactFile creates files on disk\n`;
-  f += `**Rollback:** Revert utils and artifacts\n\n`;
-
-  f += `### Phase 7: Bundle and Deploy\n\n`;
-  f += `**Commands:**\n`;
-  f += '```bash\n';
-  f += `# Full bundle\n`;
-  f += `npx esbuild src/index.ts --bundle --platform=node --format=esm \\\n`;
-  f += `  --target=node20 --outfile=dist/index.js --sourcemap \\\n`;
-  f += `  --external:@opencode-ai/plugin --external:zod\n`;
-  f += `# Verify no relative imports\n`;
-  f += `grep "from '\\\\.\\." dist/index.js && echo "FAIL" || echo "OK"\n`;
-  f += `# Load test\n`;
-  f += `node -e "import('./dist/index.js').then(m => console.log('OK:', Object.keys(m)))"\n`;
-  f += '```\n\n';
-  f += `**Gate:** Bundle loads without errors\n`;
-  f += `**Rollback:** Rebuild from last known good\n\n`;
+  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
+    let phaseNum = 1;
+    for (const section of discovery.codeSections.slice(0, 8)) {
+      f += `### Phase ${phaseNum}: ${section.sectionName}\n\n`;
+      f += `**Target:** \`${section.filePath}:${section.lineStart}-${section.lineEnd}\`\n`;
+      f += `**Type:** ${section.type}\n\n`;
+      f += `**Current code:**\n`;
+      f += '```typescript\n' + section.code.substring(0, 300) + '\n```\n\n';
+      f += `**Commands:**\n`;
+      f += '```bash\n';
+      f += `# Modify ${section.filePath} at line ${section.lineStart}\n`;
+      f += `tsc --noEmit  # Verify: 0 errors\n`;
+      f += '```\n\n';
+      f += `**Gate:** \`tsc --noEmit\` exits 0\n`;
+      f += `**Rollback:** \`git checkout HEAD -- ${section.filePath}\`\n\n`;
+      phaseNum++;
+    }
+  } else {
+    // Fallback when no discovery data
+    f += `### Phase 1: Type Check\n\n`;
+    f += '```bash\ntsc --noEmit\n```\n\n';
+    f += `**Gate:** Exit code 0\n\n`;
+    f += `### Phase 2: Bundle\n\n`;
+    f += '```bash\nnpx esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --sourcemap --external:@opencode-ai/plugin --external:zod\n```\n\n';
+    f += `**Gate:** dist/index.js exists\n\n`;
+    f += `### Phase 3: Load Test\n\n`;
+    f += '```bash\nnode -e "import(\'./dist/index.js\').then(m => console.log(\'OK:\', Object.keys(m)))"\n```\n\n';
+    f += `**Gate:** Prints module keys\n\n`;
+  }
 
   f += `## Dependencies Table\n\n`;
-  f += `| Phase | Depends On | Blocks | Gate |\n`;
-  f += `|-------|-----------|--------|------|\n`;
-  f += `| 1 | — | 2,3,4,5,6 | tsc passes |\n`;
-  f += `| 2 | 1 | 4,7 | FSM methods work |\n`;
-  f += `| 3 | 1 | 4 | Engine returns score |\n`;
-  f += `| 4 | 1,2,3 | 7 | Schemas exist |\n`;
-  f += `| 5 | 1 | — | SCAN+REPLACE exists |\n`;
-  f += `| 6 | 1 | 7 | Artifacts write to disk |\n`;
-  f += `| 7 | 1,2,4,6 | — | Bundle loads |\n\n`;
+  f += `| Phase | Depends On | Gate |\n`;
+  f += `|-------|-----------|------|\n`;
+  if (discovery && discovery.codeSections) {
+    const count = Math.min(discovery.codeSections.length, 8);
+    for (let i = 0; i < count; i++) {
+      f += `| ${i + 1} | ${i > 0 ? String(i) : '—'} | tsc passes |\n`;
+    }
+  } else {
+    f += `| 1 | — | tsc passes |\n`;
+    f += `| 2 | 1 | bundle exists |\n`;
+    f += `| 3 | 2 | loads OK |\n`;
+  }
 
   f += `## Rollback Procedures\n\n`;
-  f += `| Scenario | Rollback Action | Data Loss |\n`;
-  f += `|----------|----------------|-----------|\n`;
-  f += `| Phase 1 fails | Delete created files | None (nothing built yet) |\n`;
-  f += `| Phase 2 fails | Revert orchestrator.ts | Phase 1 work intact |\n`;
-  f += `| Phase 3 fails | Delete audit-engine/ | Phases 1-2 intact |\n`;
-  f += `| Phase 4 fails | Revert tools file | Phases 1-3 intact |\n`;
-  f += `| Phase 5 fails | Revert hooks file | Phases 1-4 intact |\n`;
-  f += `| Phase 6 fails | Revert utils/artifacts | Phases 1-5 intact |\n`;
-  f += `| Phase 7 fails | Rebuild from Phase 6 state | No source loss |\n\n`;
+  f += `| Scenario | Rollback Action |\n`;
+  f += `|----------|----------------|\n`;
+  f += `| Type error | Fix the error, re-run tsc |\n`;
+  f += `| Bundle fails | Check imports, re-run esbuild |\n`;
+  f += `| Load fails | Check export/import mismatch |\n`;
+  f += `| Runtime error | Revert to last known good commit |\n\n`;
 
   f += `## Verification Gates Summary\n\n`;
   f += `Each gate MUST pass before proceeding to the next phase.\n\n`;
@@ -1845,13 +1272,37 @@ function buildBuildPlanFile(
 }
 
 function buildHookApiFile(
-  projectName: string, safeName: string, version: string
+  projectName: string, safeName: string, version: string,
+  discovery?: DiscoveryResult | null | undefined
 ): string {
   let f = '';
   f += `# Hook API — ${projectName}\n\n`;
   f += `**Version:** v${version}\n`;
   f += `**Generated:** ${new Date().toISOString()}\n\n`;
   f += `---\n\n`;
+
+  if (discovery) {
+    f += `## Discovered Hooks in ${projectName}\n\n`;
+    const hookPatterns = discovery.patterns.filter(p =>
+      p.type === 'function' && /hook|transform|before|after|message|compacting/i.test(p.name)
+    );
+    if (hookPatterns.length > 0) {
+      f += `| Hook Handler | Location | Type |\n`;
+      f += `|-------------|----------|------|\n`;
+      for (const p of hookPatterns.slice(0, 15)) {
+        f += `| \`${p.name}\` | \`${p.file}:${p.line}\` | ${p.type} |\n`;
+      }
+      f += `\n`;
+      // Show real code for first hook
+      if (hookPatterns[0] && hookPatterns[0].codeSnippet) {
+        f += `### Example: ${hookPatterns[0].name}\n\n`;
+        f += `**Location:** \`${hookPatterns[0].file}:${hookPatterns[0].line}\`\n\n`;
+        f += '```typescript\n' + hookPatterns[0].codeSnippet + '\n```\n\n';
+      }
+    } else {
+      f += `No hook-like patterns discovered in source code.\n\n`;
+    }
+  }
 
   f += `## Overview\n\n`;
   f += `This file documents every hook contract: the event name, when it fires,\n`;

@@ -158,6 +158,9 @@ function generateReasoningChain(
     if (matchedPatterns.length > 0) {
       const bestMatch = matchedPatterns[0];
       step.evidence = `Found: ${bestMatch.name} (${bestMatch.type}) at ${bestMatch.file}:${bestMatch.line}`;
+      if (bestMatch.codeSnippet) {
+        step.evidence += `\n\nCode:\n\`\`\`typescript\n${bestMatch.codeSnippet.substring(0, 400)}\n\`\`\``;
+      }
       step.conclusion = `${step.hypothesis.substring(0, 60)} — confirmed by ${bestMatch.name}`;
     } else {
       step.evidence = 'No code pattern match found — manual verification needed';
@@ -231,14 +234,14 @@ function generateFindingsLog(
     });
   }
 
-  // Discovery failure modes (limit to 5, only those with real patterns)
+  // Discovery failure modes with code context
   if (discovery && discovery.failureModes) {
     const relevantFailures = discovery.failureModes
-      .filter((f: DiscoveredFailure) => f.pattern && !f.pattern.includes('Invalid key'))  // Filter out garbage
+      .filter((f: DiscoveredFailure) => f.pattern && !f.pattern.includes('Invalid key'))
       .slice(0, 5);
     for (const f of relevantFailures) {
       result.push({
-        finding: f.message,
+        finding: f.message + (f.codeSnippet ? '\n\nCode:\n```typescript\n' + f.codeSnippet.substring(0, 300) + '\n```' : ''),
         severity: classifySeverity(f.message),
         source: `${f.file}:${f.line}`,
       });
@@ -264,6 +267,19 @@ export function generatePlanArtifact(
   const phases = parseWorkingPlan(workingPlan);
   const rca = generateRCA(steps, problem, targetPath, findings);
   const findingsLog = generateFindingsLog(findings, discovery);
+
+  // NEW: Auto-discover patterns relevant to the problem
+  let relevantCodePatterns: Array<{ name: string; file: string; line: number; codeSnippet: string; type: string }> = [];
+  if (discovery && discovery.patterns) {
+    const problemWords = problem.toLowerCase().split(/\s+/).filter((w: string) => w.length > 4);
+    relevantCodePatterns = discovery.patterns
+      .filter((p: DiscoveredPattern) => {
+        const patternText = (p.name + ' ' + p.file + ' ' + (p.codeSnippet || '').substring(0, 200)).toLowerCase();
+        return problemWords.some((word: string) => patternText.includes(word));
+      })
+      .slice(0, 5)
+      .map((p: DiscoveredPattern) => ({ name: p.name, file: p.file, line: p.line, codeSnippet: p.codeSnippet, type: p.type }));
+  }
 
   let a = `# PROBLEM-SOLVING PLAN\n\n`;
   a += `**Problem:** ${problem}\n`;
@@ -314,21 +330,47 @@ export function generatePlanArtifact(
   }
   a += `\n`;
 
+  // NEW: Relevant Code Patterns section
+  if (relevantCodePatterns.length > 0) {
+    a += `## Relevant Code Patterns\n\n`;
+    a += `> Auto-discovered code relevant to the problem: "${problem.substring(0, 80)}"\n\n`;
+    for (const p of relevantCodePatterns) {
+      a += `### ${p.name} (${p.type})\n`;
+      a += `**Location:** \`${p.file}:${p.line}\`\n\n`;
+      if (p.codeSnippet) {
+        a += '```typescript\n' + p.codeSnippet.substring(0, 400) + '\n```\n\n';
+      }
+    }
+  }
+
   // Verification Checklist
   a += `## Verification Checklist\n\n`;
-  a += `- [ ] Symptom no longer reproduces\n`;
-  a += `- [ ] Root cause confirmed fixed (not just symptom masked)\n`;
-  a += `- [ ] No new regressions introduced\n`;
-  a += `- [ ] Test suite passes (or new tests added)\n`;
-  a += `- [ ] Container TUI test passes\n`;
-  a += `- [ ] Evidence collected from external source (not self-created)\n\n`;
+  a += `- [ ] Root cause confirmed by code analysis (not just symptom matching)\n`;
+  a += `- [ ] Fix applied to the correct file and line\n`;
+  if (discovery && discovery.entryPoints.length > 0) {
+    a += `- [ ] Entry points still load: ${discovery.entryPoints.join(', ')}\n`;
+  }
+  a += `- [ ] \`tsc --noEmit\` passes with 0 errors\n`;
+  a += `- [ ] Bundle builds successfully\n`;
+  a += `- [ ] No new findings introduced (re-run audit)\n`;
+  if (discovery && discovery.failureModes.length > 0) {
+    a += `- [ ] No new failure modes introduced (currently ${discovery.failureModes.length} known)\n`;
+  }
+  a += `- [ ] Container TUI test passes with real model\n\n`;
 
   // Regression Prevention
   a += `## Regression Prevention\n\n`;
-  a += `- Add test case that reproduces original symptom\n`;
-  a += `- Add audit layer check for this failure pattern\n`;
-  a += `- Update context library with this failure mode\n`;
-  a += `- Review related code paths for similar issues\n`;
+  if (discovery && discovery.patterns.length > 0) {
+    a += `**Related patterns to verify:**\n`;
+    const relatedCount = Math.min(discovery.patterns.length, 5);
+    for (let i = 0; i < relatedCount; i++) {
+      const p = discovery.patterns[i];
+      a += `- Verify \`${p.name}\` at \`${p.file}:${p.line}\` still works correctly\n`;
+    }
+    a += `\n`;
+  }
+  a += `- Add test case that reproduces the original symptom\n`;
+  a += `- Re-run audit to verify no new findings\n`;
 
   a += `\n---\n*Generated by Trident v4.3.3 Problem-Solving Engine*\n`;
   a += `*Confidence: ${rca.confidence} | Reasoning: ${steps.length} steps | Plan: ${phases.length} phases*\n`;

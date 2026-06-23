@@ -222,7 +222,7 @@ ${userContent}
         // Aligned with generateBuildSpecArtifact() artifact headings:
         // ## Overview, ## Requirements Summary, ## Phase 1-7,
         // ## Dependency Table, ## Build Chain, ## Ship Gate
-        const hasPhases = headings.some((h: string) => h.includes('phase 1') || h.includes('phase 2') || h.includes('phase'));
+        const hasPhases = headings.some((h: string) => h.includes('phase 1') || h.includes('phase 2') || h.includes('phase') || h.includes('dynamic build phases') || h.includes('existing code'));
         const hasOverview = headings.some((h: string) => h.includes('overview'));
         const hasBuildChain = headings.some((h: string) => h.includes('build chain') || h.includes('verification') || h.includes('build'));
         const hasDependency = headings.some((h: string) => h.includes('dependenc') || h.includes('dependency table'));

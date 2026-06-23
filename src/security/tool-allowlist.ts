@@ -48,7 +48,9 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
 // This future-proofs against tool name changes within known namespaces.
 const ALLOWED_TOOL_PREFIXES = [
   'reasoning-bus_',
+  'visual-cortex_',
   'vc-visual-mcp_',
+  'manta-',
 ];
 
 // Called from trident-hooks.ts toolBeforeHook — isToolAllowedAllowlist(toolName) at line 499
