@@ -34,7 +34,7 @@ Trident v4.4.2 is a runtime-grade **God Loop orchestrator** plugin for opencode.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                          POSEIDON MODE v4.4                                 │
+│                          POSEIDON MODE v4.4.2                                │
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐   │
 │  │                   REGISTRATION LAYER (17 files)                     │   │
