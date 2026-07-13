@@ -14,9 +14,9 @@ export function generateContainerTestPlan(
   agentName: string
 ): string {
   const runtimeFindings = findings.filter((f: AuditFinding) =>
-    f.runtimeImpact.includes('container') ||
-    f.runtimeImpact.includes('TUI') ||
-    f.runtimeImpact.includes('runtime') ||
+    (f.runtimeImpact || '').includes('container') ||
+    (f.runtimeImpact || '').includes('TUI') ||
+    (f.runtimeImpact || '').includes('runtime') ||
     f.layer === 'R1' ||
     f.layer === 'R5' ||
     f.layer === 'R12'
@@ -107,7 +107,7 @@ export function generateContainerTestPlan(
     script += `sleep 15\n`;
     script += `tmux capture-pane -t "$CONTAINER" -p | strings | head -40\n`;
     script += `\`\`\`\n`;
-    script += `**Expected:** All 3 calls return valid output (no undefined/null)\n`;
+    script += `**Expected:** All 3 calls yield valid output (no undefined/null)\n`;
     script += `**Verifies:** R3 Async (no fire-and-forget, no unhandled rejections)\n\n`;
     testNum++;
   }

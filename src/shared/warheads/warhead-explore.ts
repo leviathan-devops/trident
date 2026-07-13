@@ -49,10 +49,12 @@ class ExploreDispatchWarhead implements Warhead {
       await tridentLog('WARN', 'warhead-explore',
         'explore-protocol.md not found at any known path');
     } catch (e: unknown) {
+      // R16 FIX: non-fatal fallback — protocol file load failed, warhead still tracks dispatches
       const msg = e instanceof Error ? e.message : String(e);
       await tridentLog('WARN', 'warhead-explore',
         `Could not load explore-protocol.md: ${msg}`);
       // Safe to continue — protocol file is optional, warhead still tracks dispatches
+      return;
     }
   }
 

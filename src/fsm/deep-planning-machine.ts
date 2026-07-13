@@ -17,24 +17,21 @@ export const deepPlanningMachine = createMachine({
     layer1: { entry: 'clearError', on: { SUBMIT_LAYER1: { target: 'layer1Validation', actions: 'setPrinciples' } } },
     layer1Validation: {
       always: [
-        // Called by xstate framework — guard callback receives typed context from xstate runtime
-        { target: 'layer2', guard: ({ context }) => context.principles >= 3 },
+        { target: 'layer2', guard: 'principlesReady' },
         { target: 'errorState', actions: 'principlesError' },
       ],
     },
     layer2: { on: { SUBMIT_LAYER2: { target: 'layer2Validation', actions: 'setComponents' } } },
     layer2Validation: {
       always: [
-        // Called by xstate framework — guard callback receives typed context from xstate runtime
-        { target: 'layer3', guard: ({ context }) => context.components >= 5 },
+        { target: 'layer3', guard: 'componentsReady' },
         { target: 'errorState', actions: 'componentsError' },
       ],
     },
     layer3: { on: { SUBMIT_LAYER3: { target: 'layer3Validation', actions: 'setLibrary' } } },
     layer3Validation: {
       always: [
-        // Called by xstate framework — guard callback receives typed context from xstate runtime
-        { target: 'done', guard: ({ context }) => context.contextLibrary.length > 0 },
+        { target: 'done', guard: 'libraryReady' },
         { target: 'errorState', actions: 'libraryError' },
       ],
     },
@@ -53,5 +50,11 @@ export const deepPlanningMachine = createMachine({
     componentsError: assign({ error: ({ context }) => `Need >= 5 components, got ${context.components}` }),
     // @ts-expect-error - XState v5 type inference limitation
     libraryError: assign({ error: (_) => 'Context library is empty' }),
+  },
+  // @ts-expect-error - XState v5 type inference limitation
+  guards: {
+    principlesReady: ({ context }: { context: { principles: number } }) => context.principles >= 3,
+    componentsReady: ({ context }: { context: { components: number } }) => context.components >= 5,
+    libraryReady: ({ context }: { context: { contextLibrary: string } }) => context.contextLibrary.length > 0,
   },
 });

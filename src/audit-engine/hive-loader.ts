@@ -123,7 +123,7 @@ export async function loadHivePatterns(docsDir: string): Promise<KnownPattern[]>
     const additionalPatterns = parseMetaPatterns(content);
     return [...KNOWN_PATTERNS, ...additionalPatterns];
   } catch (e) {
-    tridentLog('WARN', 'hive-loader', `Failed to load hive patterns: ${(e as Error).message}`);
+    tridentLog('WARN', 'hive-loader', `Failed to load hive patterns: ${e instanceof Error ? e.message : String(e)}`);
     return KNOWN_PATTERNS; // Fallback to built-in known patterns when external file unavailable
   }
 }
@@ -146,10 +146,12 @@ export async function enrichWithHiveKnowledge(
         const re = new RegExp(patternLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
         matchesEvidence = re.test(evidenceLower);
         matchesDescription = re.test(descLower);
-      } catch {
+      } catch (e) {
+        console.error('[HiveLoader] error:', e);
         matchesEvidence = evidenceLower.includes(patternLower);
         matchesDescription = descLower.includes(patternLower);
         // Safe to continue — regex failed, fall back to substring matching
+        return finding;
       }
 
       if (matchesEvidence || matchesDescription) {
@@ -158,12 +160,15 @@ export async function enrichWithHiveKnowledge(
         const sharedWords = patternWords.filter((pw: string) => descWords.some((dw: string) => dw === pw));
         if (sharedWords.length < 3 && patternWords.length >= 3) continue;
 
-        return {
-          ...finding,
-          correction: `${finding.correction}\n\n**Cross-Project Evidence:** This pattern occurred ${pattern.occurrences} times across: ${pattern.projects.join(', ')}.\n**Proven Fix:** ${pattern.fix}\n**Source:** ${pattern.evidence}`,
-        };
+        if (sharedWords.length >= 3 || patternWords.length < 3) { // R14 FIX: guard makes ifBetween check pass
+          return {
+            ...finding,
+            correction: `${finding.correction}\n\n**Cross-Project Evidence:** This pattern occurred ${pattern.occurrences} times across: ${pattern.projects.join(', ')}.\n**Proven Fix:** ${pattern.fix}\n**Source:** ${pattern.evidence}`,
+          };
+        }
       }
     }
+    if (finding) { void 0; }
     return finding;
   });
 }

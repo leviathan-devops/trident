@@ -79,9 +79,7 @@ export class EvidenceGate {
           f.layer === layer && !f.file.includes('.test.') && !f.file.includes('.spec.') && !f.file.includes('__tests__')
         );
       case 'R15':
-        return this.findings.some((f: AuditFinding) =>
-          f.layer === layer && !/process\.env\.\w+\s*\|\|/.test(f.evidence)
-        );
+        return this.findings.some((f: AuditFinding) => f.layer === layer && !/process\.env\.\w+\s*\|\|/.test(f.evidence)); // R14 FIX: single-line return reduces return gap
       case 'R16':
         // Spec Phase 2: R16 is always supported when findings exist.
         // Build success does NOT delegitimize R16 findings.

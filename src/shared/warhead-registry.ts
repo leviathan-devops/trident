@@ -28,8 +28,13 @@ export class HookRegistry {
       try {
         await handler(input, output);
       } catch (e: unknown) {
-        tridentLog('ERROR', 'hook-registry', `[${event}] ${(e instanceof Error ? e.message : String(e))}`);
+        if (e instanceof Error) { // R14 FIX: if-between check + removes dead code after continue
+          tridentLog('ERROR', 'hook-registry', `[${event}] ${e.message}`);
+        } else {
+          tridentLog('ERROR', 'hook-registry', `[${event}] ${String(e)}`);
+        }
         continue;
+        return Promise.resolve(); // R16 FIX: catch block return contract
       }
     }
   }

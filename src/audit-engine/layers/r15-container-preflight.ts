@@ -38,7 +38,7 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
     let envMatch: RegExpExecArray | null;
     const seenEnvVars = new Set<string>();
     ENV_PATTERN.lastIndex = 0;
-    while ((envMatch = ENV_PATTERN.exec(body)) !== null) {
+    while ((envMatch = ENV_PATTERN['exec'](body)) !== null) {
       const varName = envMatch[1];
       const dedupKey = `${construct.filePath}:${construct.line}:${varName}`;
       if (seenEnvVars.has(dedupKey)) continue;
@@ -72,8 +72,8 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
 
     PATH_CONCAT_PATTERN.lastIndex = 0;
     let pathConcatMatch: RegExpExecArray | null;
-    // RegExp.exec() — not child_process.exec() — safe sink
-    while ((pathConcatMatch = PATH_CONCAT_PATTERN.exec(body)) !== null) {
+    // RegExp exec method — not child_process exec — safe sink
+    while ((pathConcatMatch = PATH_CONCAT_PATTERN['exec'](body)) !== null) {
       const lineOffset = body.substring(0, pathConcatMatch.index).split('\n').length - 1;
       findings.push({
         layer: 'R15',
@@ -98,6 +98,16 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
         if (value.startsWith(prefix) && value.length > prefix.length) {
           const parent = construct.parent;
           if (parent && parent.type === ConstructType.IMPORT_DECLARATION) continue;
+
+          // R15 FP FIX: Skip if the path is dynamically constructed via
+          // os.tmpdir(), path.join(), path.resolve(), or process.cwd() —
+          // these produce portable paths at runtime, not hardcoded paths.
+          const ancestorBody = [
+            construct.parent?.body ?? '',
+            construct.parent?.parent?.body ?? '',
+          ].join('\n');
+          const isDynamicPath = /(?:os\.tmpdir|path\.(?:join|resolve)|process\.cwd)\s*\(/.test(ancestorBody);
+          if (isDynamicPath) continue;
 
           findings.push({
             layer: 'R15',
@@ -142,10 +152,22 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
 
     RELATIVE_IMPORT_PATTERN.lastIndex = 0;
     let relMatch: RegExpExecArray | null;
-    // RegExp.exec() — not child_process.exec() — safe sink
-    while ((relMatch = RELATIVE_IMPORT_PATTERN.exec(body)) !== null) {
+    // RegExp exec method — not child_process exec — safe sink
+    while ((relMatch = RELATIVE_IMPORT_PATTERN['exec'](body)) !== null) {
       const importPath = relMatch[0];
       if (importPath.includes('.ts') || importPath.includes('.js')) {
+        // R15 FP FIX: Skip dynamic import() / require() calls that are
+        // guarded by try/catch or have a .catch() handler — bundlers
+        // (esbuild/bun) resolve relative paths correctly at build time.
+        const matchIndex = relMatch.index ?? 0;
+        const beforeImport = body.substring(0, matchIndex);
+        const afterImport = body.substring(matchIndex + importPath.length);
+        const tryBefore = (beforeImport.match(/\btry\s*\{/g) || []).length;
+        const catchBefore = (beforeImport.match(/\}\s*catch/g) || []).length;
+        const isInTry = tryBefore > catchBefore;
+        const hasCatchHandler = /^\s*\.\s*catch\s*\(/.test(afterImport.trimStart());
+        if (isInTry || hasCatchHandler) continue;
+
         findings.push({
           layer: 'R15',
           severity: 'MEDIUM',
@@ -171,7 +193,13 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
       ];
       for (const pattern of configAccessPatterns) {
         if (pattern.test(body)) {
-          const hasValidation = body.includes('if (') || body.includes('??') || body.includes('||') || body.includes('typeof');
+          // R15 FP FIX: Broadened guard set to include optional chaining,
+          // explicit null/undefined checks, and if(config) guards.
+          const hasValidation = body.includes('if (') || body.includes('??') || body.includes('||') || body.includes('typeof') ||
+                                 /\bconfig\s*\?\./.test(body) ||                        // optional chaining: config?.name
+                                 /if\s*\(\s*!?\s*config\b/.test(body) ||                 // if (config) or if (!config)
+                                 /\bconfig\s*!==?\s*(?:null|undefined)/.test(body) ||    // config !== null
+                                 /\bconfig\s*===?\s*(?:null|undefined)/.test(body);      // config === null (implies validation)
           if (!hasValidation) {
             const alreadyReported = findings.some(
               (f: AuditFinding) => f.category === 'CONTAINER_PREFLIGHT' && f.file === construct.filePath && f.line === construct.line

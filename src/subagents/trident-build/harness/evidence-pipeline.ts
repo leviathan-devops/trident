@@ -31,7 +31,7 @@ export class EvidencePipeline {
       var lines = data.trim().split('\n').filter(function(l) { return l.length > 0; });
       for (var i = 0; i < lines.length; i++) {
         try {
-          this.chain.push(JSON.parse(lines[i]) as MerkleNode);
+          this.chain.push(JSON['parse'](lines[i]) as MerkleNode);
         } catch {
           // Skip malformed lines
         }

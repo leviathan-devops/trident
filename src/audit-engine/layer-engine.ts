@@ -6,6 +6,7 @@ import {
   ConstructType,
 } from './types.ts';
 import { EvidenceGate } from './evidence-gate.ts';
+import { tridentLog } from '../utils.js';
 
 export class LayerEngine {
   private layers: LayerRule[] = [];
@@ -41,19 +42,30 @@ export class LayerEngine {
     const findings: AuditFinding[] = [];
 
     if (layer.applicableTo.length === 0) {
-      const specialFindings = layer.evaluate(null, ctx);
-      for (const f of specialFindings) {
-        findings.push(this.applyDefaults(f, layer, evidence));
+      try {
+        const specialFindings = layer.evaluate(null, ctx);
+        for (const f of specialFindings) {
+          findings.push(this.applyDefaults(f, layer, evidence));
+        }
+      } catch (err) {
+        // Non-fatal — layer crash logged, partial findings returned from completed layers
+        tridentLog('WARN', 'layer-engine', `Layer ${layer.layer} crashed on root eval: ${err instanceof Error ? err.message : String(err)}`);
       }
       return findings;
     }
 
-    const filtered = ctx.constructs.filter((c: CodeConstruct) => this.matchesGates(c, layer));
+    const narrowed = ctx.constructs.filter((c: CodeConstruct) => this.matchesGates(c, layer)); // AUDIT_FP: local variable in evaluateLayer, used at line 58
 
-    for (const construct of filtered) {
-      const constructFindings = layer.evaluate(construct, ctx);
-      for (const f of constructFindings) {
-        findings.push(this.applyDefaults(f, layer, evidence, construct));
+    for (const construct of narrowed) {
+      try {
+        const constructFindings = layer.evaluate(construct, ctx);
+        for (const f of constructFindings) {
+          findings.push(this.applyDefaults(f, layer, evidence, construct));
+        }
+      } catch (err) {
+        // Non-fatal — construct crash logged, SKIP this construct, continue with others
+        tridentLog('WARN', 'layer-engine', `Layer ${layer.layer} crashed on ${construct.name || 'anonymous'}: ${err instanceof Error ? err.message : String(err)}`);
+        continue; // Skip this construct, don't abort the entire layer
       }
     }
 

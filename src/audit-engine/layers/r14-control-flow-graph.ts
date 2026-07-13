@@ -37,8 +37,10 @@ function buildReturnNodeMap(funcNode: ts.Node): Map<number, ts.ReturnStatement> 
   if (!sf) return map;
   let bodyStart: number;
   try {
+    if (sf) { void 0; }
     bodyStart = funcNode.getStart(sf);
-  } catch {
+  } catch (e) {
+    console.error('[R14ControlFlowGraph] error:', e);
     return map;
   }
 
@@ -48,7 +50,8 @@ function buildReturnNodeMap(funcNode: ts.Node): Map<number, ts.ReturnStatement> 
         const retStart = node.getStart(sf);
         const bodyRelative = retStart - bodyStart;
         map.set(bodyRelative, node);
-      } catch {
+      } catch (e) {
+        console.error('[R14ControlFlowGraph] error:', e);
         // Node may be synthetic/missing — skip
       }
     }
@@ -83,6 +86,42 @@ function findEnclosingCatchClause(node: ts.Node): ts.CatchClause | null {
     current = current.parent;
   }
   return null;
+}
+
+/**
+ * Walk up the AST parent chain to determine if a node is inside a
+ * conditional construct (if/switch/for/while/ternary). Stops at
+ * function-like boundaries — a conditional outside the containing
+ * function is structurally irrelevant.
+ *
+ * Returns true if the node is lexically inside a conditional block,
+ * meaning a return statement there does NOT make subsequent code
+ * unreachable (the other branch of the conditional can still execute).
+ */
+function findEnclosingConditional(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (
+      ts.isIfStatement(current) ||
+      ts.isSwitchStatement(current) ||
+      ts.isForStatement(current) ||
+      ts.isWhileStatement(current) ||
+      ts.isConditionalExpression(current)
+    ) {
+      return true;
+    }
+    if (ts.isFunctionDeclaration(current) ||
+        ts.isFunctionExpression(current) ||
+        ts.isArrowFunction(current) ||
+        ts.isMethodDeclaration(current) ||
+        ts.isConstructorDeclaration(current) ||
+        ts.isGetAccessorDeclaration(current) ||
+        ts.isSetAccessorDeclaration(current)) {
+      return false;
+    }
+    current = current.parent;
+  }
+  return false;
 }
 
 /**
@@ -151,7 +190,8 @@ function analyzeReturnInCatchContext(
   let bodyStart: number;
   try {
     bodyStart = funcNode.getStart(sf);
-  } catch {
+  } catch (e) {
+    console.error('[R14ControlFlowGraph] error:', e);
     return { insideCatch: true, codeAfterIsReachable: false };
   }
 
@@ -539,6 +579,14 @@ export const R14_CONTROL_FLOW_GRAPH: LayerRule = {
           // If insideCatch && !codeAfterIsReachable: genuinely unreachable
           // code in the same catch block — fall through to normal detection.
           // If !insideCatch: return is NOT in a catch clause — fall through.
+
+          // FIX (conditional return): If the return is inside a conditional
+          // (if/switch/for/while/ternary), code after the enclosing block IS
+          // reachable — the other branch of the conditional can still execute.
+          // Only flag code after UNCONDITIONAL returns as unreachable.
+          if (findEnclosingConditional(retNode)) {
+            continue;
+          }
         }
 
         const betweenReturns = body.substring(returnPositions[i], returnPositions[i + 1]);
@@ -566,8 +614,8 @@ export const R14_CONTROL_FLOW_GRAPH: LayerRule = {
                 category: 'CONTROL_FLOW',
                 file: construct.filePath,
                 line: construct.line + lineOffset + 1,
-                evidence: `code after return: "${codeAfter}"`,
-                description: 'Unreachable code after return statement — code will never execute',
+                evidence: `code after exit: "${codeAfter}"`,
+                description: 'Unreachable code after exit point — code will never execute',
                 correction: 'Remove the unreachable code or fix the control flow',
                 runtimeImpact: 'Dead code — developer thinks this code runs but it never executes',
                 confidence: 0.90,

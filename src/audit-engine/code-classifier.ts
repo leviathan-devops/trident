@@ -108,6 +108,8 @@ export function classifyProject(
   const TRIDENT_PACKAGE_NAMES = new Set([
     'trident-brain-v4.3.2',
     'trident-brain-v4.3.3',
+    'trident-brain-v4.4',
+    'trident-v4.4',
     'trident-brain',
     'trident',
   ]);
@@ -160,15 +162,30 @@ function buildAST(projectRoot: string): ClassificationResult {
         ...parsed.options,
         noEmit: true,
         skipLibCheck: true,
+        noResolve: true,
+        types: [],
+        isolatedModules: true,
       };
 
       const fileNames = parsed.fileNames.filter(
         (f: string) => !f.includes('node_modules') && !f.includes('.d.ts') && !f.includes('dist'),
       );
 
-      program = ts.createProgram(fileNames, options);
-      checker = program.getTypeChecker();
-      diagnostics = [...ts.getPreEmitDiagnostics(program)];
+      // FILE COUNT LIMIT: ts.createProgram is SYNCHRONOUS and blocks the event loop.
+      // For projects with >40 .ts files, skip createProgram entirely and use
+      // the filesystem-based createSourceFile approach (much faster, per-file parsing).
+      // The audit layers inspect AST nodes — they do NOT need type checking.
+      if (fileNames.length > 40) {
+        tridentLog('WARN', 'code-classifier', `Skipping ts.createProgram (${fileNames.length} files > 40 limit) — using filesystem AST fallback`);
+        program = null;
+        checker = null;
+      } else {
+        program = ts.createProgram(fileNames, options);
+        checker = program.getTypeChecker();
+        // NEVER call getPreEmitDiagnostics — it's synchronous, extremely expensive,
+        // and NOT needed for AST-based auditing. It was the #1 cause of audit hangs.
+        // diagnostics stays as empty array [].
+      }
 
       for (const sourceFile of program.getSourceFiles()) {
         const filePath = sourceFile.fileName;
@@ -749,35 +766,39 @@ function collectTsFiles(dir: string, projectRoot: string, depth: number = 0, max
  * This complements collectTsFiles (which is for AST analysis) by providing
  * a broader view of the project's language composition.
  */
-function collectProjectFiles(dir: string, projectRoot: string, depth: number = 0, maxDepth: number = 20): { files: string[]; skipped: string[] } {
+function collectProjectFiles(rootDir: string, projectRoot: string, _depth: number = 0, maxDepth: number = 20): { files: string[]; skipped: string[] } {
   const files: string[] = [];
   const skipped: string[] = [];
-  if (depth > maxDepth) return { files, skipped };
-  try {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== 'dist' && !entry.name.startsWith('.')) {
-          const sub = collectProjectFiles(fullPath, projectRoot, depth + 1, maxDepth);
-          files.push(...sub.files);
-          skipped.push(...sub.skipped);
-        }
-      } else if (entry.isFile()) {
-        // Skip compiled/minified JS — build artifacts, not source
-        const compiledPatterns = [/\.min\.js$/i, /compiled\.js$/i, /bundle\.\w+\.js$/i];
-        if (compiledPatterns.some((p: RegExp) => p.test(entry.name))) continue;
-        const ext = path.extname(entry.name).toLowerCase();
-        if (SUPPORTED_EXTENSIONS.has(ext)) {
-          files.push(fullPath);
-        } else if (ext !== '') {
-          skipped.push(fullPath);
+  // ITERATIVE traversal — recursive version overflows on deep directory trees (/tmp, /usr, etc.)
+  const queue: Array<{ dir: string; depth: number }> = [{ dir: rootDir, depth: 0 }];
+
+  while (queue.length > 0) {
+    const item = queue.shift()!;
+    if (item.depth > maxDepth) continue;
+
+    try {
+      const entries = fs.readdirSync(item.dir, { withFileTypes: true });
+      for (const entry of entries) {
+        const fullPath = path.join(item.dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== 'node_modules' && entry.name !== '.git' && entry.name !== 'dist' && !entry.name.startsWith('.')) {
+            queue.push({ dir: fullPath, depth: item.depth + 1 });
+          }
+        } else if (entry.isFile()) {
+          // Skip compiled/minified JS — build artifacts, not source
+          const compiledPatterns = [/\.min\.js$/i, /compiled\.js$/i, /bundle\.\w+\.js$/i];
+          if (compiledPatterns.some((p: RegExp) => p.test(entry.name))) continue;
+          const ext = path.extname(entry.name).toLowerCase();
+          if (SUPPORTED_EXTENSIONS.has(ext)) {
+            files.push(fullPath);
+          } else if (ext !== '') {
+            skipped.push(fullPath);
+          }
         }
       }
+    } catch (e) {
+      tridentLog('WARN', 'code-classifier', `collectProjectFiles failed at ${item.dir}: ${(e as Error).message}`);
     }
-  } catch (e) {
-    tridentLog('ERROR', 'code-classifier', `collectProjectFiles failed: ${(e as Error).message}`);
-    return { files, skipped };
   }
   return { files, skipped };
 }

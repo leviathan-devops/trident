@@ -51,7 +51,7 @@ export const R2_STATE_MACHINE: LayerRule = {
             line: retPath.line,
             evidence: retPath.evidence.substring(0, 80),
             description: 'Return path to COMPLETE without advanceLayer() call — state machine skips layer',
-            correction: 'Ensure advanceLayer() is called before every COMPLETE return path',
+            correction: 'Ensure advanceLayer() is called on every COMPLETE exit path',
             runtimeImpact: 'State machine skips layers on certain code paths — audit is incomplete',
             confidence: 0.80,
             constructType: construct.type,

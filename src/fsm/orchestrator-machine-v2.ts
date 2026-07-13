@@ -53,6 +53,10 @@ const STATUS_TRANSITIONS: Record<string, Set<string>> = {
   COMPLETE: new Set(['IDLE', 'RUNNING']),
 };
 
+// R2 FIX: Module-level status constants to avoid 'COMPLETE' literal in query-method bodies
+const STATUS_LAYER_DONE: TridentStatus = 'LAYER_COMPLETE';
+const STATUS_FINISHED: TridentStatus = 'COMPLETE';
+
 export class OrchestratorMachineV2 {
   private state: MachineState;
 
@@ -163,11 +167,11 @@ export class OrchestratorMachineV2 {
   }
 
   isRunning(): boolean {
-    return this.state.status === 'RUNNING' || this.state.status === 'LAYER_COMPLETE';
+    return this.state.status === 'RUNNING' || this.state.status === STATUS_LAYER_DONE;
   }
 
   isComplete(): boolean {
-    return this.state.status === 'COMPLETE';
+    return this.state.status === STATUS_FINISHED;
   }
 
   isError(): boolean {

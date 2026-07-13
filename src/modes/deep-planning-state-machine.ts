@@ -29,21 +29,21 @@ export class DeepPlanningStateMachine {
   private components: Layer2Result['components'] = [];
   private contextLibrary = '';
 
-  validateLayerContent(layer: number, input: string): { valid: boolean; missing: string[] } {
+  validateLayerContent(layer: number, input: string): { valid: boolean; missing: string[]; evidence: string } {
     switch (layer) {
       case 1: {
         const lines = input.split('\n').filter((l: string) => l.trim().length > 0);
-        return { valid: lines.length >= 3, missing: lines.length < 3 ? ['Need >= 3 principles'] : [] };
+        return { valid: lines.length >= 3, missing: lines.length < 3 ? ['Need >= 3 principles'] : [], evidence: `Layer 1 first-principles: parsed ${lines.length} non-empty principle lines (minimum 3 required for a complete principles set)` };
       }
       case 2: {
         const hasComponents = input.includes('component') || input.includes('Component');
-        return { valid: hasComponents, missing: hasComponents ? [] : ['Need component definitions'] };
+        return { valid: hasComponents, missing: hasComponents ? [] : ['Need component definitions'], evidence: `Layer 2 workflow: keyword 'component' ${hasComponents ? 'detected' : 'not detected'} in input (component definitions are required for the detailed workflow)` };
       }
       case 3: {
-        return { valid: input.length > 0, missing: input.length === 0 ? ['Context library is empty'] : [] };
+        return { valid: input.length > 0, missing: input.length === 0 ? ['Context library is empty'] : [], evidence: `Layer 3 context library: ${input.length} characters of context content present (any non-empty context library passes)` };
       }
       default:
-        return { valid: false, missing: ['Unknown layer'] };
+        return { valid: false, missing: ['Unknown layer'], evidence: `Layer ${layer} is not a recognized deep-planning layer (only layers 1, 2, and 3 are valid)` };
     }
   }
 

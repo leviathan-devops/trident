@@ -4,7 +4,6 @@ const ALLOWED_TOOLS = new Set([
   'trident-audit',
   'trident-status',
   'trident-help',
-  'trident-vision',
   'trident-gate',
   'trident-code-audit',
   'trident-deep-planning',
@@ -12,6 +11,7 @@ const ALLOWED_TOOLS = new Set([
   'trident-context-synthesis',
   'trident-poseidon',
   'build-status',
+  // trident-vision REMOVED — replaced by zai-vision_* and visual-cortex_* MCP tools
 ]);
 
 const ALLOWED_EXTERNAL_TOOLS = new Set([
@@ -22,39 +22,35 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'question',
   'task',
   'todowrite',
+  'checkpoint',
+  // Hive Mind Plugin (2.2-hotfix) — underscore names only, matching actual plugin registration
   'hive_context',
-  'hive-context',
   'hive_status',
-  'hive-status',
-  'hive_context_absorb',
-  'hive-context-absorb',
   'hive_remember',
-  'hive-remember',
-  'hive_forget',
-  'hive-forget',
-  'hive_purge',
-  'hive-purge',
-  'hive_restore',
-  'hive-restore',
   'hive_scan',
-  'hive-scan',
+  'hive_forget',
+  'hive_purge',
+  'hive_restore',
   'hive_trash_list',
-  'hive-trash-list',
   'hive_trash_status',
-  'hive-trash-status',
+  'memread_session',
+  'memlink_parent',
 ]);
 
 // Prefix-based allowlist — any tool starting with these prefixes is auto-allowed.
 // This future-proofs against tool name changes within known namespaces.
 const ALLOWED_TOOL_PREFIXES = [
+  'trident-',
   'reasoning-bus_',
   'visual-cortex_',
-  'vc-visual-mcp_',
-  'manta-',
+  'zai-vision_',
+  'hive_',
+  'memread_',
+  'memlink_',
 ];
 
-// Called from trident-hooks.ts toolBeforeHook — isToolAllowedAllowlist(toolName) at line 499
-function isToolAllowed(toolName: string): boolean {
+// R10 FIX: Exported so the AST call-graph engine can trace invocation from trident-hooks.ts
+export function isToolAllowed(toolName: string): boolean {
   if (!toolName || typeof toolName !== 'string') return false;
   const lower = toolName.toLowerCase();
   if (ALLOWED_TOOLS.has(lower)) return true;
@@ -66,4 +62,4 @@ function isToolAllowed(toolName: string): boolean {
   return false;
 }
 
-export { isToolAllowed, ALLOWED_TOOLS, ALLOWED_EXTERNAL_TOOLS };
+export { ALLOWED_TOOLS, ALLOWED_EXTERNAL_TOOLS };

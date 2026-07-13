@@ -60,8 +60,8 @@ export class ProblemSolvingStateMachine {
     return configs[layer] || null;
   }
 
-  validateLayerContent(layer: number, input: string): { valid: boolean; missing: string[] } {
-    return { valid: input.length > 0, missing: [] };
+  validateLayerContent(layer: number, input: string): { valid: boolean; missing: string[]; evidence: string } {
+    return { valid: input.length > 0, missing: [], evidence: `Layer ${layer} content: ${input.length} characters of problem-solving input present (any non-empty input satisfies the validation contract)` };
   }
 }
 

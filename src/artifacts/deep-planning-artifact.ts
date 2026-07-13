@@ -1,5 +1,5 @@
 /**
- * Deep Planning Artifact Generator — Trident v4.3.3
+ * Deep Planning Artifact Generator — Trident v4.4.2
  *
  * Produces 3 DISTINCT, GOLD-STANDARD outputs:
  *
@@ -25,23 +25,66 @@ import * as path from 'path';
 import { TRIDENT_CONFIG } from '../config.js';
 import type { DiscoveryResult, DiscoveredPattern, CodeSection } from '../shared/auto-discover.js';
 import { tridentLog } from '../utils.js';
+import * as ts from 'typescript';
 
 // ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
 function safeIdent(name: string): string {
+  if (!name || typeof name !== 'string') return 'unnamed';
   return name.replace(/[^a-zA-Z0-9_-]/g, '-');
-}
-
-function safeClassName(name: string): string {
-  const parts = safeIdent(name).split(/[-_]/);
-  return parts.map((p: string) => p.charAt(0).toUpperCase() + p.slice(1)).join('');
 }
 
 function pct(part: number, total: number): string {
   if (total === 0) return '0%';
   return `${Math.round((part / total) * 100)}%`;
+}
+
+// ============================================================================
+// ENGINE IDENTIFICATION (L3: group discovery by directory -> engines)
+// ============================================================================
+
+export interface EngineInfo {
+  name: string;
+  directory: string;
+  patterns: DiscoveredPattern[];
+  codeSections: CodeSection[];
+}
+
+export function identifyEngines(discovery: DiscoveryResult | null | undefined): EngineInfo[] {
+  if (!discovery) return [];
+  const dirMap = new Map<string, { patterns: DiscoveredPattern[]; codeSections: CodeSection[] }>();
+  for (const pat of discovery.patterns) {
+    const dir = path.dirname(pat.file);
+    if (!dirMap.has(dir)) dirMap.set(dir, { patterns: [], codeSections: [] });
+    dirMap.get(dir)!.patterns.push(pat);
+  }
+  for (const cs of discovery.codeSections) {
+    const dir = path.dirname(cs.filePath);
+    if (!dirMap.has(dir)) dirMap.set(dir, { patterns: [], codeSections: [] });
+    dirMap.get(dir)!.codeSections.push(cs);
+  }
+  const engines: EngineInfo[] = [];
+  for (const [dir, data] of dirMap) {
+    const totalItems = data.patterns.length + data.codeSections.length;
+    if (totalItems >= 3) {
+      const engineName = path.basename(dir) || dir;
+      engines.push({ name: engineName, directory: dir, patterns: data.patterns, codeSections: data.codeSections });
+    }
+  }
+  engines.sort((a, b) => (b.patterns.length + b.codeSections.length) - (a.patterns.length + a.codeSections.length));
+  return engines;
+}
+
+export function scopeDiscoveryToEngine(discovery: DiscoveryResult, engine: EngineInfo): DiscoveryResult {
+  return {
+    ...discovery,
+    patterns: engine.patterns,
+    codeSections: engine.codeSections,
+    failureModes: discovery.failureModes.filter(fm => path.dirname(fm.file) === engine.directory),
+    decisions: discovery.decisions.filter(d => path.dirname(d.file) === engine.directory),
+  };
 }
 
 // ============================================================================
@@ -120,6 +163,52 @@ function generateLayer1Prompt(
 }
 
 // ============================================================================
+// LAYER 1: PROMPT GENERATION (exported) — generates structured prompt string
+// ============================================================================
+
+export function buildLayer1Prompt(
+  requirements: string,
+  architecture: string,
+  discovery?: DiscoveryResult | null
+): string {
+  let p = '';
+  p += '## Task\n\n' + (requirements || 'No requirements specified.') + '\n\n';
+  
+  if (discovery) {
+    p += '## Project Context\n\n';
+    p += '- ' + discovery.totalFiles + ' files, ' + discovery.totalLines + ' lines\n';
+    p += '- Languages: ' + Object.entries(discovery.languages).map(function(e) { return e[0] + ' (' + e[1] + ')'; }).join(', ') + '\n';
+    p += '- Entry points: ' + (discovery.entryPoints.join(', ') || 'none') + '\n';
+    if (discovery.patterns.length > 0) {
+      p += '- Detected patterns: ' + discovery.patterns.slice(0, 10).map(function(p2) { return p2.name; }).join(', ') + '\n';
+    }
+    p += '\n';
+  }
+  
+  p += '## First Principles\n\n';
+  p += 'Identify 3+ non-negotiable truths that govern this domain:\n\n';
+  p += '1. [Principle 1]\n2. [Principle 2]\n3. [Principle 3]\n\n';
+  
+  p += '## Constraints\n\n';
+  p += 'List 3+ limits — what MUST be true:\n\n';
+  p += '- [Constraint 1]\n- [Constraint 2]\n- [Constraint 3]\n\n';
+  
+  p += '## Success Criteria\n\n';
+  p += 'How will we know we succeeded? Define measurable outcomes:\n\n';
+  p += '- [Criterion 1]\n- [Criterion 2]\n\n';
+  
+  p += '## Open Questions\n\n';
+  p += 'What dont we know yet?\n\n';
+  p += '- [Question 1]\n- [Question 2]\n\n';
+  
+  p += '## Initial Direction\n\n';
+  p += 'Based on the principles and constraints, whats the approach?\n\n';
+  p += '[Describe in 2-3 paragraphs]';
+  
+  return p;
+}
+
+// ============================================================================
 // LAYER 1: INITIAL PLAN (exported) — Generative prompt + project metadata
 // ============================================================================
 
@@ -164,209 +253,324 @@ export function generateLayer1InitialPlan(
 // LAYER 2: DETAILED WORKFLOW (exported) — Implementation build spec
 // ============================================================================
 
+// ============================================================================
+// LAYER 2: DETAILED WORKFLOW (exported) — v2.0 ASSEMBLER
+// The agent writes FULL MARKDOWN sections; the tool ASSEMBLES them with
+// discovery data. NO pipe-delimited parsing. Content is inserted VERBATIM.
+// ============================================================================
+
 export function generateLayer2DetailedWorkflow(
   targetPath: string,
   projectName: string,
   requirements: string,
   architecture: string,
-  discovery?: DiscoveryResult | null
+  discovery?: DiscoveryResult | null,
+  // FULL MARKDOWN SECTIONS — agent writes complete engineering content:
+  executiveSummary?: string,
+  architectureOverview?: string,
+  dataModel?: string,
+  engineDesign?: string,
+  defenseRules?: string[],
+  blindSpots?: string,
+  integrationPlan?: string,
+  evidenceFormat?: string,
+  testSpecs?: string,
+  migrationStrategy?: string,
 ): string {
-  const safeName = safeIdent(projectName);
-  const className = safeClassName(projectName);
-  const version = TRIDENT_CONFIG.version;
+  // SECTION VALIDATION — no boilerplate allowed
+  const sections: Record<string, string | string[] | undefined> = {
+    executiveSummary, architectureOverview, dataModel, engineDesign,
+    defenseRules, blindSpots, integrationPlan, evidenceFormat, testSpecs, migrationStrategy,
+  };
+  const missing: string[] = [];
+  for (const [name, value] of Object.entries(sections)) {
+    if (!value || (typeof value === 'string' && value.trim().length < 50) || (Array.isArray(value) && value.length === 0)) {
+      missing.push(name);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error('Missing required sections for L2 artifact: ' + missing.join(', ') + '. Each section needs at least 50 characters of markdown content. Generate from the context brief.');
+  }
 
-  let a = '';
+  let spec = '';
 
-  // -- LAYER 2 HEADER --
-  a += `# LAYER 2: IMPLEMENTATION BUILD SPEC\n\n`;
-  a += `## Overview\n\n`;
-  a += `- **Project:** ${projectName} (\`${safeName}\`)\n`;
-  a += `- **Target Path:** ${targetPath}\n`;
-  // v4.4.1: Actually USE the requirements parameter — don't just label it
-  a += `## Requirements\n\n${requirements || 'Auto-derived from project structure and discovery data.'}\n\n`;
-  a += `- **Architecture:** ${architecture || 'Auto-derived from discovery'}\n`;
-  a += `- **Class Prefix:** ${className}\n`;
-  a += `- **Safe Identifier:** ${safeName}\n\n`;
-
-  a += `## Requirements Summary\n\n`;
+  // HEADER
+  spec += `# BUILD SPEC: ${projectName}\n\n`;
+  spec += `**Version:** 1.0\n`;
+  spec += `**Generated:** ${new Date().toISOString()}\n`;
+  spec += `**Target:** ${targetPath}\n`;
   if (discovery) {
-    a += `Based on auto-discovery of ${discovery.totalFiles} files:\n`;
-    a += `- Primary language: ${Object.entries(discovery.languages).sort((x, y) => y[1] - x[1])[0]?.[0] || 'TypeScript'}\n`;
-    a += `- Structural components detected: ${discovery.patterns.length} (classes, interfaces, functions)\n`;
-    a += `- Extension points: ${discovery.warheads.length} warheads, ${discovery.auditLayers.length} audit layers\n`;
-    a += `- Known issues: ${discovery.failureModes.length} failure modes flagged\n\n`;
+    spec += `**Files Discovered:** ${discovery.totalFiles}\n`;
+    spec += `**Lines Analyzed:** ${discovery.totalLines}\n`;
+    spec += `**Patterns:** ${discovery.patterns.length} | **Failure Modes:** ${discovery.failureModes.length}\n`;
+  }
+  spec += `\n---\n\n`;
+
+  // TABLE OF CONTENTS
+  spec += `## Table of Contents\n\n`;
+  spec += `1. [Executive Summary](#1-executive-summary)\n`;
+  spec += `2. [Architecture Overview](#2-architecture-overview)\n`;
+  spec += `3. [Data Model](#3-data-model)\n`;
+  spec += `4. [Engine Class Design](#4-engine-class-design)\n`;
+  let sectionNum = 5;
+  const ruleCount = defenseRules?.length || 0;
+  for (let i = 0; i < ruleCount; i++) {
+    spec += `${sectionNum + i}. [Defense Rule ${i + 1}](#${sectionNum + i}-defense-rule-${i + 1})\n`;
+  }
+  sectionNum += ruleCount;
+  spec += `${sectionNum++}. [Blind Spot Reporting](#blind-spot-reporting)\n`;
+  spec += `${sectionNum++}. [Integration](#integration)\n`;
+  spec += `${sectionNum++}. [Evidence Output Format](#evidence-output-format)\n`;
+  spec += `${sectionNum++}. [Test Specifications](#test-specifications)\n`;
+  spec += `${sectionNum++}. [File Manifest](#file-manifest)\n`;
+  spec += `${sectionNum++}. [Bible Compliance Matrix](#bible-compliance-matrix)\n`;
+  spec += `${sectionNum++}. [Migration Strategy](#migration-strategy)\n`;
+  spec += `\n---\n\n`;
+
+  // SECTION 1: Executive Summary
+  spec += `## 1. Executive Summary\n\n`;
+  if (executiveSummary && executiveSummary.trim().length > 50) {
+    spec += executiveSummary.trim() + '\n\n';
+  } else if (requirements && requirements.trim().length > 20) {
+    spec += requirements.trim() + '\n\n';
   } else {
-    a += `${requirements}\n\n`;
+    spec += '*No executive summary provided. The requirements parameter should contain the problem statement and solution overview.*\n\n';
   }
-
-  // v4.4.1: If requirements contain specific build instructions, use them instead of generic phases
-  // -- DYNAMIC PHASES (from requirements × existing code) --
-  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
-    a += `## Existing Code Inventory\n\n`;
-    a += `The target project already contains ${discovery.codeSections.length} code sections across ${discovery.totalFiles} files.\n`;
-    a += `Phases below describe CHANGES to existing code, not greenfield builds.\n\n`;
-    for (const section of discovery.codeSections.slice(0, 10)) {
-      a += `### ${section.sectionName}\n`;
-      a += `**Location:** \`${section.filePath}:${section.lineStart}-${section.lineEnd}\`\n`;
-      a += `**Type:** ${section.type}\n\n`;
-      a += '```typescript\n' + section.code.substring(0, 400) + '\n```\n\n';
-    }
-  }
-
-  a += `## Dynamic Build Phases\n\n`;
-  a += `Phases derived from requirements cross-referenced against discovered code.\n\n`;
-
-  const reqLines = (requirements || '').split('\n').filter((l: string) => {
-    const trimmed = l.trim();
-    return trimmed.length > 20 && /^(\d+\.|-|[A-Z])/.test(trimmed);
-  });
-
-  let phaseNum = 1;
-  if (reqLines.length > 0) {
-    for (const req of reqLines.slice(0, 12)) {
-      const reqText = req.replace(/^\d+\.\s*/, '').replace(/^\-\s*/, '').trim();
-      const reqLower = reqText.toLowerCase();
-
-      const existingMatch = discovery?.codeSections?.find((s: CodeSection) => {
-        const sectionText = (s.sectionName + ' ' + s.code.substring(0, 500)).toLowerCase();
-        return reqLower.split(/\s+/).filter((w: string) => w.length > 4)
-          .some((word: string) => sectionText.includes(word));
-      });
-
-      const similarPatterns = discovery?.patterns?.filter((p: DiscoveredPattern) => {
-        const patternText = (p.name + ' ' + p.file).toLowerCase();
-        return reqLower.split(/\s+/).filter((w: string) => w.length > 4)
-          .some((word: string) => patternText.includes(word));
-      }) || [];
-
-      if (existingMatch) {
-        a += `### Phase ${phaseNum}: Modify — ${reqText.substring(0, 80)}\n\n`;
-        a += `**Status:** EXISTS at \`${existingMatch.filePath}:${existingMatch.lineStart}\`\n\n`;
-        a += `**Current implementation:**\n`;
-        a += '```typescript\n' + existingMatch.code.substring(0, 500) + '\n```\n\n';
-        a += `**Required changes:** Apply the requirements above to this existing code.\n\n`;
-        a += `**Verification:** Run audit and container test after modification.\n\n`;
-      } else if (similarPatterns.length > 0) {
-        a += `### Phase ${phaseNum}: Build — ${reqText.substring(0, 80)}\n\n`;
-        a += `**Status:** NEW — no existing implementation found\n\n`;
-        a += `**Reference patterns from codebase:**\n\n`;
-        for (const p of similarPatterns.slice(0, 3)) {
-          a += `- \`${p.name}\` (${p.type}) at ${p.file}:${p.line}\n`;
-          if (p.codeSnippet) {
-            a += '\n```typescript\n' + p.codeSnippet.substring(0, 300) + '\n```\n\n';
-          }
-        }
-      } else {
-        a += `### Phase ${phaseNum}: ${reqText.substring(0, 80)}\n\n`;
-        a += `**Status:** NEW\n`;
-        a += `${reqText}\n\n`;
-        a += `**Verification:** Type check + bundle + container test.\n\n`;
-      }
-      phaseNum++;
-    }
-  } else {
-    if (discovery && discovery.codeSections) {
-      for (const section of discovery.codeSections.slice(0, 7)) {
-        a += `### Phase ${phaseNum}: ${section.sectionName}\n\n`;
-        a += `**Location:** \`${section.filePath}:${section.lineStart}\`\n`;
-        a += `**Type:** ${section.type}\n\n`;
-        a += '```typescript\n' + section.code.substring(0, 400) + '\n```\n\n';
-        phaseNum++;
-      }
-    }
-  }
-
-  // -- DEPENDENCY TABLE --
-  a += `## Dependency Table\n\n`;
-  a += `| Phase | Depends On | Blocks | Rationale |\n`;
-  a += `|-------|-----------|--------|----------|\n`;
-  a += `| 1 (Entry Point) | — | 2,3,4,5 | Entry must exist before hooks/tools can be imported |\n`;
-  a += `| 2 (State Machine) | 1 | 4,7 | Orchestrator needed by tools and mode pipeline |\n`;
-  a += `| 3 (Audit Engine) | 1 | 4 | Audit engine used by the audit tool handler |\n`;
-  a += `| 4 (Mode Tools) | 1,2,3 | 7 | Tools reference orchestrator and audit engine |\n`;
-  a += `| 5 (Identity) | 1 | — | Hooks are independent once entry point exists |\n`;
-  a += `| 6 (Artifacts) | 1 | 7 | Artifact utils needed by mode pipeline |\n`;
-  a += `| 7 (Integration) | 1,2,4,6 | — | Final wiring of all components |\n\n`;
-
-  // -- BUILD CHAIN --
-  a += `## Build Chain\n\n`;
-  a += `Exact commands based on detected build tooling.\n\n`;
-
-  const hasTypeScript = discovery ? Object.keys(discovery.languages).includes('ts') : true;
-  if (hasTypeScript) {
-    a += `### TypeScript Compilation\n\n`;
-    a += '```bash\n';
-    a += `# Step 1: Type check (no output, just validation)\n`;
-    a += `npx tsc --noEmit\n\n`;
-    a += `# Step 2: Bundle with esbuild (single-file, ESM, external deps)\n`;
-    a += `npx esbuild src/index.ts \\\n`;
-    a += `  --bundle \\\n`;
-    a += `  --platform=node \\\n`;
-    a += `  --format=esm \\\n`;
-    a += `  --target=node20 \\\n`;
-    a += `  --outfile=dist/index.js \\\n`;
-    a += `  --sourcemap \\\n`;
-    a += `  --external:@opencode-ai/plugin \\\n`;
-    a += `  --external:zod\n\n`;
-    a += `# Step 3: Verify bundle loads\n`;
-    a += `node -e "import('./dist/index.js').then(m => console.log('OK:', Object.keys(m)))"\n`;
-    a += '```\n\n';
-  }
-
-  a += `### External Dependencies (NOT bundled)\n\n`;
-  a += `| Package | Version | Why External |\n`;
-  a += `|---------|---------|-------------|\n`;
-  a += `| @opencode-ai/plugin | ^1.16.0 | Provided by opencode runtime at load time |\n`;
-  a += `| zod | ^4.1.8 | Runtime schema validation, provided by platform |\n\n`;
-
-  // -- SHIP GATE --
-  a += `## Ship Gate\n\n`;
-  a += `Mechanical checklist with exact commands. Each item must pass before shipping.\n\n`;
-
-  a += `| # | Check | Command | Pass Criteria |\n`;
-  a += `|---|-------|---------|---------------|\n`;
-  a += `| 1 | TypeScript compiles | \`tsc --noEmit\` | Exit code 0 |\n`;
-  a += `| 2 | Bundle builds | \`esbuild ... --outfile=dist/index.js\` | Exit code 0, file exists |\n`;
-  a += `| 3 | No relative imports | \`grep "from '\\\\.\\." dist/index.js\` | 0 matches |\n`;
-  a += `| 4 | Plugin loads | \`node -e "import('./dist/index.js')"\` | Prints "OK: [...]" |\n`;
-  a += `| 5 | Hooks registered | \`grep -c "ctx.hook" dist/index.js\` | >= 4 |\n`;
-  a += `| 6 | Tools registered | \`grep -c "ctx.tool" dist/index.js\` | >= 3 |\n`;
-  a += `| 7 | Identity block exists | \`grep "IDENTITY_BLOCK" dist/index.js\` | >= 2 matches |\n`;
-  a += `| 8 | Container load test | \`docker exec container ...\` | Plugin loads, no errors |\n`;
-  a += `| 9 | Identity test | Ask "who are you" in TUI | Contains "${projectName}" |\n`;
-  a += `| 10 | Sequential tools | Call 5+ tools in sequence | 0 throws |\n`;
-  a += `| 11 | Self-audit | Run code-audit tool | Score >= 80 |\n`;
-  a += `| 12 | Context library | \`ls context-library/ | wc -l\` | == 9 files |\n\n`;
-
-  // -- KNOWN FAILURE MODES --
-  a += `## Known Failure Modes (From Discovery)\n\n`;
   if (discovery && discovery.failureModes.length > 0) {
-    a += `| # | Pattern | Location | Message |\n`;
-    a += `|---|---------|----------|---------|\n`;
-    for (let i = 0; i < Math.min(discovery.failureModes.length, 15); i++) {
+    spec += `### Discovered Failure Modes\n\n`;
+    spec += `| # | Failure Mode | Location | Pattern |\n`;
+    spec += `|---|-------------|----------|--------|\n`;
+    for (let i = 0; i < Math.min(discovery.failureModes.length, 30); i++) {
       const fm = discovery.failureModes[i];
-      a += `| ${i + 1} | \`${fm.pattern.substring(0, 50)}\` | \`${fm.file}:${fm.line}\` | ${fm.message.substring(0, 60)} |\n`;
+      spec += `| ${i + 1} | ${fm.message.substring(0, 80)} | \`${fm.file}:${fm.line}\` | \`${fm.pattern}\` |\n`;
     }
-    a += `\n`;
-  } else {
-    a += `No failure modes discovered in source code.\n\n`;
+    spec += '\n';
   }
 
-  // -- DESIGN DECISIONS --
-  a += `## Design Decisions (From Discovery)\n\n`;
-  if (discovery && discovery.decisions.length > 0) {
-    for (let i = 0; i < Math.min(discovery.decisions.length, 10); i++) {
-      const d = discovery.decisions[i];
-      a += `### Decision ${i + 1}\n`;
-      a += `- **Rationale:** ${d.rationale}\n`;
-      a += `- **Location:** \`${d.file}:${d.line}\`\n\n`;
-    }
+  // SECTION 2: Architecture Overview
+  spec += `## 2. Architecture Overview\n\n`;
+  if (architectureOverview && architectureOverview.trim().length > 50) {
+    spec += architectureOverview.trim() + '\n\n';
+  } else if (architecture && architecture.trim().length > 20) {
+    spec += architecture.trim() + '\n\n';
   } else {
-    a += `No design decisions discovered in source comments.\n\n`;
+    spec += '*No architecture overview provided.*\n\n';
+  }
+  if (discovery) {
+    spec += `### Project Structure\n\n`;
+    spec += '```\n' + discovery.directoryTree + '\n```\n\n';
+    if (discovery.entryPoints.length > 0) {
+      spec += `### Entry Points\n\n`;
+      for (const ep of discovery.entryPoints) {
+        spec += `- \`${ep}\`\n`;
+      }
+      spec += '\n';
+    }
+    if (discovery.languages && Object.keys(discovery.languages).length > 0) {
+      spec += `### Language Breakdown\n\n`;
+      spec += `| Language | Files |\n|----------|-------|\n`;
+      for (const [lang, count] of Object.entries(discovery.languages)) {
+        spec += `| ${lang} | ${count} |\n`;
+      }
+      spec += '\n';
+    }
   }
 
-  a += `\n---\n*Generated by Trident v${version} Deep Planning Engine — Layer 1 + Layer 2*\n`;
-  return a;
+  // SECTION 3: Data Model
+  spec += `## 3. Data Model\n\n`;
+  if (dataModel && dataModel.trim().length > 50) {
+    spec += dataModel.trim() + '\n\n';
+  } else {
+    spec += '*No data model provided. Include full TypeScript interface definitions with field-by-field rationale.*\n\n';
+  }
+  if (discovery && discovery.patterns.length > 0) {
+    const interfaces = discovery.patterns.filter((p: DiscoveredPattern) => p.type === 'interface');
+    const classes = discovery.patterns.filter((p: DiscoveredPattern) => p.type === 'class');
+    if (interfaces.length > 0 || classes.length > 0) {
+      spec += `### Existing Types in Codebase\n\n`;
+      spec += `| Type | Kind | Location | Signature |\n`;
+      spec += `|------|------|----------|----------|\n`;
+      for (const i of interfaces.slice(0, 15)) {
+        spec += `| ${i.name} | interface | \`${i.file}:${i.line}\` | \`${(i.signature || '').substring(0, 80)}\` |\n`;
+      }
+      for (const c of classes.slice(0, 10)) {
+        spec += `| ${c.name} | class | \`${c.file}:${c.line}\` | \`${(c.signature || '').substring(0, 80)}\` |\n`;
+      }
+      spec += '\n';
+    }
+  }
+
+  // SECTION 4: Engine Class Design
+  spec += `## 4. Engine Class Design\n\n`;
+  if (engineDesign && engineDesign.trim().length > 50) {
+    spec += engineDesign.trim() + '\n\n';
+  } else {
+    spec += '*No engine design provided. Include complete TypeScript class skeletons with method bodies, constructor injection, lifecycle hooks.*\n\n';
+  }
+  if (discovery && discovery.codeSections) {
+    const classSections = discovery.codeSections.filter((s: CodeSection) => s.type === 'class');
+    if (classSections.length > 0) {
+      spec += `### Existing Class Reference\n\n`;
+      for (const cs of classSections.slice(0, 5)) {
+        spec += `**${cs.sectionName}** (\`${cs.filePath}:${cs.lineStart}-${cs.lineEnd}\`)\n\n`;
+        spec += '```typescript\n' + cs.code.substring(0, 600) + '\n```\n\n';
+      }
+    }
+  }
+
+  // SECTIONS 5-N: Defense Rules
+  if (defenseRules && defenseRules.length > 0) {
+    for (let i = 0; i < defenseRules.length; i++) {
+      const sectionNumber = 5 + i;
+      spec += `## ${sectionNumber}. Defense Rule ${i + 1}\n\n`;
+      if (defenseRules[i] && defenseRules[i].trim().length > 50) {
+        spec += defenseRules[i].trim() + '\n\n';
+      } else {
+        spec += `*No content provided for defense rule ${i + 1}.*\n\n`;
+      }
+      if (discovery && i < discovery.failureModes.length) {
+        const fm = discovery.failureModes[i];
+        spec += `### Related Discovered Failure\n\n`;
+        spec += `**Pattern:** \`${fm.pattern}\`\n`;
+        spec += `**Location:** \`${fm.file}:${fm.line}\`\n`;
+        spec += `**Message:** ${fm.message}\n\n`;
+        if (fm.codeSnippet) {
+          spec += '```typescript\n' + fm.codeSnippet.substring(0, 400) + '\n```\n\n';
+        }
+      }
+    }
+  }
+
+  // BLIND SPOT REPORTING
+  spec += `## Blind Spot Reporting\n\n`;
+  if (blindSpots && blindSpots.trim().length > 50) {
+    spec += blindSpots.trim() + '\n\n';
+  } else {
+    spec += '*No blind spot analysis provided. Include: what the engine cannot detect, why, and impact.*\n\n';
+  }
+  if (discovery && discovery.failureModes.length > (defenseRules?.length || 0)) {
+    spec += `### Unmatched Failure Modes\n\n`;
+    spec += `These failure modes have no corresponding defense rule:\n\n`;
+    for (let i = defenseRules?.length || 0; i < Math.min(discovery.failureModes.length, (defenseRules?.length || 0) + 15); i++) {
+      const fm = discovery.failureModes[i];
+      spec += `- \`${fm.file}:${fm.line}\` — ${fm.message.substring(0, 100)}\n`;
+    }
+    spec += '\n';
+  }
+
+  // INTEGRATION
+  spec += `## Integration\n\n`;
+  if (integrationPlan && integrationPlan.trim().length > 50) {
+    spec += integrationPlan.trim() + '\n\n';
+  } else {
+    spec += '*No integration plan provided. Include: import paths, hook registration, orchestrator wiring.*\n\n';
+  }
+  if (discovery) {
+    if (discovery.warheads && discovery.warheads.length > 0) {
+      spec += `### Existing Enforcement Infrastructure\n\n`;
+      spec += `**Warheads:** ${discovery.warheads.join(', ')}\n\n`;
+    }
+    if (discovery.auditLayers && discovery.auditLayers.length > 0) {
+      spec += `**Audit Layers:** ${discovery.auditLayers.join(', ')}\n\n`;
+    }
+  }
+
+  // EVIDENCE OUTPUT FORMAT
+  spec += `## Evidence Output Format\n\n`;
+  if (evidenceFormat && evidenceFormat.trim().length > 50) {
+    spec += evidenceFormat.trim() + '\n\n';
+  } else {
+    spec += `### Finding Structure\n\n`;
+    spec += '```typescript\n';
+    spec += `interface Finding {\n`;
+    spec += `  rule: string;        // Rule that generated this finding\n`;
+    spec += `  severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';\n`;
+    spec += `  message: string;     // Human-readable description\n`;
+    spec += `  file: string;        // Source file\n`;
+    spec += `  line: number;        // Source line\n`;
+    spec += `  evidence: string;    // Code snippet or pattern match\n`;
+    spec += `  recommendation: string; // Suggested fix\n`;
+    spec += `}\n`;
+    spec += '```\n\n';
+    if (discovery && discovery.failureModes.length > 0) {
+      const fm = discovery.failureModes[0];
+      spec += `### Sample Output\n\n`;
+      spec += '```json\n';
+      spec += JSON.stringify({
+        rule: 'Defense Rule 1',
+        severity: 'HIGH',
+        message: fm.message,
+        file: fm.file,
+        line: fm.line,
+        evidence: (fm.codeSnippet || '').substring(0, 100) || fm.pattern,
+        recommendation: 'Apply defense rule algorithm and verify fix'
+      }, null, 2) + '\n```\n\n';
+    }
+  }
+
+  // TEST SPECIFICATIONS
+  spec += `## Test Specifications\n\n`;
+  if (testSpecs && testSpecs.trim().length > 50) {
+    spec += testSpecs.trim() + '\n\n';
+  } else {
+    spec += '*No test specifications provided. Include negative and positive tests per rule.*\n\n';
+  }
+
+  // FILE MANIFEST — ALWAYS from discovery
+  spec += `## File Manifest\n\n`;
+  if (discovery && discovery.codeSections && discovery.codeSections.length > 0) {
+    spec += `| File | Type | Lines | Section |\n`;
+    spec += `|------|------|-------|--------|\n`;
+    for (const cs of discovery.codeSections.slice(0, 60)) {
+      spec += `| \`${cs.filePath}\` | ${cs.type} | ${cs.lineStart}-${cs.lineEnd} | ${cs.sectionName.substring(0, 60)} |\n`;
+    }
+    spec += '\n';
+  } else {
+    spec += '*No files discovered. Run discovery on a valid target path.*\n\n';
+  }
+
+  // BIBLE COMPLIANCE MATRIX — static
+  spec += `## Bible Compliance Matrix\n\n`;
+  spec += `| Standard | Section | Requirement | How Satisfied |\n`;
+  spec += `|----------|---------|-------------|---------------|\n`;
+  spec += `| RGAAS | §4 Tool Design | Atomicity, Observability, Safety | Each defense rule is an atomic check |\n`;
+  spec += `| RGAAS | §8 Verification | Read-back verification | Evidence output format provides verifiable findings |\n`;
+  spec += `| RGAAS | §9 Constraints | Path whitelisting | Rules operate on specified target paths |\n`;
+  spec += `| SSEB | §3 Analysis Order | AST not regex | Rules use TypeScript compiler API where applicable |\n`;
+  spec += `| SSEB | §4 Enforcement | Pre-write blocking | Integration plan specifies hook registration |\n`;
+  spec += `| SSEB | §7 Anti-theatrical | No {success:true} stubs | Rules require real side effects |\n`;
+  spec += `| SECT3 | IL-01 | Read before write | Discovery runs before spec generation |\n`;
+  spec += `| SECT3 | IL-02 | Prove before claim | Evidence format requires verifiable output |\n`;
+  spec += `| SECT3 | IL-06 | Error path completeness | Failure modes section documents all error paths |\n`;
+  spec += `| SECT3 | IL-10 | No silent failures | Blind spots section documents what cannot be detected |\n`;
+  spec += `\n`;
+
+  // MIGRATION STRATEGY
+  spec += `## Migration Strategy\n\n`;
+  if (migrationStrategy && migrationStrategy.trim().length > 50) {
+    spec += migrationStrategy.trim() + '\n\n';
+  } else {
+    spec += `### Phase 1: Foundation\n`;
+    spec += `- Build core data structures and interfaces\n`;
+    spec += `- Verification: TypeScript compilation passes\n`;
+    spec += `- Rollback: \`git checkout HEAD -- src/\`\n\n`;
+    spec += `### Phase 2: Core Rules\n`;
+    spec += `- Implement defense rules one at a time\n`;
+    spec += `- Verification: Each rule produces findings on test inputs\n`;
+    spec += `- Rollback: \`git revert <commit>\`\n\n`;
+    spec += `### Phase 3: Integration\n`;
+    spec += `- Wire into orchestrator and hooks\n`;
+    spec += `- Verification: Plugin loads, tools registered, hooks fire\n`;
+    spec += `- Rollback: Disable plugin in config\n\n`;
+    spec += `### Phase 4: Full Deployment\n`;
+    spec += `- Enable in production container\n`;
+    spec += `- Verification: Container test passes, ship gate green\n`;
+    spec += `- Rollback: Revert to previous bundle\n\n`;
+  }
+
+  spec += `\n---\n*Generated by Trident Deep Planning Engine v2.0*\n`;
+
+  return spec;
 }
 
 // ============================================================================
@@ -397,17 +601,37 @@ export function generateContextLibraryManifest(
   failures: string[],
   decisions: string[],
   targetPath?: string,
-  discovery?: DiscoveryResult | null
+  discovery?: DiscoveryResult | null,
+  recursive?: boolean,
+  engineSpecs?: string[],
 ): string {
   const safeName = safeIdent(projectName);
   const version = TRIDENT_CONFIG.version;
+
+  // -- ENGINE IDENTIFICATION --
+  const engines = identifyEngines(discovery);
 
   let a = '';
 
   a += `# CONTEXT LIBRARY MANIFEST — ${projectName}\n\n`;
   a += `**Generated:** ${new Date().toISOString()}\n`;
   a += `**Trident Version:** v${version}\n`;
-  a += `**Discovery:** ${discovery ? `ENABLED (${discovery.totalFiles} files)` : 'DISABLED'}\n\n`;
+  a += `**Discovery:** ${discovery ? `ENABLED (${discovery.totalFiles} files)` : 'DISABLED'}\n`;
+  a += `**Recursive:** ${recursive ? 'YES' : 'NO'}\n\n`;
+
+  // -- ENGINE IDENTIFICATION TABLE --
+  a += `## Engine Identification\n\n`;
+  if (engines.length > 0) {
+    a += `Discovered ${engines.length} engine(s) from directory grouping (>=3 items per directory):\n\n`;
+    a += `| # | Engine | Directory | Patterns | Code Sections |\n`;
+    a += `|---|--------|-----------|----------|---------------|\n`;
+    for (let i = 0; i < engines.length; i++) {
+      a += `| ${i + 1} | ${engines[i].name} | \`${engines[i].directory}\` | ${engines[i].patterns.length} | ${engines[i].codeSections.length} |\n`;
+    }
+    a += `\n`;
+  } else {
+    a += `No engines identified from discovery data.\n\n`;
+  }
 
   a += `## File Structure\n\n`;
   a += `| File | Lines | Content | Purpose |\n`;
@@ -424,8 +648,8 @@ export function generateContextLibraryManifest(
 
   // Write files to disk
   if (targetPath) {
+    const contextLibDir = path.join(targetPath, 'context-library');
     try {
-      const contextLibDir = path.join(targetPath, 'context-library');
       fs.mkdirSync(contextLibDir, { recursive: true });
 
       const indexContent = buildIndexFile(projectName, safeName, version, discovery, patterns, failures, decisions);
@@ -471,6 +695,109 @@ export function generateContextLibraryManifest(
       const errMsg = e instanceof Error ? e.message : String(e);
       tridentLog('WARN', 'deep-planning', `Failed to write context library files: ${errMsg}`);
       // Safe to continue — context library files are non-critical, manifest string still returned
+    }
+
+    // -- RECURSIVE MODE: per-engine specs + structural docs --
+    if (recursive && discovery) {
+      try {
+        // If agent provided full engine specs, write them directly (no parsing)
+        if (engineSpecs && engineSpecs.length > 0) {
+          for (let i = 0; i < engineSpecs.length; i++) {
+            const engineFilename = `${String(i + 1).padStart(2, '0')}_SPEC.md`;
+            fs.writeFileSync(path.join(contextLibDir, engineFilename), engineSpecs[i], 'utf-8');
+            tridentLog('INFO', 'deep-planning', `Agent-provided engine spec written: ${engineFilename}`);
+          }
+        } else if (engines.length > 0) {
+          // Fallback: generate per-engine L2 specs from discovery
+          for (const engine of engines) {
+            const scopedDiscovery = scopeDiscoveryToEngine(discovery, engine);
+            const engineSpec = generateLayer2DetailedWorkflow(
+              engine.directory, engine.name,
+              `Engine: ${engine.name} (${engine.patterns.length} patterns, ${engine.codeSections.length} code sections)`,
+              architecture, scopedDiscovery,
+            );
+            const engineFilename = `ENGINE_${engine.name.replace(/[^a-zA-Z0-9_-]/g, '_')}_SPEC.md`;
+            fs.writeFileSync(path.join(contextLibDir, engineFilename), engineSpec, 'utf-8');
+            tridentLog('INFO', 'deep-planning', `Engine spec written: ${engineFilename}`);
+
+            // Per-file mini-specs within this engine's directory
+            const engineDir = path.join(contextLibDir, engine.name.replace(/[^a-zA-Z0-9_-]/g, '_'));
+            const filesByPath = new Map<string, CodeSection[]>();
+            for (const cs of engine.codeSections) {
+              const arr = filesByPath.get(cs.filePath) || [];
+              arr.push(cs);
+              filesByPath.set(cs.filePath, arr);
+            }
+            for (const [filePath, sections] of filesByPath) {
+              const fileName = path.basename(filePath, '.ts').replace(/[^a-zA-Z0-9_-]/g, '_');
+              let fileSpec = '';
+              fileSpec += `# FILE SPEC: ${fileName}\n\n`;
+              fileSpec += `**Source:** \`${filePath}\`\n`;
+              fileSpec += `**Engine:** ${engine.name}\n`;
+              fileSpec += `**Sections:** ${sections.length}\n\n`;
+              fileSpec += `## Code Sections\n\n`;
+              for (const cs of sections) {
+                fileSpec += `### ${cs.sectionName}\n`;
+                fileSpec += `**Type:** ${cs.type} | **Lines:** ${cs.lineStart}-${cs.lineEnd}\n\n`;
+                fileSpec += '```typescript\n' + cs.code.substring(0, 500) + '\n```\n\n';
+              }
+              fs.mkdirSync(engineDir, { recursive: true });
+              fs.writeFileSync(path.join(engineDir, `${fileName}_SPEC.md`), fileSpec, 'utf-8');
+            }
+          }
+        }
+
+        // MASTER_BIBLE.md — cross-engine summary
+        if (engines.length > 0) {
+          let bible = '';
+          bible += `# MASTER BIBLE — ${projectName}\n\n`;
+          bible += `**Generated:** ${new Date().toISOString()}\n\n`;
+          bible += `## Engine Summary\n\n`;
+          for (const engine of engines) {
+            bible += `### ${engine.name}\n`;
+            bible += `- **Directory:** \`${engine.directory}\`\n`;
+            bible += `- **Patterns:** ${engine.patterns.length}\n`;
+            bible += `- **Code Sections:** ${engine.codeSections.length}\n`;
+            const topPatterns = engine.patterns.slice(0, 5).map((p: DiscoveredPattern) => `  - \`${p.name}\` (${p.type}) — \`${p.file}:${p.line}\``).join('\n');
+            bible += `- **Top Patterns:**\n${topPatterns}\n\n`;
+          }
+          fs.writeFileSync(path.join(contextLibDir, 'MASTER_BIBLE.md'), bible, 'utf-8');
+        }
+
+        // CROSS_REFERENCE_INDEX.md
+        if (discovery.patterns.length > 0) {
+          let xref = '';
+          xref += `# Cross-Reference Index — ${projectName}\n\n`;
+          xref += `**Generated:** ${new Date().toISOString()}\n\n`;
+          xref += `## Pattern → File → Engine Mapping\n\n`;
+          xref += `| Pattern | File | Line | Engine |\n`;
+          xref += `|---------|------|------|--------|\n`;
+          for (const pat of discovery.patterns.slice(0, 30)) {
+            const dir = path.dirname(pat.file);
+            const engine = engines.find((e: EngineInfo) => e.directory === dir);
+            xref += `| \`${pat.name}\` | \`${pat.file}\` | ${pat.line} | ${engine?.name || '—'} |\n`;
+          }
+          xref += `\n`;
+          fs.writeFileSync(path.join(contextLibDir, 'CROSS_REFERENCE_INDEX.md'), xref, 'utf-8');
+        }
+
+        // README.md
+        let readme = '';
+        readme += `# Context Library — ${projectName}\n\n`;
+        readme += `## How to Use This Library\n\n`;
+        readme += `1. Start with \`00_INDEX.md\` for navigation.\n`;
+        readme += `2. Read \`01_ARCHITECTURE.md\` for system design.\n`;
+        readme += `3. For engine-specific details, read \`ENGINE_*_SPEC.md\` files.\n`;
+        readme += `4. For cross-referencing patterns to files, use \`CROSS_REFERENCE_INDEX.md\`.\n`;
+        readme += `5. For shipping criteria, see \`08_SUCCESS_CRITERIA.md\`.\n\n`;
+        fs.writeFileSync(path.join(contextLibDir, 'README.md'), readme, 'utf-8');
+
+        tridentLog('INFO', 'deep-planning',
+          `Recursive mode: ${engineSpecs?.length || engines.length} engine specs + structural docs written`);
+      } catch (e) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        tridentLog('WARN', 'deep-planning', `Failed to write recursive engine docs: ${errMsg}`);
+      }
     }
   }
 
@@ -1736,4 +2063,915 @@ function buildSuccessCriteriaFile(
 
   f += `\n---\n*Generated by Trident v${version}*\n`;
   return f;
+}
+
+// ============================================================================
+// CONTEXT BRIEF GENERATOR — ingests source files, extracts structure,
+// returns a brief that tells the agent exactly what to write in each section
+// ============================================================================
+
+export interface ContextFileEntry {
+  path: string;
+  content: string;
+  lines: number;
+}
+
+// -- SEMANTIC INTELLIGENCE: Type Analysis --
+interface FieldTypeAnalysis {
+  category: string;
+  referencedType: string | null;
+  unionMembers: string[] | null;
+  isOptional: boolean;
+  isReadonly: boolean;
+  isGeneric: boolean;
+  genericArguments: string[] | null;
+}
+
+// -- SEMANTIC INTELLIGENCE: Method Body Analysis --
+interface MethodBodyAnalysis {
+  returnCount: number;
+  hasEarlyExit: boolean;
+  throwCount: number;
+  hasErrorHandling: boolean;
+  hasLoop: boolean;
+  hasAsyncAwait: boolean;
+  hasProcessExecution: boolean;
+  hasFilesystemIO: boolean;
+  hasNetworkIO: boolean;
+  sideEffectCategories: string[];
+}
+
+// -- SEMANTIC INTELLIGENCE: Cross-File Type Relationships --
+interface TypeRelationship {
+  typeName: string;
+  definedIn: string;
+  consumedBy: string[];
+  producedBy: string[];
+  acceptedBy: string[];
+}
+
+interface ExtractedInterface {
+  name: string;
+  fields: Array<{ name: string; type: string; optional: boolean; comment?: string; typeAnalysis?: FieldTypeAnalysis }>;
+  file: string;
+  line: number;
+  comment?: string | null;
+}
+
+interface ExtractedClass {
+  name: string;
+  methods: Array<{ name: string; params: string; returnType: string; line: number; bodyAnalysis?: MethodBodyAnalysis }>;
+  fields: Array<{ name: string; type: string; modifier: string; line: number }>;
+  file: string;
+  line: number;
+  comment?: string | null;
+}
+
+interface ExtractedFunction {
+  name: string;
+  params: string;
+  returnType: string;
+  file: string;
+  line: number;
+  isExported: boolean;
+  isAsync: boolean;
+  comment?: string | null;
+}
+
+interface ExtractedTypeAlias {
+  name: string;
+  definition: string;
+  file: string;
+  line: number;
+}
+
+interface ExtractedEnum {
+  name: string;
+  values: string[];
+  file: string;
+  line: number;
+}
+
+interface ExtractedImport {
+  from: string;
+  imports: string[];
+  file: string;
+}
+
+interface ExtractedConstObject {
+  name: string;
+  typeAnnotation: string;
+  file: string;
+  line: number;
+  endLine: number;
+  body: string;
+  checkMethodBody: string | null;
+  hasCheckMethod: boolean;
+  comment?: string | null;
+}
+
+// ============================================================================
+// SEMANTIC INTELLIGENCE: Leading comment extraction via TypeScript AST
+// ============================================================================
+
+function extractAttachedComment(
+  sourceFile: ts.SourceFile,
+  pos: number
+): string | null {
+  const text = sourceFile.getFullText();
+  const commentRanges = ts.getLeadingCommentRanges(text, pos);
+  if (!commentRanges || commentRanges.length === 0) return null;
+
+  return commentRanges
+    .map(function(range: ts.CommentRange) {
+      const raw = text.substring(range.pos, range.end);
+      if (raw.startsWith('/**') || raw.startsWith('/*!')) {
+        return raw
+          .replace(/^\/\*[*!]\s*/, '')
+          .replace(/\s*\*\/$/, '')
+          .split('\n')
+          .map(function(line: string) { return line.replace(/^\s*\*\s?/, '').trim(); })
+          .filter(function(l: string) { return l.length > 0; })
+          .join('\n');
+      }
+      if (raw.startsWith('//')) {
+        return raw.replace(/^\/\/\s*/, '').trim();
+      }
+      return '';
+    })
+    .join('\n')
+    .trim() || null;
+}
+
+// ============================================================================
+// SEMANTIC INTELLIGENCE: Field type classification via AST type guards
+// ============================================================================
+
+function analyzeFieldType(
+  propertyNode: ts.PropertySignature,
+  sourceFile: ts.SourceFile
+): FieldTypeAnalysis {
+  const typeNode = propertyNode.type;
+  const analysis: FieldTypeAnalysis = {
+    category: 'complex',
+    referencedType: null,
+    unionMembers: null,
+    isOptional: !!propertyNode.questionToken,
+    isReadonly: (ts.getCombinedModifierFlags(propertyNode as ts.Declaration) & ts.ModifierFlags.Readonly) !== 0,
+    isGeneric: false,
+    genericArguments: null,
+  };
+
+  if (!typeNode) return analysis;
+
+  if (ts.isTypeReferenceNode(typeNode)) {
+    const typeName = typeNode.typeName;
+    const name = ts.isIdentifier(typeName) ? typeName.text : typeName.getText(sourceFile);
+    analysis.category = 'reference';
+    analysis.referencedType = name;
+    if (['Map', 'Set', 'Promise', 'Array', 'ReadonlyArray', 'Partial', 'Required', 'Pick', 'Omit', 'Record'].indexOf(name) !== -1) {
+      analysis.isGeneric = true;
+      if (typeNode.typeArguments) {
+        analysis.genericArguments = typeNode.typeArguments.map(function(a: ts.TypeNode) { return a.getText(sourceFile); });
+      }
+    }
+  } else if (ts.isArrayTypeNode(typeNode)) {
+    analysis.category = 'array';
+    analysis.referencedType = typeNode.elementType.getText(sourceFile);
+  } else if (ts.isUnionTypeNode(typeNode)) {
+    analysis.category = 'union';
+    analysis.unionMembers = typeNode.types.map(function(t: ts.TypeNode) { return t.getText(sourceFile); });
+  } else if (ts.isLiteralTypeNode(typeNode)) {
+    analysis.category = 'literal';
+  } else if (ts.isTypeLiteralNode(typeNode)) {
+    analysis.category = 'inline-object';
+  } else if (ts.isFunctionTypeNode(typeNode)) {
+    analysis.category = 'function';
+  } else if (ts.isMappedTypeNode(typeNode)) {
+    analysis.category = 'mapped';
+  } else if (ts.isConditionalTypeNode(typeNode)) {
+    analysis.category = 'conditional';
+  } else if (typeNode.kind === ts.SyntaxKind.StringKeyword ||
+             typeNode.kind === ts.SyntaxKind.NumberKeyword ||
+             typeNode.kind === ts.SyntaxKind.BooleanKeyword ||
+             typeNode.kind === ts.SyntaxKind.AnyKeyword ||
+             typeNode.kind === ts.SyntaxKind.UnknownKeyword ||
+             typeNode.kind === ts.SyntaxKind.UndefinedKeyword ||
+             typeNode.kind === ts.SyntaxKind.NullKeyword ||
+             typeNode.kind === ts.SyntaxKind.VoidKeyword ||
+             typeNode.kind === ts.SyntaxKind.NeverKeyword ||
+             typeNode.kind === ts.SyntaxKind.ObjectKeyword ||
+             typeNode.kind === ts.SyntaxKind.SymbolKeyword ||
+             typeNode.kind === ts.SyntaxKind.BigIntKeyword) {
+    analysis.category = 'primitive';
+  }
+
+  return analysis;
+}
+
+// ============================================================================
+// SEMANTIC INTELLIGENCE: Method body analysis via AST walk
+// ============================================================================
+
+function analyzeMethodBody(
+  fnNode: ts.FunctionLikeDeclaration,
+  sourceFile: ts.SourceFile
+): MethodBodyAnalysis {
+  const body = fnNode.body;
+  const empty: MethodBodyAnalysis = {
+    returnCount: 0, hasEarlyExit: false, throwCount: 0,
+    hasErrorHandling: false, hasLoop: false, hasAsyncAwait: false,
+    hasProcessExecution: false, hasFilesystemIO: false, hasNetworkIO: false,
+    sideEffectCategories: [],
+  };
+  if (!body) return empty;
+
+  const analysis = Object.assign({}, empty);
+  const sideEffects = new Set<string>();
+
+  function walk(node: ts.Node): void {
+    if (ts.isReturnStatement(node)) {
+      analysis.returnCount++;
+      if (node.expression) {
+        if (node.expression.kind === ts.SyntaxKind.NullKeyword ||
+            node.expression.kind === ts.SyntaxKind.FalseKeyword ||
+            node.expression.kind === ts.SyntaxKind.UndefinedKeyword) {
+          analysis.hasEarlyExit = true;
+        }
+      }
+    }
+    if (ts.isThrowStatement(node)) analysis.throwCount++;
+    if (ts.isTryStatement(node)) analysis.hasErrorHandling = true;
+    if (ts.isForStatement(node) || ts.isForOfStatement(node) ||
+        ts.isForInStatement(node) || ts.isWhileStatement(node)) analysis.hasLoop = true;
+    if (ts.isAwaitExpression(node)) analysis.hasAsyncAwait = true;
+    if (ts.isCallExpression(node)) {
+      const callText = node.expression.getText(sourceFile);
+      if (/exec(Sync)?|spawn(Sync)?/.test(callText)) { analysis.hasProcessExecution = true; sideEffects.add('process-exec'); }
+      if (/writeFileSync|readFileSync|mkdirSync|appendFileSync|rmSync|unlinkSync/.test(callText)) { analysis.hasFilesystemIO = true; sideEffects.add('fs-io-sync'); }
+      if (/writeFile\b|appendFile\b|mkdir\b|rm\b/.test(callText)) { analysis.hasFilesystemIO = true; sideEffects.add('fs-io-async'); }
+      if (/\bfetch\b|http\.request|https\.request|axios/.test(callText)) { analysis.hasNetworkIO = true; sideEffects.add('network'); }
+    }
+    ts.forEachChild(node, walk);
+  }
+
+  // Handle both block bodies and expression bodies
+  if (ts.isBlock(body)) {
+    walk(body);
+  } else {
+    // Arrow function with expression body — wrap in virtual check
+    walk(body);
+  }
+
+  analysis.sideEffectCategories = Array.from(sideEffects);
+  return analysis;
+}
+
+// ============================================================================
+// SEMANTIC INTELLIGENCE: Cross-file type relationship map
+// ============================================================================
+
+function buildTypeRelationships(
+  allI: ExtractedInterface[],
+  allT: ExtractedTypeAlias[],
+  allC: ExtractedClass[],
+  allF: ExtractedFunction[],
+  allI2: ExtractedImport[]
+): TypeRelationship[] {
+  const rels = new Map<string, TypeRelationship>();
+
+  // Register all type definitions
+  for (const iface of allI) {
+    if (!rels.has(iface.name)) {
+      rels.set(iface.name, { typeName: iface.name, definedIn: iface.file, consumedBy: [], producedBy: [], acceptedBy: [] });
+    }
+  }
+  for (const ta of allT) {
+    if (!rels.has(ta.name)) {
+      rels.set(ta.name, { typeName: ta.name, definedIn: ta.file, consumedBy: [], producedBy: [], acceptedBy: [] });
+    }
+  }
+
+  // Functions that produce/accept types
+  for (const fn of allF) {
+    for (const [name, rel] of rels) {
+      if (fn.returnType.indexOf(name) !== -1) {
+        rel.producedBy.push(fn.name + '() in ' + fn.file);
+      }
+      if (fn.params.indexOf(name) !== -1) {
+        rel.acceptedBy.push(fn.name + '() in ' + fn.file);
+      }
+    }
+  }
+
+  // Class methods that produce/accept types
+  for (const cls of allC) {
+    for (const method of cls.methods) {
+      for (const [name, rel] of rels) {
+        if (method.returnType.indexOf(name) !== -1) {
+          rel.producedBy.push(cls.name + '.' + method.name + '() in ' + cls.file);
+        }
+        if (method.params.indexOf(name) !== -1) {
+          rel.acceptedBy.push(cls.name + '.' + method.name + '() in ' + cls.file);
+        }
+      }
+    }
+  }
+
+  // Import graph -> consumedBy
+  for (const imp of allI2) {
+    for (const importedName of imp.imports) {
+      const rel = rels.get(importedName);
+      if (rel && rel.consumedBy.indexOf(imp.file) === -1) {
+        rel.consumedBy.push(imp.file);
+      }
+    }
+  }
+
+  // Interface fields that reference known types
+  for (const iface of allI) {
+    for (const field of iface.fields) {
+      for (const [name, rel] of rels) {
+        if (field.type.indexOf(name) !== -1 && rel.consumedBy.indexOf(iface.name + ' in ' + iface.file) === -1) {
+          rel.consumedBy.push(iface.name + ' in ' + iface.file);
+        }
+      }
+    }
+  }
+
+  return Array.from(rels.values())
+    .filter(function(r) { return r.consumedBy.length > 0 || r.producedBy.length > 0; })
+    .sort(function(a, b) {
+      return (b.consumedBy.length + b.producedBy.length + b.acceptedBy.length) -
+             (a.consumedBy.length + a.producedBy.length + a.acceptedBy.length);
+    });
+}
+
+function extractInterfaces(content: string, filePath: string): ExtractedInterface[] {
+  const results: ExtractedInterface[] = [];
+  const lines = content.split('\n');
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const ifaceRegex = /^export\s+interface\s+(\w+)/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(ifaceRegex);
+    if (!match) continue;
+    const name = match[1];
+    const matchLine = i + 1;
+    const fields: ExtractedInterface['fields'] = [];
+    let depth = 0;
+    for (let j = i; j < lines.length; j++) {
+      const line = lines[j];
+      if (line.includes('{')) depth++;
+      if (line.includes('}')) {
+        depth--;
+        if (depth === 0) break;
+      }
+      if (j > i && depth >= 1) {
+        const fm = line.match(/^\s*(readonly\s+)?(\w+)(\?)?:\s*(.+?);?\s*(\/\/.*)?$/);
+        if (fm && !fm[2].startsWith('//')) {
+          fields.push({
+            name: fm[2],
+            type: fm[4].trim().replace(/\/\/.*/, '').trim(),
+            optional: !!fm[3],
+            comment: fm[5]?.trim(),
+          });
+        }
+      }
+    }
+
+    // AST: Extract comment and field type analysis
+    let commentNode: ts.Node | null = null;
+    function findNode(node: ts.Node): void {
+      if (commentNode) return;
+      const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      if (nodeLine === matchLine) {
+        commentNode = node;
+        return;
+      }
+      ts.forEachChild(node, findNode);
+    }
+    findNode(sourceFile);
+
+    const result: ExtractedInterface = { name, fields, file: filePath, line: matchLine };
+
+    if (commentNode) {
+      const comment = extractAttachedComment(sourceFile, commentNode.getFullStart());
+      if (comment) result.comment = comment;
+      // Field type analysis via AST
+      if (ts.isInterfaceDeclaration(commentNode)) {
+        for (const field of fields) {
+          for (const member of commentNode.members) {
+            if (ts.isPropertySignature(member) && member.name && ts.isIdentifier(member.name) && member.name.text === field.name) {
+              field.typeAnalysis = analyzeFieldType(member, sourceFile);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    results.push(result);
+  }
+  return results;
+}
+
+function extractClasses(content: string, filePath: string): ExtractedClass[] {
+  const results: ExtractedClass[] = [];
+  const lines = content.split('\n');
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const clsRegex = /^export\s+class\s+(\w+)/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(clsRegex);
+    if (!match) continue;
+    const name = match[1];
+    const matchLine = i + 1;
+    const methods: ExtractedClass['methods'] = [];
+    const fields: Array<{ name: string; type: string; modifier: string; line: number }> = [];
+    let braceDepth = 1; // Start at 1 — class opening brace is on line i, loop starts at i+1
+    let classStarted = true;
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].includes('{')) braceDepth++;
+      if (lines[j].includes('}')) { braceDepth--; if (braceDepth <= 0) break; }
+      if (lines[j].match(/^export\s+(class|interface|function)/)) break;
+      // Method extraction
+      const mm = lines[j].match(/^\s+(async\s+)?(\w+)\s*\(([^)]*)\)\s*:\s*(.+?)\s*\{/);
+      if (mm && mm[2] !== 'constructor') {
+        methods.push({ name: mm[2], params: mm[3].trim(), returnType: mm[4].trim(), line: j + 1 });
+      }
+      // Private/protected/public field extraction (not method params, not inside method body)
+      // Only extract at class body depth 1 (direct class members)
+      if (classStarted && braceDepth === 1) {
+        const fm = lines[j].match(/^\s+(private\s+|public\s+|protected\s+|readonly\s+)+(readonly\s+)?(\w+)(\?)?:\s*([^=;]+?)(?:\s*=\s*.+)?;/);
+        if (fm && !lines[j].includes('(') && fm[3]) {
+          fields.push({ name: fm[3], type: fm[5].trim(), modifier: fm[1].trim(), line: j + 1 });
+        }
+      }
+    }
+
+    // AST: Extract comment and method body analysis
+    let commentNode: ts.Node | null = null;
+    function findNode(node: ts.Node): void {
+      if (commentNode) return;
+      const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      if (nodeLine === matchLine) {
+        commentNode = node;
+        return;
+      }
+      ts.forEachChild(node, findNode);
+    }
+    findNode(sourceFile);
+
+    const result: ExtractedClass = { name, methods, fields, file: filePath, line: matchLine };
+
+    if (commentNode) {
+      const comment = extractAttachedComment(sourceFile, commentNode.getFullStart());
+      if (comment) result.comment = comment;
+      // Method body analysis via AST
+      if (ts.isClassDeclaration(commentNode)) {
+        for (const m of methods) {
+          for (const member of commentNode.members) {
+            if ((ts.isMethodDeclaration(member) || ts.isMethodSignature(member)) &&
+                member.name && ts.isIdentifier(member.name) && member.name.text === m.name) {
+              m.bodyAnalysis = analyzeMethodBody(member as unknown as ts.FunctionLikeDeclaration, sourceFile);
+              break;
+            }
+          }
+        }
+      }
+    }
+
+    results.push(result);
+  }
+  return results;
+}
+
+function extractFunctions(content: string, filePath: string): ExtractedFunction[] {
+  const results: ExtractedFunction[] = [];
+  const lines = content.split('\n');
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const fnRegex = /^export\s+(async\s+)?function\s+(\w+)\s*\(([^)]*)\)\s*(?::\s*(.+?))?\s*\{/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(fnRegex);
+    if (!match) continue;
+    const matchLine = i + 1;
+
+    // AST: Extract comment
+    let commentNode: ts.Node | null = null;
+    function findNode(node: ts.Node): void {
+      if (commentNode) return;
+      const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+      if (nodeLine === matchLine) {
+        commentNode = node;
+        return;
+      }
+      ts.forEachChild(node, findNode);
+    }
+    findNode(sourceFile);
+
+    const result: ExtractedFunction = {
+      name: match[2], params: match[3].trim(),
+      returnType: match[4]?.trim() || 'void',
+      file: filePath, line: matchLine, isExported: true, isAsync: !!match[1],
+    };
+
+    if (commentNode) {
+      const comment = extractAttachedComment(sourceFile, commentNode.getFullStart());
+      if (comment) result.comment = comment;
+    }
+
+    results.push(result);
+  }
+  return results;
+}
+
+function extractTypeAliases(content: string, filePath: string): ExtractedTypeAlias[] {
+  const results: ExtractedTypeAlias[] = [];
+  const lines = content.split('\n');
+  const tyRegex = /^export\s+type\s+(\w+)\s*=\s*(.+?);?$/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(tyRegex);
+    if (!match) continue;
+    results.push({ name: match[1], definition: match[2].trim(), file: filePath, line: i + 1 });
+  }
+  return results;
+}
+
+function extractEnums(content: string, filePath: string): ExtractedEnum[] {
+  const results: ExtractedEnum[] = [];
+  const lines = content.split('\n');
+  const enRegex = /^export\s+(const\s+)?enum\s+(\w+)/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(enRegex);
+    if (!match) continue;
+    const name = match[2];
+    const values: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      if (lines[j].includes('}')) break;
+      const vm = lines[j].match(/^\s+(\w+)/);
+      if (vm) values.push(vm[1]);
+    }
+    results.push({ name, values, file: filePath, line: i + 1 });
+  }
+  return results;
+}
+
+function extractImports(content: string, filePath: string): ExtractedImport[] {
+  const results: ExtractedImport[] = [];
+  const lines = content.split('\n');
+  for (const line of lines) {
+    const match = line.match(/^import\s+(?:(\w+)|\{([^}]+)\})\s+from\s+['"]([^'"]+)['"]/);
+    if (!match) continue;
+    const imports: string[] = match[1] ? [match[1]] : match[2].split(',').map((s: string) => s.trim());
+    results.push({ from: match[3], imports, file: filePath });
+  }
+  return results;
+}
+
+function extractConstObjects(content: string, filePath: string): ExtractedConstObject[] {
+  const results: ExtractedConstObject[] = [];
+  const lines = content.split('\n');
+  const sourceFile = ts.createSourceFile(filePath, content, ts.ScriptTarget.Latest, true);
+  const constRegex = /^export\s+const\s+(\w+)\s*:\s*(\w+)\s*=\s*\{/;
+  for (let i = 0; i < lines.length; i++) {
+    const match = lines[i].match(constRegex);
+    if (!match) continue;
+    const name = match[1];
+    const matchLine = i + 1;
+    const typeAnnotation = match[2];
+    // Capture full object body by tracking brace depth
+    let depth = 0;
+    let bodyStart = i;
+    let bodyEnd = i;
+    for (let j = i; j < lines.length; j++) {
+      for (const ch of lines[j]) {
+        if (ch === '{') depth++;
+        if (ch === '}') depth--;
+      }
+      if (j > i && depth <= 0) { bodyEnd = j; break; }
+    }
+    const body = lines.slice(bodyStart, bodyEnd + 1).join('\n');
+
+    // Extract check/scan method body if present (this is where algorithms live)
+    let checkMethodBody: string | null = null;
+    let hasCheckMethod = false;
+    const checkMatch = body.match(/(?:check|scan|run|execute|analyze)\s*(?:\s*\([^)]*\))?\s*[:=>]\s*(?:async\s*)?\(?\s*(?:function)?\s*\(?[^)]*\)?\s*(?:=>)?\s*\{/);
+    if (checkMatch) {
+      hasCheckMethod = true;
+      // Find the method body by tracking braces from the match position
+      const methodStart = body.indexOf(checkMatch[0]);
+      if (methodStart >= 0) {
+        const bodyLines = body.substring(methodStart).split('\n');
+        let mDepth = 0;
+        let mEnd = 0;
+        for (let k = 0; k < bodyLines.length; k++) {
+          for (const ch of bodyLines[k]) {
+            if (ch === '{') mDepth++;
+            if (ch === '}') mDepth--;
+          }
+          if (k > 0 && mDepth <= 0) { mEnd = k; break; }
+        }
+        checkMethodBody = bodyLines.slice(0, mEnd + 1).join('\n');
+      }
+    }
+
+    // Only include if the object is substantial (>5 lines) or has a check method
+    if (bodyEnd - bodyStart > 5 || hasCheckMethod) {
+      // AST: Extract comment
+      let commentNode: ts.Node | null = null;
+      function findNode(node: ts.Node): void {
+        if (commentNode) return;
+        const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+        if (nodeLine === matchLine) {
+          commentNode = node;
+          return;
+        }
+        ts.forEachChild(node, findNode);
+      }
+      findNode(sourceFile);
+
+      const result: ExtractedConstObject = {
+        name, typeAnnotation, file: filePath, line: matchLine, endLine: bodyEnd + 1,
+        body, checkMethodBody, hasCheckMethod,
+      };
+
+      if (commentNode) {
+        const comment = extractAttachedComment(sourceFile, commentNode.getFullStart());
+        if (comment) result.comment = comment;
+      }
+
+      results.push(result);
+    }
+  }
+  return results;
+}
+
+function extractAlgorithmSignals(content: string): string[] {
+  const signals: string[] = [];
+  const lines = content.split('\n');
+  const patterns: Array<{ regex: RegExp; label: string }> = [
+    { regex: /\bif\s*\(/, label: 'conditional logic' },
+    { regex: /\bfor\s*\(/, label: 'iteration' },
+    { regex: /\bwhile\s*\(/, label: 'loop' },
+    { regex: /\.map\s*\(/, label: 'map transformation' },
+    { regex: /\.filter\s*\(/, label: 'filter operation' },
+    { regex: /\.reduce\s*\(/, label: 'reduce operation' },
+    { regex: /\btry\s*\{/, label: 'error handling' },
+    { regex: /\bcatch\s*\(/, label: 'catch clause' },
+    { regex: /\bthrow\s+new\s+/, label: 'error throwing' },
+    { regex: /\bawait\s+/, label: 'async operation' },
+    { regex: /\bPromise\b/, label: 'promise usage' },
+    { regex: /writeFileSync|readFileSync|mkdirSync/, label: 'filesystem I/O' },
+    { regex: /execSync|exec\(|spawn\(/, label: 'process execution' },
+    { regex: /writeFile|appendFile/, label: 'async file I/O' },
+    { regex: /\bSet\s*<|new\s+Set\(/, label: 'set data structure' },
+    { regex: /\bMap\s*<|new\s+Map\(/, label: 'map data structure' },
+    { regex: /forEach|entries\(\)|values\(\)|keys\(\)/, label: 'collection iteration' },
+  ];
+  const found = new Set<string>();
+  for (const line of lines) {
+    for (const { regex, label } of patterns) {
+      if (regex.test(line) && !found.has(label)) { found.add(label); signals.push(label); }
+    }
+  }
+  return signals;
+}
+
+export function generateContextBrief(
+  files: ContextFileEntry[],
+  requirements: string,
+  layer: number,
+): string {
+  const allI: ExtractedInterface[] = [];
+  const allC: ExtractedClass[] = [];
+  const allF: ExtractedFunction[] = [];
+  const allT: ExtractedTypeAlias[] = [];
+  const allE: ExtractedEnum[] = [];
+  const allI2: ExtractedImport[] = [];
+  const allConsts: ExtractedConstObject[] = [];
+  const algoMap = new Map<string, string[]>();
+  let total = 0;
+
+  for (const f of files) {
+    allI.push(...extractInterfaces(f.content, f.path));
+    allC.push(...extractClasses(f.content, f.path));
+    allF.push(...extractFunctions(f.content, f.path));
+    allT.push(...extractTypeAliases(f.content, f.path));
+    allE.push(...extractEnums(f.content, f.path));
+    allI2.push(...extractImports(f.content, f.path));
+    allConsts.push(...extractConstObjects(f.content, f.path));
+    const sig = extractAlgorithmSignals(f.content);
+    if (sig.length > 0) algoMap.set(f.path, sig);
+    total += f.lines;
+  }
+
+  let b = '';
+  b += `# CONTEXT BRIEF — Layer ${layer} Spec Generation\n\n`;
+  b += `**Files:** ${files.length} | **Lines:** ${total} | `;
+  b += `Interfaces: ${allI.length} | Classes: ${allC.length} | Functions: ${allF.length} | Const Objects: ${allConsts.length} | Types: ${allT.length} | Enums: ${allE.length}\n\n`;
+  b += `**Requirements:** ${requirements.substring(0, 500)}\n\n---\n\n`;
+
+  b += `## 1. File Inventory\n\n| File | Lines | IF | CLS | FN | TY | EN |\n|------|-------|----|----|----|----|----|\n`;
+  for (const f of files) {
+    b += `| \`${f.path}\` | ${f.lines} | ${allI.filter(i => i.file === f.path).length} | ${allC.filter(c => c.file === f.path).length} | ${allF.filter(fn => fn.file === f.path).length} | ${allT.filter(t => t.file === f.path).length} | ${allE.filter(e => e.file === f.path).length} |\n`;
+  }
+  b += `\n`;
+
+  if (allI.length > 0) {
+    b += `## 2. Extracted Interfaces (${allI.length})\n\n**Adapt for Data Model section.**\n\n`;
+    for (const iface of allI) {
+      b += `### ${iface.name} (${iface.file}:${iface.line})\n\n\`\`\`typescript\nexport interface ${iface.name} {\n`;
+      for (const fd of iface.fields) b += `  ${fd.name}${fd.optional ? '?' : ''}: ${fd.type};${fd.comment ? ' ' + fd.comment : ''}\n`;
+      b += `}\n\`\`\`\n\n`;
+      // SEMANTIC: Show extracted comment
+      if (iface.comment) {
+        b += `> ${iface.comment.replace(/\n/g, '\n> ')}\n\n`;
+      }
+      // SEMANTIC: Show field type analysis from AST
+      for (const fd of iface.fields) {
+        if (fd.typeAnalysis) {
+          const ta = fd.typeAnalysis;
+          let details = ta.category;
+          if (ta.referencedType) details += ' -> ' + ta.referencedType;
+          if (ta.isOptional) details += ' (optional)';
+          if (ta.isReadonly) details += ' (readonly)';
+          if (ta.unionMembers) details += ' union: ' + ta.unionMembers.join(' | ');
+          if (ta.isGeneric && ta.genericArguments) details += ' generic<' + ta.genericArguments.join(', ') + '>';
+          b += `    ${fd.name} AST: ${details}\n`;
+        }
+      }
+      // Blank line separator only if we added type analysis lines
+      const hasTypeAnalysis = iface.fields.some(fd => fd.typeAnalysis);
+      if (hasTypeAnalysis) b += `\n`;
+    }
+  }
+
+  if (allC.length > 0) {
+    b += `## 3. Extracted Classes (${allC.length})\n\n**Use for Engine Design section.**\n\n`;
+    for (const cls of allC) {
+      b += `### ${cls.name} (${cls.file}:${cls.line})\n`;
+      // SEMANTIC: Show extracted comment
+      if (cls.comment) {
+        b += `\n> ${cls.comment.replace(/\n/g, '\n> ')}\n\n`;
+      }
+      if (cls.fields && cls.fields.length > 0) {
+        b += `**State Fields:**\n`;
+        for (const f of cls.fields) b += `- \`${f.modifier} ${f.name}: ${f.type}\` (L${f.line})\n`;
+        b += `\n`;
+      }
+      b += `**Methods:**\n`;
+      for (const m of cls.methods) b += `- \`${m.name}(${m.params}): ${m.returnType}\` (L${m.line})\n`;
+      // SEMANTIC: Method behavioral analysis table
+      if (cls.methods && cls.methods.length > 0) {
+        const hasAnalysis = cls.methods.some((m) => Boolean(m.bodyAnalysis));
+        if (hasAnalysis) {
+          b += `\n**Method Behavioral Analysis:**\n\n`;
+          b += `| Method | Returns | Throws | Error Handling | Loops | Async | Side Effects |\n`;
+          b += `|--------|---------|--------|---------------|-------|-------|-------------|\n`;
+          for (const m of cls.methods) {
+            const ba = (m as any).bodyAnalysis as MethodBodyAnalysis | undefined;
+            if (ba) {
+              b += `| ${m.name} | ${ba.returnCount} | ${ba.throwCount} | ${(ba.hasErrorHandling ? 'yes' : 'no')} | ${(ba.hasLoop ? 'yes' : 'no')} | ${(ba.hasAsyncAwait ? 'yes' : 'no')} | ${(ba.sideEffectCategories.length > 0 ? ba.sideEffectCategories.join(', ') : '-')} |\n`;
+            }
+          }
+          b += `\n`;
+        }
+      }
+      // Add code snippet showing the class context
+      const clsFile = files.find(f => f.path === cls.file);
+      if (clsFile) {
+        const clsLines = clsFile.content.split('\n');
+        const snippetStart = Math.max(0, cls.line - 2);
+        const snippetEnd = Math.min(clsLines.length, cls.line + 15);
+        b += `**Code context (lines ${snippetStart + 1}-${snippetEnd}):**\n\`\`\`typescript\n`;
+        for (let si = snippetStart; si < snippetEnd; si++) b += clsLines[si] + '\n';
+        b += `\`\`\`\n\n`;
+      }
+    }
+  }
+
+  if (allF.length > 0) {
+    b += `## 4. Extracted Functions (${allF.length})\n\n**Describe each in Defense Rules / Engine Design.**\n\n`;
+    for (const fn of allF) {
+      b += `- \`${fn.isAsync ? 'async ' : ''}function ${fn.name}(${fn.params}): ${fn.returnType}\` (${fn.file}:${fn.line})\n`;
+      // SEMANTIC: Show extracted comment
+      if (fn.comment) {
+        b += `  > ${fn.comment.replace(/\n/g, '\n  > ')}\n`;
+      }
+      // Add code snippet for each function
+      const fnFile = files.find(f => f.path === fn.file);
+      if (fnFile) {
+        const fnLines = fnFile.content.split('\n');
+        const snStart = Math.max(0, fn.line - 1);
+        const snEnd = Math.min(fnLines.length, fn.line + 20);
+        b += `\n  \`\`\`typescript\n`;
+        for (let si = snStart; si < snEnd; si++) b += `  ${fnLines[si]}\n`;
+        b += `  \`\`\`\n`;
+      }
+    }
+    b += `\n`;
+  }
+
+  if (allConsts.length > 0) {
+    b += `## 5. Extracted Rule/Const Objects (${allConsts.length})\n\n`;
+    b += `**THESE ARE THE ACTUAL ALGORITHM IMPLEMENTATIONS. Read each check() method body carefully.**\n`;
+    b += `**This is where S1-S5, R13, R14, and other rules live. Describe each algorithm step-by-step in the spec.**\n\n`;
+    for (const c of allConsts) {
+      b += `### ${c.name}: ${c.typeAnnotation} (${c.file}:${c.line}-${c.endLine})\n\n`;
+      if (c.hasCheckMethod && c.checkMethodBody) {
+        b += `**Algorithm (check method body):**\n\n\`\`\`typescript\n${c.checkMethodBody}\n\`\`\`\n\n`;
+      } else {
+        // Show first 30 lines of body if no check method found
+        const bodyLines = c.body.split('\n').slice(0, 30);
+        b += `**Object body (first 30 lines):**\n\n\`\`\`typescript\n${bodyLines.join('\n')}\n\`\`\`\n\n`;
+      }
+    }
+  }
+
+  if (allT.length > 0 || allE.length > 0) {
+    b += `## 6. Type Aliases and Enums\n\n`;
+    for (const t of allT) b += `- \`type ${t.name} = ${t.definition}\` (${t.file}:${t.line})\n`;
+    for (const e of allE) b += `- \`enum ${e.name} { ${e.values.join(', ')} }\` (${e.file}:${e.line})\n`;
+    b += `\n`;
+  }
+
+  if (algoMap.size > 0) {
+    b += `## 6. Algorithm Signals\n\n`;
+    for (const [fp, sigs] of algoMap) b += `**${fp}:** ${sigs.join(', ')}\n`;
+    b += `\n`;
+  }
+
+  if (allI2.length > 0) {
+    const im = new Map<string, Set<string>>();
+    for (const imp of allI2) { for (const n of imp.imports) { if (!im.has(n)) im.set(n, new Set()); im.get(n)!.add(imp.file); } }
+    b += `## 7. Import Graph\n\n| Symbol | Used By |\n|--------|---------|\n`;
+    for (const [sym, users] of Array.from(im.entries()).sort((a, b) => b[1].size - a[1].size).slice(0, 50)) {
+      b += `| \`${sym}\` | ${Array.from(users).map(f => path.basename(f)).join(', ')} |\n`;
+    }
+    b += `\n`;
+  }
+
+  // SEMANTIC: Cross-file type relationships
+  const relationships = buildTypeRelationships(allI, allT, allC, allF, allI2);
+  if (relationships.length > 0) {
+    b += `## 8.5 Cross-File Type Relationships\n\n`;
+    b += `| Type | Defined In | Produced By | Accepted By | Consumers |\n`;
+    b += `|------|-----------|-------------|-------------|----------|\n`;
+    for (const r of relationships.slice(0, 40)) {
+      b += `| \`${r.typeName}\` | ${path.basename(r.definedIn)} | ${r.producedBy.slice(0, 3).join(', ')} | ${r.acceptedBy.slice(0, 3).join(', ')} | ${r.consumedBy.length} refs |\n`;
+    }
+    b += `\n`;
+  }
+
+  b += `## 9. Agent Instructions\n\n`;
+  b += `Ingested ${files.length} files (${total} lines). Extracted ${allI.length} interfaces, ${allC.length} classes, ${allF.length} functions, ${allConsts.length} const/rule objects.\n\n`;
+  b += `**WRITE THE LAYER ${layer} SPEC NOW.** \n\n`;
+  b += `**CRITICAL: For every rule, algorithm, or const object in Section 5, READ THE CHECK() METHOD BODY shown there.**\n`;
+  b += `**Trace through every condition, every branch, every loop. Describe the algorithm step-by-step.**\n`;
+  b += `**Do NOT summarize algorithms as "detects X" — explain HOW: what conditions, what data structures, what flow.**\n\n`;
+  b += `**If a code snippet is truncated, READ THE FULL SOURCE FILE at the path shown. The snippets are starting points, not complete pictures.**\n\n`;
+  if (layer === 2) {
+    b += `## SECTION A: EXTRACTION-BASED SECTIONS (trace from source code above)\n\n`;
+    b += `1. **executiveSummary** — What is being built and why. Include the problem statement, failure modes, and the three-engine model.\n`;
+    b += `2. **architectureOverview** — System diagram (ASCII), execution flow, component interaction, cost-gradient layering principle.\n`;
+    b += `3. **dataModel** — Full TypeScript interfaces adapted from Section 2. Add field-by-field rationale. Show how types connect.\n`;
+    b += `4. **engineDesign** — For EACH class in Section 3: constructor, state fields, every method. For EACH rule object in Section 5: trace the check() method body line by line. Explain the algorithm conditions, branches, and data flow. Include pseudocode.\n`;
+    b += `5. **defenseRules** — One detailed section per rule. For each: purpose, the QUESTION it asks, the AST entry point, severity, the ALGORITHM (traced from the check method body in Section 5), false-positive guards, worked example with code.\n`;
+    b += `6. **blindSpots** — What each engine CANNOT detect. Be specific.\n`;
+    b += `7. **evidenceFormat** — JSON schemas for each engine's output. Show example output objects.\n`;
+    b += `8. **testSpecs** — Test table with SPECIFIC inputs and expected outputs per rule. Include false-positive guard tests.\n\n`;
+    b += `## SECTION B: SYNTHESIS-BASED SECTIONS (these do NOT exist in source — you must DESIGN them)\n\n`;
+    b += `**These components are NEW. They do not exist in any source file. You must invent them by understanding the integration requirements.**\n\n`;
+    b += `9. **integrationPlan** — Write the ACTUAL integration code. This means:\n`;
+    b += `   - The GuardianHook composition (show the full beforeHook function with all enforcement layers composed in order)\n`;
+    b += `   - The plugin entry point changes (show the import statements and instantiation code)\n`;
+    b += `   - The hook registration sequence (which hooks fire in what order)\n`;
+    b += `   - Import paths for every new component\n`;
+    b += `   - Write this as FULL TypeScript code, not prose description\n\n`;
+    b += `10. **pipelineDesign** — Design the pipeline orchestration layer. This means:\n`;
+    b += `   - A PipelineEngine class that manages stage progression (EXPLORE -> ARCHITECT -> CODER -> REVIEWER -> TEST_ENGINEER -> CRITIC)\n`;
+    b += `   - Stage gate evaluation logic (what conditions must be met to advance)\n`;
+    b += `   - Rollback protocol (what happens when RGE audit fails in REVIEWER)\n`;
+    b += `   - Session state management and checkpoint serialization\n`;
+    b += `   - Write this as FULL TypeScript class implementation with methods, not just interface definitions\n\n`;
+    b += `11. **identityDesign** — Write the complete T1 system prompt for the agent. This means:\n`;
+    b += `   - Full identity text that tells the agent what it is and how it should behave\n`;
+    b += `   - Pipeline protocol instructions (what to do at each stage)\n`;
+    b += `   - Enforcement rules the agent must follow\n`;
+    b += `   - Write this as the actual prompt string, not a description of what the prompt should say\n\n`;
+    b += `12. **migrationStrategy** — Phased rollout with:\n`;
+    b += `   - Specific phases with DAY estimates (e.g., "Day 1-2: Engine Adaptation")\n`;
+    b += `   - Deliverables per phase\n`;
+    b += `   - Verification gate per phase (what must pass before proceeding)\n`;
+    b += `   - Rollback condition per phase\n\n`;
+    b += `13. **bibleCompliance** — Map each P1-P12 principle to how this spec satisfies it. Table format.\n\n`;
+    b += `14. **sourceAttribution** — Track which component comes from which source project. Table format.\n\n`;
+    b += `**Minimum 3000 lines. The synthesis sections (9-14) must contain FULL CODE, not descriptions of code.**\n`;
+    b += `**Write TypeScript implementations for PipelineEngine and GuardianHook. Write the actual T1 prompt string.**\n`;
+    b += `**Then call trident-deep-planning AGAIN with layer=2 and all section params.**\n`;
+  } else {
+    b += `Generate context library files using extracted content. Each 200+ lines.\n`;
+  }
+
+  b += `\n---\n*Trident Context Brief Engine*\n`;
+  return b;
 }

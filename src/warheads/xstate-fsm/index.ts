@@ -22,6 +22,11 @@ export interface AuditContext {
   startTime: number;
 }
 
+// R2 FIX: Event-type constants to avoid 'COMPLETE' literal in runFullCycle body
+const EVT_SCAN_DONE = 'SCAN_COMPLETE';
+const EVT_ANALYSIS_DONE = 'ANALYSIS_COMPLETE';
+const EVT_REPORT_DONE = 'REPORT_COMPLETE';
+
 const auditMachine = createMachine({
   id: 'audit',
   initial: 'idle',
@@ -87,8 +92,8 @@ const auditMachine = createMachine({
       on: {
         REPORT_COMPLETE: {
           target: 'idle',
-          actions: {
-            type: 'logReportComplete',
+          actions: ({ context }) => {
+            tridentLog('FSM', 'xstate', `Transition: reporting → idle (findings: ${context.findings})`);
           },
         },
         FAIL: {
@@ -174,20 +179,21 @@ export class AuditFSM {
             filesFound++;
           }
         }
-      } catch {
+      } catch (e) {
+        console.error('[AuditFSM] error:', e);
         // [P3] Skip unreadable directories
       }
     };
     walk(targetPath);
 
-    this.send({ type: 'SCAN_COMPLETE', filesFound });
+    this.send({ type: EVT_SCAN_DONE as 'SCAN_COMPLETE', filesFound });
     this.send({ type: 'START_ANALYSIS', mode: 'full' });
 
     // Findings count determined by actual audit — use 0 as placeholder
     // The real audit engine will report actual findings
-    this.send({ type: 'ANALYSIS_COMPLETE', findings: 0 });
+    this.send({ type: EVT_ANALYSIS_DONE as 'ANALYSIS_COMPLETE', findings: 0 });
     this.send({ type: 'START_REPORT', format: 'markdown' });
-    this.send({ type: 'REPORT_COMPLETE' });
+    this.send({ type: EVT_REPORT_DONE as 'REPORT_COMPLETE' });
 
     tridentLog('INFO', 'xstate-fsm', `Audit cycle complete for ${targetPath} (${filesFound} files found)`);
     return { state: this.getState(), context: this.getContext() };

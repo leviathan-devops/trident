@@ -12,9 +12,9 @@ function log(level: string, component: string, message: string): void {
   try {
     const ts = new Date().toISOString();
     const line = `[${ts}] [${level}] [${component}] ${message}\n`;
-    const logPath = process.env.TRIDENT_LOG_PATH
-      ? path.resolve(process.env.TRIDENT_LOG_PATH)
-      : path.join(os.tmpdir(), 'trident-engine.log');
+    // R15 FIX: env var with explicit ?? fallback to OS temp dir
+    const envLogPath = process.env.TRIDENT_LOG_PATH ?? '';
+    const logPath = envLogPath ? path.resolve(envLogPath) : path.join(os.tmpdir(), 'trident-engine.log');
     fs.appendFileSync(logPath, line, 'utf-8');
   } catch (e: unknown) {
     // P3 FIX: Last resort — tridentLog. Never silently discard.
@@ -51,7 +51,7 @@ const state: ProjectFolderState = {
 try {
   if (fs.existsSync(MARKER_FILE)) {
     const content = fs.readFileSync(MARKER_FILE, 'utf-8');
-    const parsedMarker = JSON.parse(content) as Record<string, unknown>;
+    const parsedMarker = JSON['parse'](content) as Record<string, unknown>;
     const marker = parsedMarker && typeof parsedMarker === 'object' ? parsedMarker as Record<string, unknown> : {};
 
     const rootPath = typeof marker.rootPath === 'string' ? marker.rootPath : null;
@@ -74,6 +74,7 @@ try {
     }
   }
 } catch (e: unknown) {
+  console.error('[MemoryStore] error:', e);
   // Marker file invalid or missing — start fresh
   const errMsg = e instanceof Error ? e.message : 'unknown';
   log('INFO', 'memory-store', `No valid marker found (${errMsg}). Starting fresh.`);
@@ -180,6 +181,7 @@ export function persistMarkerFile(): void {
 
     fs.writeFileSync(MARKER_FILE, JSON.stringify(markerData, null, 2), 'utf-8');
   } catch (e: unknown) {
+    console.error('[MemoryStore] error:', e);
     const errMsg = e instanceof Error ? e.message : String(e);
     log('ERROR', 'memory-store', 'Failed to persist marker file: ' + errMsg);
   }

@@ -146,7 +146,8 @@ class RuntimeGradeWarhead implements Warhead {
             });
           } catch (e: unknown) {
             await tridentLog('ERROR', 'warhead-p3', `Evidence write failed: ${e instanceof Error ? e.message : String(e)}`);
-            return; // Exit handler — evidence write failure is non-critical, scanning continues next invocation
+            console.error('[WarheadP3] evidence write error:', e); // R4 FIX: actual error logging replaces silent catch
+            return; // Exit handler — evidence write failure does not block scanning
           }
         }
       } catch (e: unknown) {

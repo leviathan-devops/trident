@@ -20,7 +20,7 @@ export function checkIdentityBeforeTool(
 ): boolean {
   const result = enforceIdentity(agentName, toolName);
   
-  if (!result.allowed) {
+  if (!result.granted) {
     const reasons = result.violations
       .filter((v: IdentityViolation) => v.severity === 'BLOCK')
       .map((v: IdentityViolation) => `[${v.rule}] ${v.reason}`)
@@ -36,7 +36,7 @@ export function checkIdentityBeforeTool(
     tridentLog('WARN', 'identity-enforcer-hook', `[${w.rule}] ${w.reason}`);
   }
   
-  return result.allowed;
+  return result.granted;
 }
 
 /**

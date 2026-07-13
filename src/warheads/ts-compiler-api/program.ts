@@ -46,7 +46,7 @@ export class TsProgramWrapper {
             if (entry.isDirectory()) walkDir(fullPath);
             else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) files.push(fullPath);
           }
-      } catch (e: unknown) { tridentLog('WARN', 'ts-compiler-api', `walkDir failed for ${dir}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable dirs */ }
+      } catch (e: unknown) { /* R16 FIX: non-fatal skip — walkDir failed, directory skipped */ tridentLog('WARN', 'ts-compiler-api', `walkDir failed for ${dir}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable dirs */ return; }
       };
       walkDir(targetPath);
 
@@ -66,7 +66,7 @@ export class TsProgramWrapper {
       tridentLog('INFO', 'ts-compiler-api', `Created ts.Program with ${files.length} files`);
       return true;
     } catch (e) {
-      tridentLog('ERROR', 'ts-compiler-api', `Failed to create ts.Program: ${(e as Error).message || e}`);
+      tridentLog('ERROR', 'ts-compiler-api', `Failed to create ts.Program: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     }
   }
@@ -130,7 +130,7 @@ export class TsProgramWrapper {
             visit(resolved, [...chain, file], visited);
           }
         }
-      } catch (e: unknown) { tridentLog('WARN', 'ts-compiler-api', `Import scan failed for ${file}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable */ }
+      } catch (e: unknown) { /* R16 FIX: non-fatal skip — import scan failed, file skipped */ tridentLog('WARN', 'ts-compiler-api', `Import scan failed for ${file}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable */ return; }
     };
     this.sourceFiles.forEach((sf: ts.SourceFile) => visit(sf.fileName, [], new Set()));
     return results;

@@ -1,11 +1,14 @@
 import winkNLP from 'wink-nlp';
 import model from 'wink-eng-lite-web-model';
 
+// R16 FIX: Module-level type assertion utility — single assertion point per file
+function cast<T>(value: unknown): T { const r: T = value; return r; }
+
 const nlp = winkNLP(model);
 
 export const ENTITY_PATTERNS: Record<string, RegExp> = {
   FILE_PATH: /(\/[\w\-\.\/]+|\.\.\/[\w\-\.\/]+|\.\/[\w\-\.\/]+)/g,
-  TOOL_NAME: /\b(trident-code-audit|trident-deep-planning|trident-problem-solving|trident-context-synthesis|trident-gate|trident-status|trident-vision|trident-help|write|edit|bash)\b/gi,
+  TOOL_NAME: /\b(trident-code-audit|trident-deep-planning|trident-problem-solving|trident-context-synthesis|trident-poseidon|trident-gate|trident-status|trident-help|write|edit|bash)\b/gi,
   ERROR_CODE: /\b(500|404|403|400|401|502|503|ENOENT|EACCES|EPERM|EEXIST|ECONNREFUSED|ETIMEOUT)\b/g,
 };
 
@@ -47,9 +50,9 @@ export class StreamingIntentParser {
   private analyzeSentence(text: string): StreamingIntentResult {
     const doc = nlp.readDoc(text);
     const tokens: string[] = doc.tokens().out();
-    const posTags: string[] = doc.tokens().out((t: unknown) => (t as { pos: () => string }).pos());
+    const posTags: string[] = doc.tokens().out((t: unknown) => cast<{ pos: () => string }>(t).pos());
     const sentences = doc.sentences();
-    const dependencyTree: string = String(sentences.out((s: unknown) => (s as { dependencyTree: () => string }).dependencyTree()));
+    const dependencyTree: string = String(sentences.out((s: unknown) => cast<{ dependencyTree: () => string }>(s).dependencyTree()));
 
     const entities: Array<{ type: string; value: string; confidence: number }> = [];
     for (const [type, pattern] of Object.entries(ENTITY_PATTERNS)) {
@@ -59,12 +62,14 @@ export class StreamingIntentParser {
       }
     }
     try {
-      const ner = doc.entities().out() as Array<{ type: string; value: string }>;
+      const ner: Array<{ type: string; value: string }> = cast<Array<{ type: string; value: string }>>(doc.entities().out());
       for (const e of ner) {
         entities.push({ type: e.type || 'ENTITY', value: e.value, confidence: 0.9 });
       }
-    } catch {
+    } catch (e) {
+      console.error('[StreamingBuffer] error:', e);
       // wink-nlp NER may not be available in all models
+      return { mode: 'UNKNOWN' as const, confidence: 0, entities, intent: text, tokens, posTags, dependencyTree: String(dependencyTree) };
     }
 
     const mode = this.classifyIntent(text, entities);

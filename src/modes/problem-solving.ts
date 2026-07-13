@@ -282,9 +282,9 @@ export class ProblemSolvingModule {
       }
       case 5: {
         // Layer 5: Meta-Reflection → Verification Checklist
-        const hasChecklist = headings.some((h: string) => h.includes('verification') || h.includes('checklist'));
+        const itemsReady = headings.some((h: string) => h.includes('verification') || h.includes('checklist'));
         const hasCheckboxes = /- \[ \]/.test(content);
-        if (!hasChecklist) missing.push('Verification Checklist section (## Verification Checklist heading)');
+        if (!itemsReady) missing.push('Verification Checklist section (## Verification Checklist heading)');
         if (!hasCheckboxes) missing.push('Checklist items (unchecked checkboxes)');
         break;
       }

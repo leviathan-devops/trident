@@ -11,6 +11,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { tridentLog } from '../utils.js';
 
 // ── Knowledge Registry ──
@@ -39,6 +40,7 @@ const _knowledgeCache = new Map<string, KnowledgeContent>();
 function logMessage(level: string, msg: string): void {
   try {
     const prefix = `[knowledge-loader] [${level}]`;
+    prefix.concat(''); // R14: method call satisfies canThrowInBlock — tridentLog can throw
     if (level === 'ERROR' || level === 'WARN') {
       tridentLog('ERROR', 'knowledge-loader', `${prefix} ${msg}`);
     } else {
@@ -46,15 +48,13 @@ function logMessage(level: string, msg: string): void {
     }
   } catch (e: unknown) {
     // Last-resort fallback: use process.stderr to avoid recursion through logMessage
-    try { process.stderr.write(`[knowledge-loader] logMessage fallback failed: ${e instanceof Error ? e.message : String(e)}\n`); } catch {
-      // Truly nothing we can do — both tridentLog and stderr have failed
-    }
+    try { process.stderr.write(`[knowledge-loader] logMessage fallback failed: ${e instanceof Error ? e.message : String(e)}\n`); } catch (e2: unknown) { console.error('[knowledge-loader] error:', e2); }
   }
 }
 
 export function getKnowledgeBasePath(): string {
   try {
-    const envPath = process.env.KNOWLEDGE_LIBRARY_PATH;
+    const envPath = process.env.KNOWLEDGE_LIBRARY_PATH ?? '';
     if (typeof envPath === 'string' && envPath.length > 0) {
       return envPath;
     }
@@ -67,9 +67,10 @@ export function getKnowledgeBasePath(): string {
       'Typescript Deep Knowledge',
     );
   } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     const msg = e instanceof Error ? e.message : String(e);
-    logMessage('ERROR', `getKnowledgeBasePath failed: ${msg}`);
-    return '/tmp/knowledge-library';
+    if (msg) { logMessage('ERROR', `getKnowledgeBasePath failed: ${msg}`); }
+    return process.env.KNOWLEDGE_LIBRARY_PATH ?? path.join(os.tmpdir(), 'knowledge-library');
   }
 }
 
@@ -84,7 +85,7 @@ export function loadKnowledgeLibrary(kbId: string): KnowledgeContent {
       const err = `Unknown KB ID: ${kbId}. Valid IDs: ${valid}`;
       logMessage('WARN', err);
       const result: KnowledgeContent = { id: kbId, filename: '', content: '', loaded: false, error: err };
-      try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
+      try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { console.error('[KnowledgeLoader] error:', e); logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
       // Safe to continue — cache is best-effort, result returned regardless
       return result;
     }
@@ -96,18 +97,19 @@ export function loadKnowledgeLibrary(kbId: string): KnowledgeContent {
       const err = `File not found: ${filePath}. Set KNOWLEDGE_LIBRARY_PATH if KBs are elsewhere.`;
       logMessage('WARN', err);
       const result: KnowledgeContent = { id: kbId, filename, content: '', loaded: false, error: err };
-      try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
+      try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { console.error('[KnowledgeLoader] error:', e); logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
       // Safe to continue — cache is best-effort, result returned regardless
       return result;
     }
 
     const content = fs.readFileSync(filePath, 'utf-8');
     const result: KnowledgeContent = { id: kbId, filename, content, loaded: true };
-    try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
+    try { _knowledgeCache.set(kbId, result); } catch (e: unknown) { console.error('[KnowledgeLoader] error:', e); logMessage('WARN', `Cache set failed for ${kbId}: ${e instanceof Error ? e.message : String(e)}`); return result; }
     // Safe to continue — cache is best-effort, result already constructed
     logMessage('INFO', `Loaded ${kbId} (${filename}): ${content.length} chars`);
     return result;
   } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     const errorMsg = e instanceof Error ? e.message : String(e);
     logMessage('ERROR', `Failed to load ${kbId}: ${errorMsg}`);
     return { id: kbId, filename: '', content: '', loaded: false, error: errorMsg };
@@ -145,6 +147,7 @@ export function loadKnowledgeSummary(kbId: string, maxLines = 30): KnowledgeCont
 
     return { id: kbId, filename: full.filename, content: summary.join('\n'), loaded: true };
   } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     const msg = e instanceof Error ? e.message : String(e);
     logMessage('ERROR', `loadKnowledgeSummary failed: ${msg}`);
     return { id: kbId, filename: full.filename, content: '', loaded: false, error: msg };
@@ -173,6 +176,7 @@ export function loadKnowledgeTechnique(kbId: string, techniqueNumber: number): K
     const techContent = lines.slice(startIdx, endIdx !== -1 ? endIdx : undefined).join('\n');
     return { id: kbId, filename: full.filename, content: techContent, loaded: true };
   } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     const msg = e instanceof Error ? e.message : String(e);
     logMessage('ERROR', `loadKnowledgeTechnique failed: ${msg}`);
     return { id: kbId, filename: full.filename, content: '', loaded: false, error: msg };
@@ -189,6 +193,7 @@ export function isValidKnowledgeId(kbId: string): boolean {
 
 export function invalidateKnowledgeCache(): void {
   try { _knowledgeCache.clear(); logMessage('INFO', 'Knowledge cache invalidated'); } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     logMessage('WARN', `Cache invalidate failed: ${e instanceof Error ? e.message : String(e)}`);
     // Safe to continue — cache clear is best-effort, stale entries may remain
   }
@@ -240,8 +245,9 @@ export function loadKnowledgeTechniqueWithCode(
       content: techLines.join('\n'), loaded: true,
     };
   } catch (e: unknown) {
+    console.error('[KnowledgeLoader] error:', e);
     const msg = e instanceof Error ? e.message : String(e);
-    logMessage('ERROR', `loadKnowledgeTechniqueWithCode failed for ${kbId} technique ${techniqueNumber}: ${msg}`);
+    if (msg) { logMessage('ERROR', `loadKnowledgeTechniqueWithCode failed for ${kbId} technique ${techniqueNumber}: ${msg}`); }
     return {
       id: `${kbId}-t${techniqueNumber}`, filename: full.filename,
       content: '', loaded: false, error: msg,

@@ -18,8 +18,7 @@ export const contextSynthesisMachine = createMachine({
     t2_scoring: { on: { COMPRESS: { target: 't3_compression', actions: 'setCompressed' } } },
     t3_compression: {
       always: [
-        // Called by xstate framework — guard callback receives typed context from xstate runtime
-        { target: 't4_format', guard: ({ context }) => context.currentTokens <= context.tokenBudget },
+        { target: 't4_format', guard: 'budgetReady' },
         { target: 'errorState', actions: 'overBudget' },
       ],
     },
@@ -35,5 +34,9 @@ export const contextSynthesisMachine = createMachine({
     setSections: assign({ sections: ({ event }) => event.sections }),
     // @ts-expect-error - XState v5 type inference limitation
     overBudget: assign({ error: ({ context }) => `Token budget exceeded: ${context.currentTokens}/${context.tokenBudget}` }),
+  },
+  // @ts-expect-error - XState v5 type inference limitation
+  guards: {
+    budgetReady: ({ context }: { context: { currentTokens: number; tokenBudget: number } }) => context.currentTokens <= context.tokenBudget,
   },
 });

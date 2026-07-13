@@ -148,13 +148,15 @@ export class ContextSynthesisEngine {
             // Bonus for finding actionable principles (must/should/required statements)
             nlpScore = Math.min(1.0, nlpScore + (principles.length * 0.05));
           }
-        } catch (e) {
+        } catch (e: unknown) {
           // NLP pipeline unavailable — use minimal fallback
+          console.error('[ContextSynthesisEngine] error:', e);
           tridentLog('WARN', 'context-synthesis-engine', 
-            'NLP pipeline unavailable: ' + ((e as Error).message || String(e)));
+            'NLP pipeline unavailable: ' + (e instanceof Error ? e.message : String(e)));
           // Minimal fallback: count substantive lines
           const substantiveLines = section.content.split('\n').filter((l: string) => l.trim().length > 20).length;
           nlpScore = Math.min(0.5, substantiveLines / Math.max(section.lineCount, 1));
+          return [];
         }
         
         scored.push({

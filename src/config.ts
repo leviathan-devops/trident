@@ -9,8 +9,8 @@ export const TRIDENT_CONFIG = {
   baselineBinary: process.env.TRIDENT_BASELINE_BINARY || path.join(NODE_MODULES_BASE, 'opencode-ai/node_modules/opencode-linux-x64-baseline/bin/opencode'),
   configBase: CONFIG_BASE,
   pluginsDir: path.join(CONFIG_BASE, 'opencode', 'plugins'),
-  version: '4.4.1',
-  debug: !!process.env.TRIDENT_DEBUG,
+  version: '4.4.2',
+  debug: Boolean(process.env.TRIDENT_DEBUG ?? ''),
   logPath: process.env.TRIDENT_LOG_PATH || '',
   artifactsBase: process.env.TRIDENT_ARTIFACTS_BASE || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'Shared Workspace Context', 'Trident Brain', 'GENERATED_ARTIFACTS'),
 
@@ -68,5 +68,15 @@ export const POSEIDON_CONFIG = {
       'POST_COMPACTION_PROMPT.md',
       'SOC_PRESERVATION.md',
     ],
+  },
+
+  containerTesting: {
+    typeCheckCommand: 'tsc --noEmit',
+    buildCommand: 'bun build src/index.ts --outdir dist --target bun --format esm --bundle',
+    containerName: process.env.TRIDENT_CONTAINER_NAME || 'trident-test',
+    imageName: process.env.TRIDENT_CONTAINER_IMAGE || 'runtime-grade-container-sandbox:master',
+    containerTestPassThreshold: 0.96,
+    tuiWaitTimeoutMs: 30000,
+    tuiPollIntervalMs: 1000,
   },
 } as const;

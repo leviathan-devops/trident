@@ -1,4 +1,6 @@
 import { appendFileSync } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Hooks } from '@opencode-ai/plugin';
 import { isTridentAgent } from '../identity/agent-identity.js';
 import { setCurrentAgent, clearCurrentAgent } from './agent-state.js';
@@ -8,7 +10,7 @@ export function createSessionHook(): Hooks['event'] {
   return async (input: Record<string, unknown>) => {
     if (!input) return;
     // DEBUG: session event trace
-    try { appendFileSync('/tmp/trident-hook-debug.log', `[${Date.now()}] SESSION_EVENT: fired | type=${(input.event as { type?: string })?.type}\n`); } catch { /* Debug logging non-fatal — plugin loading continues regardless */ }
+    try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SESSION_EVENT: fired | type=${(input.event as { type?: string })?.type}\n`); } catch (e) { console.error('[SessionHook] error:', e); return {}; }
     const event = input.event as { type?: string; sessionId?: string; agent?: string };
     if (!event?.type) return;
     const sessionId = event.sessionId || '';

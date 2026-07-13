@@ -27,7 +27,7 @@ interface OrchestratorState {
 function defaultState(): OrchestratorState {
   return {
     mode: 'IDLE', currentGate: 'R0', currentLayer: 0, maxLayers: 17,
-    iteration: 'V4.3.3', status: 'IDLE', initialized: true,
+    iteration: 'V4.4.2', status: 'IDLE', initialized: true,
     identityLoaded: false, artifacts: new Map(), lastIntent: null,
   };
 }

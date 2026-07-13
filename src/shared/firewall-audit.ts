@@ -33,11 +33,11 @@ export class FirewallAudit {
     }
   }
 
-  getBlockCount(layer: string): number {
+  layerEntryCount(layer: string): number {
     return this.counters.get(layer) || 0;
   }
 
-  getTotalBlocks(): number {
+  totalCount(): number {
     let total = 0;
     for (const c of this.counters.values()) total += c;
     return total;

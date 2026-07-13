@@ -10,7 +10,7 @@ export function getFirewallAudit(): FirewallAudit {
 
 const TRIDENT_TOOLS: Set<string> = new Set([
   'trident-code-audit', 'trident-deep-planning', 'trident-problem-solving',
-  'trident-context-synthesis', 'trident-poseidon', 'trident-gate', 'trident-status', 'trident-vision', 'trident-help',
+  'trident-context-synthesis', 'trident-poseidon', 'trident-gate', 'trident-status', 'trident-help',
 ]);
 
 function checkF1Isolation(toolName: string, sessionAgent: string | undefined): void {

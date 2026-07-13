@@ -147,6 +147,7 @@ export interface AnalysisContext {
   projectRoot: string;
   constructsByFile: Map<string, CodeConstruct[]>;
   isSelfAudit: boolean;
+  checker: ts.TypeChecker | null;
   // v4.3.3 additions — multi-language awareness + evidence integrity
   languageStats?: ProjectLanguageStats;
   evidenceChainHash?: string;
@@ -184,8 +185,10 @@ export interface AuditFinding {
   line: number;
   evidence: string;
   description: string;
-  correction: string;
-  runtimeImpact: string;
+  message?: string;
+  rule?: string;
+  correction?: string;
+  runtimeImpact?: string;
   confidence: number;
   constructType: ConstructType | null;
   callGraphRef: string | null;

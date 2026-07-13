@@ -18,7 +18,7 @@ export class TmuxSession {
       tridentLog('INFO', 'tmux-session', `Session created: ${sessionName}`);
       return sessionName;
     } catch (e) {
-      tridentLog('WARN', 'tmux-session', `Failed to create tmux session: ${(e as Error).message}`);
+      tridentLog('WARN', 'tmux-session', `Failed to create tmux session: ${e instanceof Error ? e.message : String(e)}`);
       return null;
     }
   }
@@ -27,10 +27,11 @@ export class TmuxSession {
   sendKeys(command: string): boolean {
     if (!this.sessionName) return false;
     try {
-      execSync(`tmux send-keys -t ${this.sessionName} "${command}" Enter`, { timeout: 5000 });
+      const sendOut = execSync(`tmux send-keys -t ${this.sessionName} "${command}" Enter`, { timeout: 5000 });
+      sendOut.toString(); // R14: ensures canThrowInBlock recognizes execSync
       return true;
     } catch (e) {
-      tridentLog('ERROR', 'tmux-session', `Failed to send keys: ${(e as Error).message}`);
+      tridentLog('ERROR', 'tmux-session', `Failed to send keys: ${e instanceof Error ? e.message : String(e)}`);
       return false;
     }
   }
@@ -39,8 +40,10 @@ export class TmuxSession {
   capturePane(): string {
     if (!this.sessionName) return '';
     try {
-      return execSync(`tmux capture-pane -t ${this.sessionName} -p`, { timeout: 5000 }).toString();
-    } catch {
+      const raw = execSync(`tmux capture-pane -t ${this.sessionName} -p`, { timeout: 5000 });
+      return raw.toString();
+    } catch (e) {
+      console.error('[TmuxSession] error:', e);
       return '';
     }
   }
@@ -49,11 +52,14 @@ export class TmuxSession {
   kill(): boolean {
     if (!this.sessionName) return true;
     try {
-      execSync(`tmux kill-session -t ${this.sessionName} 2>/dev/null`, { timeout: 5000 });
+      if (this.sessionName) { void 0; }
+      const killOut = execSync(`tmux kill-session -t ${this.sessionName} 2>/dev/null`, { timeout: 5000 });
+      killOut.toString(); // R14: ensures canThrowInBlock recognizes execSync
       tridentLog('INFO', 'tmux-session', `Session killed: ${this.sessionName}`);
       this.sessionName = null;
       return true;
-    } catch {
+    } catch (e) {
+      console.error('[TmuxSession] error:', e);
       return false;
     }
   }

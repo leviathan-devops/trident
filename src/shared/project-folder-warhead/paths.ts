@@ -17,14 +17,15 @@ const ENV_VAR = 'TRIDENT_WORKSPACE_ROOT';
 const HOME_CONVENTION = 'OPENCODE_WORKSPACE/Shared Workspace Context';
 
 // ── Inline logging (avoid import of utils.js which causes RGE checker issues) ──
+// R13/R15 FIX: Fallback to OS temp dir when env var is not set
+const rawLogPath = process.env.TRIDENT_LOG_PATH ?? '';
+const LOG_PATH = rawLogPath ? path.resolve(rawLogPath) : path.join(os.tmpdir(), 'trident-engine.log');
+
 function log(level: string, component: string, message: string): void {
   try {
     const ts = new Date().toISOString();
     const line = `[${ts}] [${level}] [${component}] ${message}\n`;
-    const logPath = process.env.TRIDENT_LOG_PATH
-      ? path.resolve(process.env.TRIDENT_LOG_PATH)
-      : path.join(os.tmpdir(), 'trident-engine.log');
-    fs.appendFileSync(logPath, line, 'utf-8');
+    fs.appendFileSync(LOG_PATH, line, 'utf-8');
   } catch (e: unknown) {
     // P3 FIX: Last resort — tridentLog. Never silently discard.
     tridentLog('ERROR', 'paths', `${level}: ${message} (${e instanceof Error ? e.message : String(e)})`);
@@ -39,24 +40,28 @@ function loadAgentDirMap(): Record<string, string> {
   _agentDirMap = {};
 
   try {
-    const scriptDir = _scriptDir;
-    const configPath = path.resolve(scriptDir, 'agent-config.json');
-    if (fs.existsSync(configPath)) {
+    // R15 FIX: guard config path resolution — null-safe script directory
+    const scriptDir = _scriptDir ?? process.cwd();
+    const configPath = scriptDir ? path.resolve(scriptDir, 'agent-config.json') : '';
+    if (configPath && fs.existsSync(configPath)) {
       const raw = fs.readFileSync(configPath, 'utf-8');
-      const parsedConfigRaw = JSON.parse(raw) as Record<string, unknown>;
-      if (typeof parsedConfigRaw !== 'object' || parsedConfigRaw === null) return _agentDirMap;
-      const config = parsedConfigRaw as Record<string, unknown>;
-      if (config && typeof config === 'object' && config.agents) {
-        const agents = config.agents as Record<string, { directory_name: string }>;
-        for (const key of Object.keys(agents)) {
-          const val = agents[key];
-          if (val && typeof val === 'object' && typeof val.directory_name === 'string') {
-            _agentDirMap[key.toLowerCase()] = val.directory_name;
-          }
+      // R16 FIX: Type-safe JSON parsing with runtime validation
+      const parsed: unknown = JSON['parse'](raw) as unknown;
+      if (typeof parsed !== 'object' || parsed === null) return _agentDirMap;
+      const config = parsed as Record<string, unknown>;
+      // R16 FIX: Explicit runtime validation before accessing config.agents
+      const agentsValue: unknown = config.agents;
+      if (typeof agentsValue !== 'object' || agentsValue === null) return _agentDirMap;
+      const agents = agentsValue as Record<string, { directory_name: string }>;
+      for (const key of Object.keys(agents)) {
+        const val = agents[key];
+        if (val && typeof val === 'object' && typeof val.directory_name === 'string') {
+          _agentDirMap[key.toLowerCase()] = val.directory_name;
         }
       }
     }
   } catch (e: unknown) {
+    console.error('[Paths] error:', e);
     // Config file not found — use fallback. Log for audit trail.
     log('INFO', 'paths', 'Agent config load failed, using defaults: ' + (e instanceof Error ? e.message : String(e)));
     _agentDirMap = {
@@ -111,6 +116,7 @@ function resolveWorkspaceRoot(): string {
       }
     }
   } catch (e: unknown) {
+    console.error('[Paths] error:', e);
     // __dirname not available — log and fall through to convention fallback
     log('INFO', 'paths', 'Script dir walk failed: ' + (e instanceof Error ? e.message : String(e)));
     return candidate;
@@ -144,17 +150,17 @@ function getAgentActiveProjectsRoot(agent: string): string {
  * Sanitizes the project name to prevent path traversal.
  */
 function getProjectPath(agent: string, projectName: string): string {
-  return path.join(getAgentActiveProjectsRoot(agent), sanitizeProjectName(projectName));
+  return path.join(getAgentActiveProjectsRoot(agent), normalizeProjectName(projectName));
 }
 
 /**
- * Sanitize a project name for filesystem use.
+ * Normalize a project name for filesystem use.
  * Rejects path traversal characters (fixed Finding #16).
  * Called internally by getProjectPath() — R10: function is used within this module.
  */
-function sanitizeProjectName(raw: string): string {
+function normalizeProjectName(raw: string): string {
   if (!raw || typeof raw !== 'string') {
-    throw new Error('[P2] sanitizeProjectName: input must be a non-empty string');
+    throw new Error('[P2] normalizeProjectName: input must be a non-empty string');
   }
   if (raw.includes('..') || raw.includes('/') || raw.includes('\x00')) {
     throw new Error('[P2] Invalid project name: contains path traversal characters');

@@ -1,25 +1,32 @@
-# TRIDENT v4.4-POSEIDON — God Loop Orchestrator
+# TRIDENT v4.4.2 — God Loop Orchestrator (Identity-Hotfixed)
 
-**Status:** ✅ GOD LOOP — 17-LAYER AUDIT ENGINE — POSEIDON MODE — TRIDENT_BUILD SUBAGENT
-**Bundle:** 14.4 MB (ESM)
+**Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED
+**Bundle:** 14.9 MB (ESM, bun-built — 325 modules)
 **Runtime:** opencode 1.14.43+
+**Build Hash:** `8c3522b3`
 
 ---
 
 ## Overview
 
-Trident v4.4-POSEIDON is a runtime-grade **God Loop orchestrator** plugin for opencode. It introduces a closed feedback cycle — **AUDIT → PLAN → BUILD → VERIFY** — that autonomously drives code quality to 96%+ runtime grade through a self-supervising loop.
+Trident v4.4.2 is a runtime-grade **God Loop orchestrator** plugin for opencode. It introduces a closed feedback cycle — **AUDIT → PLAN → BUILD → VERIFY** — that autonomously drives code quality to 96%+ runtime grade through a self-supervising loop.
 
-The engine adds a **5th mode tool** (`trident-poseidon`) that functions as a God Orchestrator, a **Trident_Build subagent** with CODE-enforced quality gates, and a **semantic activation system** that prevents autonomous activation — the user must explicitly unlock Poseidon Mode.
+### Key Improvements in v4.4.2
 
-### Key Features in v4.4
-
-- **Poseidon God Loop (AUDIT → PLAN → BUILD → VERIFY):** Closed-loop quality enforcement — Trident audits, generates remediation plans, dispatches Trident_Build, re-audits, and loops until 96%+ runtime grade, then runs container validation
+- **Identity System Inlined** — All 7 identity .md files are now TypeScript string constants. Zero disk-file dependency. The agent can no longer load stale v4.3.3 identity files from disk.
+- **Pipeline Restoration** — `classifyProject()` and `generatePipelineSpec()` were never imported in v4.4.0/4.4.1. 7 pipeline modules (5,000+ lines) now actually execute. Module count: 325 (bun tree-shaking).
+- **9 Critical Runtime Crash Fixes** — Including: `ts.getPreEmitDiagnostics()` event loop blocking (synchronous), R13 stack overflow (recursive walk → iterative), R13 TypeScript internal TypeError (checker fallback removed), broken timeout (Promise.race), false success scoring, Poseidon session ID mismatch, CONTAINER_TEST fail-open, DISPATCH instruction truncation, WaveVerifier hash disabled.
+- **Recursive→Iterative Conversions** — `auto-discover.ts` and `code-classifier.ts` converted from recursion to queue-based traversal. Stack overflows eliminated on 157+ file codebases.
+- **Fail-Closed Semantics** — VERIFY gate, CONTAINER_TEST, and Poseidon gates all default to `false`. No more rubber-stamped approvals.
+- **Version Purge** — Zero references to v4.3.3 remain. `grep -c "Trident Brain v4.3.3" dist/index.js` = 0.
+- **trident-vision Purge** — Removed from all functional code. Tool count reduced from 10 to 8.
+- **Build System: esbuild → bun** — 325 modules (bun tree-shakes more aggressively). Both `package.json` files use `bun build`.
+- **Poseidon God Loop (AUDIT → PLAN → BUILD → VERIFY):** 11-phase closed-loop quality enforcement — Trident audits, generates remediation plans, dispatches Trident_Build, re-audits, and loops until 96%+ runtime grade, then runs container validation
 - **Semantic activation system:** PoseidonDetector uses regex first-pass + signal-word scoring second-pass. No single-string activation. The agent CANNOT activate Poseidon Mode — only the user can
 - **Trident_Build subagent:** 8+ file harness with CODE-enforced quality gates, Merkle chain evidence tracking, AST analysis, theatrical detection, and runtime grade enforcement
 - **Auto-lock on completion:** The `trident-poseidon` tool locks itself after execution — human must re-activate
 - **Evidence archival:** Full audit trail per cycle, per session — `.trident/poseidon-audits/{sessionId}/cycle_{N}/`
-- **17-layer audit engine (R0-R16):** From build chain integrity through runtime grade bible enforcement
+- **18-layer audit engine (R0-R16 + preflight):** From build chain integrity through runtime grade bible enforcement
 
 ---
 
@@ -110,7 +117,7 @@ The engine adds a **5th mode tool** (`trident-poseidon`) that functions as a God
 
 ---
 
-## Tools (10)
+## Tools (8)
 
 ### Mode Tools (5):
 
@@ -122,19 +129,17 @@ The engine adds a **5th mode tool** (`trident-poseidon`) that functions as a God
 | `trident-context-synthesis` | 4-layer synthesis (collect→score→compress→inject) | T1_INJECTABLE / T2_KNOWLEDGE |
 | **`trident-poseidon`** | **God Loop orchestrator — quality-enforced build execution with auto-lock** | **BUILD REPORT** |
 
-### Support Tools (5):
+### Support Tools (3):
 
 | Tool | Description |
 |------|-------------|
 | `trident-gate` | Evaluate specific audit layers (R0-R16) |
 | `trident-status` | Current Trident state (mode, layer, iteration, artifacts) |
-| `trident-vision` | Analyze images using GLM-4.6V-Flash VLM via llama-server API |
 | `trident-help` | Reference for all commands and modes |
-| `trident-poseidon` (status/abort) | Check loop status or send abort signal |
 
 ---
 
-## 17-Layer Audit Engine (R0-R16)
+## 18-Layer Audit Engine (R0-R16 + Preflight)
 
 Every finding includes: **confidence score**, **AST construct trace**, **call graph reference**, **mechanical evidence gate**.
 
@@ -369,7 +374,7 @@ Say "Poseidon Mode Activate" when ready to build again.
 
 ```bash
 md5sum dist/index.js
-# fce6d7a16fc4cfe70d99bddec752cc83
+# 8c3522b3c2de5ae97795f9c5ee3936ac
 ```
 
 ---
@@ -490,6 +495,7 @@ bun run build
 
 ## Previous Versions
 
+- `legacy-v4.4` — Poseidon God Loop, 17-layer audit engine, 10 tools including trident-vision, esbuild-built
 - `archive/v4.3.3` — PRE_SYNTHESIZED_T1 warhead system with L5 firewall enforcement, 16-warhead architecture, 18-layer audit (R0-R17), R17 Theatrical Integrity detectors (D1-D10)
 - `archive/v4.3.1-T3` — Legacy T3 architecture
 - `v4.3.2` — Stable release with warhead registry, 7-Q enforcement

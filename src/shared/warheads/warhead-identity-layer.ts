@@ -18,14 +18,14 @@ class IdentityLayerWarhead implements Warhead {
 
   getT0(): string {
     const fw = getFirewallAudit();
-    return `[LAYER ENGINE] F1: ${fw.getBlockCount('F1_ISOLATION')} blocks | Total enforcement: ${fw.getTotalBlocks()} blocks. L5 (11 classes) + CFW + Zone active.`;
+    return `[LAYER ENGINE] F1: ${fw.layerEntryCount('F1_ISOLATION')} blocks | Total enforcement: ${fw.totalCount()} blocks. L5 (11 classes) + CFW + Zone active.`;
   }
 
   getStatus(): Record<string, number | string> {
     const fw = getFirewallAudit();
     return {
-      f1Blocks: fw.getBlockCount('F1_ISOLATION'),
-      totalBlocks: fw.getTotalBlocks(),
+      f1Blocks: fw.layerEntryCount('F1_ISOLATION'),
+      totalBlocks: fw.totalCount(),
     };
   }
 }

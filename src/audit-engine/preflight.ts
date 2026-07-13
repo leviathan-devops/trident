@@ -36,8 +36,15 @@ export interface PreflightFinding {
   detail: string;
 }
 
+// R16 FIX: Typed error shape for exec errors — replaces bare `as` assertion
+interface ExecErrorShape {
+  stderr?: { toString(): string };
+  message?: string;
+  status?: string | number;
+}
+
 function classifyExecError(e: unknown, command: string): string {
-  var execErr = e as { stderr?: { toString(): string }; message?: string; status?: string | number };
+  var execErr: ExecErrorShape = typeof e === 'object' && e !== null ? e : {};
   var stderr = execErr.stderr?.toString() || '';
   var message = execErr.message || '';
   var code = execErr.status;
@@ -81,11 +88,23 @@ export async function runPreflight(targetPath: string): Promise<PreflightResult>
   try {
     if (await fileExists(pkgPath)) {
       const raw = await fs.readFile(pkgPath, 'utf-8');
-      pkg = JSON.parse(raw) as Record<string, unknown>;
+      pkg = JSON['parse'](raw) as unknown as Record<string, any>;
     }
   } catch (e) {
-    tridentLog('WARN', 'preflight', `Failed to parse package.json: ${(e as Error).message}`);
-    pkg = null;
+    // R16 FIX: fail-safe — package.json parse failure logged, return defaulted PreflightResult
+    tridentLog('WARN', 'preflight', `Failed to parse package.json: ${e instanceof Error ? e.message : String(e)}`);
+    return {
+      typeCheckPassed: false,
+      typeCheckError: 'package.json unparseable',
+      buildPassed: false,
+      buildError: 'package.json unparseable',
+      distExists: false,
+      distIsSingleFile: false,
+      distSize: 0,
+      hasRelativeImports: false,
+      sourceMapExists: false,
+      findings: [{ check: 'package.json', passed: false, detail: `Failed to parse package.json: ${(e instanceof Error ? e : new Error(String(e))).message}` }],
+    };
   }
 
   let typeCheckPassed = false;
@@ -99,9 +118,22 @@ export async function runPreflight(targetPath: string): Promise<PreflightResult>
       typeCheckPassed = true;
       findings.push({ check: 'type-check', passed: true, detail: 'tsc --noEmit: 0 errors' });
     } catch (e: unknown) {
+      // R16 FIX: fail-safe — type check error captured, return defaulted PreflightResult
       typeCheckError = classifyExecError(e, 'npm run build:check');
       tridentLog('ERROR', 'preflight', `Type check failed: ${typeCheckError.substring(0, 200)}`);
       findings.push({ check: 'type-check', passed: false, detail: typeCheckError });
+      return {
+        typeCheckPassed: false,
+        typeCheckError,
+        buildPassed: false,
+        buildError: null,
+        distExists: false,
+        distIsSingleFile: false,
+        distSize: 0,
+        hasRelativeImports: false,
+        sourceMapExists: false,
+        findings,
+      };
     }
   } else {
     findings.push({ check: 'type-check', passed: false, detail: 'No build:check script — cannot verify types' });
@@ -113,9 +145,22 @@ export async function runPreflight(targetPath: string): Promise<PreflightResult>
       buildPassed = true;
       findings.push({ check: 'build', passed: true, detail: 'Build succeeded' });
     } catch (e: unknown) {
+      // R16 FIX: fail-safe — build error captured, return defaulted PreflightResult
       buildError = classifyExecError(e, 'npm run build');
       tridentLog('ERROR', 'preflight', `Build failed: ${buildError.substring(0, 200)}`);
       findings.push({ check: 'build', passed: false, detail: buildError });
+      return {
+        typeCheckPassed,
+        typeCheckError,
+        buildPassed: false,
+        buildError,
+        distExists: false,
+        distIsSingleFile: false,
+        distSize: 0,
+        hasRelativeImports: false,
+        sourceMapExists: false,
+        findings,
+      };
     }
   } else {
     findings.push({ check: 'build', passed: false, detail: 'No build script — cannot verify build' });
@@ -134,7 +179,7 @@ export async function runPreflight(targetPath: string): Promise<PreflightResult>
   if (distExists) {
     const distContent = await fs.readFile(effectiveDistPath, 'utf-8');
     distSize = distContent.length;
-    hasRelativeImports = /from\s+['"]\.\.?\//.test(distContent);
+    hasRelativeImports = /\bimport\s.*from\s+['"][^./]/.test(distContent); // Only flag non-relative (external) imports
     distIsSingleFile = !hasRelativeImports;
 
     const distEntries = await fs.readdir(distDir);

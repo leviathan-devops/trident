@@ -98,6 +98,43 @@ interface TypoMatch {
   line: number;
 }
 
+function escapeRegexStr(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Check if text contains the typo as a genuine misspelling (not as part of a
+ * correctly-spelled word).  Uses word boundaries so that e.g. ``befor`` does
+ * not match inside ``before``, and ``wich`` does not match inside ``sandwich``.
+ *
+ * If the correction **starts with** the typo (e.g. ``befor`` → ``before``),
+ * a negative lookahead is added so that the correct spelling is never flagged.
+ */
+function containsTypo(
+  text: string,
+  typo: string,
+  correction: string,
+  caseSensitive: boolean,
+): boolean {
+  const escapedTypo = escapeRegexStr(typo);
+  const lowerTypo = typo.toLowerCase();
+  const lowerCorrection = correction.toLowerCase();
+
+  // If the typo is a prefix of the correction, add negative lookahead for
+  // the remaining characters so the correct spelling is not flagged.
+  let negativeLookahead = '';
+  if (lowerCorrection.startsWith(lowerTypo)) {
+    const remaining = lowerCorrection.substring(lowerTypo.length);
+    if (remaining.length > 0) {
+      negativeLookahead = `(?!${escapeRegexStr(remaining)}\\b)`;
+    }
+  }
+
+  const flags = caseSensitive ? '' : 'i';
+  const re = new RegExp(`\\b${escapedTypo}${negativeLookahead}\\b`, flags);
+  return re.test(text);
+}
+
 const KNOWN_TYPOS: Record<string, string> = {
   'Spawnned': 'Spawned',
   'Recieve': 'Receive',
@@ -214,8 +251,8 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
         if (construct.type === ConstructType.PROPERTY_ACCESS_EXPRESSION && construct.name.length > 40) continue;
 
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (construct.name.includes(typo.trim())) {
-            const key = `${construct.filePath}:${construct.line}:${typo}`;
+          if (containsTypo(construct.name, typo.trim(), correction, true)) {
+            const key = `${construct.filePath}:${construct.line}:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);
             results.push({
@@ -231,8 +268,8 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
       if (construct.type === ConstructType.STRING_LITERAL) {
         const textValue = construct.name;
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (textValue.toLowerCase().includes(typo.trim().toLowerCase())) {
-            const key = `${construct.filePath}:${construct.line}:str:${typo}`;
+          if (containsTypo(textValue, typo.trim(), correction, false)) {
+            const key = `${construct.filePath}:${construct.line}:str:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);
             results.push({
@@ -248,8 +285,8 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
       if (construct.type === ConstructType.TEMPLATE_EXPRESSION) {
         const bodyText = construct.body;
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (bodyText.toLowerCase().includes(typo.trim().toLowerCase())) {
-            const key = `${construct.filePath}:${construct.line}:tmpl:${typo}`;
+          if (containsTypo(bodyText, typo.trim(), correction, false)) {
+            const key = `${construct.filePath}:${construct.line}:tmpl:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);
             results.push({
