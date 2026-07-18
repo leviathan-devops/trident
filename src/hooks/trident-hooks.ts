@@ -646,10 +646,26 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
     if (isContainerTestingCommand(bashCmd) && !isContainerSkillLoaded(sid || sessionId)) {
       throw new Error('[TRIDENT CONTAINER SKILL REQUIRED] Call skill("container-testing") FIRST. Container testing without the skill is FORBIDDEN.');
     }
-    // opencode run firewall — block in tool.execute.before (bash) AND command.execute.before
-    if (/\bopencode\s+run\b/i.test(bashCmd)) {
+    // opencode run firewall — only blocks when opencode run IS the command being executed
+    // (anchored to start), not when it appears inside commit messages, echo, etc.
+    if (/^(sudo\s+)?opencode\s+run\b/i.test(bashCmd.trim())) {
       throw new Error('[TRIDENT FIREWALL] opencode run is FORBIDDEN. TUI testing via tmux send-keys is the ONLY permitted opencode execution. Use the container-testing skill.');
     }
+  }
+
+  // READ EFFICIENCY enforcement — .md files only (code files exempt for targeted reads)
+  if (toolName === 'read') {
+    try {
+      var readArgs = cast<Record<string, unknown>>(output?.args || {});
+      var readPath = typeof readArgs.filePath === 'string' ? readArgs.filePath : '';
+      if (readPath && /\.md$/i.test(readPath)) {
+        var currentLimit = typeof readArgs.limit === 'number' ? readArgs.limit : 2000;
+        if (currentLimit < 1000) {
+          readArgs.limit = 1500;
+          tridentLog('INFO', 'read-enforcement', 'Forced limit=1500 for .md file (was ' + currentLimit + '): ' + readPath);
+        }
+      }
+    } catch (e3) { /* non-fatal — read enforcement is best-effort */ }
   }
 
   var commandStr = output?.args ? JSON.stringify(output.args) : null;

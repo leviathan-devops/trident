@@ -192732,9 +192732,22 @@ var toolBeforeHook = async function(input, output) {
     if (isContainerTestingCommand(bashCmd) && !isContainerSkillLoaded(sid || sessionId)) {
       throw new Error('[TRIDENT CONTAINER SKILL REQUIRED] Call skill("container-testing") FIRST. Container testing without the skill is FORBIDDEN.');
     }
-    if (/\bopencode\s+run\b/i.test(bashCmd)) {
+    if (/^(sudo\s+)?opencode\s+run\b/i.test(bashCmd.trim())) {
       throw new Error("[TRIDENT FIREWALL] opencode run is FORBIDDEN. TUI testing via tmux send-keys is the ONLY permitted opencode execution. Use the container-testing skill.");
     }
+  }
+  if (toolName === "read") {
+    try {
+      var readArgs = cast2(output?.args || {});
+      var readPath = typeof readArgs.filePath === "string" ? readArgs.filePath : "";
+      if (readPath && /\.md$/i.test(readPath)) {
+        var currentLimit = typeof readArgs.limit === "number" ? readArgs.limit : 2000;
+        if (currentLimit < 1000) {
+          readArgs.limit = 1500;
+          tridentLog("INFO", "read-enforcement", "Forced limit=1500 for .md file (was " + currentLimit + "): " + readPath);
+        }
+      }
+    } catch (e3) {}
   }
   var commandStr = output?.args ? JSON.stringify(output.args) : null;
   var currentMode = orchestrator.getState(cast2(input)?.sessionID)?.mode || "IDLE";
