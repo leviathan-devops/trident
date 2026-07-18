@@ -2,7 +2,7 @@ import { tridentLog } from '../utils.js';
 import { isTridentAgent } from './agent-identity.js';
 
 /**
- * v4.3.3 Identity Enforcer — Runtime identity verification system.
+ * Identity Enforcer — Runtime identity verification system.
  * 
  * Enforces 4 identity rules:
  * IV-1: Identity must be loaded before tool execution
@@ -49,7 +49,7 @@ export interface EnforcementResult {
 
 // Track identity load state (set by the hook system when identity is injected)
 let identityLoaded = false;
-let identityVersion = '4.4.2';
+let identityVersion = '';
 let identityFileHash: string | null = null;
 const violationHistory: IdentityViolation[] = [];
 

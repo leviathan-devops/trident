@@ -50,7 +50,7 @@ class Orchestrator {
   }
 
   /**
-   * v4.3.3: Read the actual state machine state for validation.
+   * v4.4.2: Read the actual state machine state for validation.
    * Returns the machine's current state value, or null if unavailable.
    */
   getMachineState(): string | null {
@@ -59,7 +59,7 @@ class Orchestrator {
   }
 
   /**
-   * v4.3.3: Validate that a transition is allowed.
+   * v4.4.2: Validate that a transition is allowed.
    * Cannot start a new mode if in ERROR without recovery.
    */
   canTransitionTo(targetMode: string): boolean {

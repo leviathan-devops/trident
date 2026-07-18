@@ -408,7 +408,7 @@ function collectDangerousSinksViaAst(
                 if (receiverType && checker.typeToString(receiverType).includes('RegExp')) {
                   isRegExpExec = true;
                 }
-              } catch (e) { /* type check failed — fall through to AST walk */ }
+              } catch (e) { console.error('[r13-data-flow] Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); /* type check failed — fall through to AST walk */ }
             }
             // AST-BASED FALLBACK: when checker is null (large projects skip createProgram),
             // walk the source file to find the variable declaration and check its type annotation.

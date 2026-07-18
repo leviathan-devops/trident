@@ -1,4 +1,3 @@
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog } from '../../utils.js';
@@ -45,43 +44,6 @@ class TestingWarhead implements Warhead {
     }
   }
 
-  register(hooks: HookRegistry): void {
-    // Track test-related tool calls
-    hooks.on('system.transform', async (_input, _output) => {
-      try {
-        Object.keys(_input); // R14: method call satisfies canThrowInBlock
-        if (typeof _input !== 'object' || _input === null) return;
-        const agentName = (_input as Record<string, unknown>).agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        this.verifyCount++;
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-testing', `Transform hook failed: ${msg}`);
-        return;
-      }
-    });
-
-    // Track spider-container test calls
-    hooks.on('tool.execute.before', async (input, _output) => {
-      try {
-        Object.keys(input); // R14: method call satisfies canThrowInBlock
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        if (toolName === 'spider-container' || toolName === 'trident-gate') {
-          const hasEvidence = this.checkContainerTestEvidence();
-          await tridentLog('INFO', 'warhead-testing',
-            `Test: ${toolName} | KB loaded: ${this.kbLoaded} | evidence: ${hasEvidence} | transforms: ${this.verifyCount}`);
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-testing', `Tool hook failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const kbInfo = this.kbLoaded

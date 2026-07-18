@@ -148,7 +148,7 @@ export interface AnalysisContext {
   constructsByFile: Map<string, CodeConstruct[]>;
   isSelfAudit: boolean;
   checker: ts.TypeChecker | null;
-  // v4.3.3 additions — multi-language awareness + evidence integrity
+  // v4.4.2 additions — multi-language awareness + evidence integrity
   languageStats?: ProjectLanguageStats;
   evidenceChainHash?: string;
   identityVerified?: boolean;

@@ -1,5 +1,4 @@
 import { Warhead } from '../warhead-interface.js';
-import { HookRegistry } from '../warhead-registry.js';
 import { getFirewallAudit } from '../../hooks/guardian-hook.js';
 
 class IdentityLayerWarhead implements Warhead {
@@ -12,9 +11,6 @@ class IdentityLayerWarhead implements Warhead {
   // Without it, trident-warhead-synthesizer.ts:315 throws TypeError, aborting
   // registration for warheads 8-12 (focus, recovery, auditState).
 
-  register(_hooks: HookRegistry): void {
-    // Pure T0 warhead — no hooks needed.
-  }
 
   getT0(): string {
     const fw = getFirewallAudit();

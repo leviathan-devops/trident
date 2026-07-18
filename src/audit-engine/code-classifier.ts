@@ -104,12 +104,10 @@ export function classifyProject(
   }
 
   // FINDING #9 FIX: Use package.json name instead of brittle path heuristics
-  // v4.3.3: Enhanced self-audit detection — exact match + structural indicators
+  // v4.4.2: Enhanced self-audit detection — exact match + structural indicators
   const TRIDENT_PACKAGE_NAMES = new Set([
     'trident-brain-v4.3.2',
-    'trident-brain-v4.3.3',
-    'trident-brain-v4.4',
-    'trident-v4.4',
+    'trident-brain-v4.4.2',
     'trident-brain',
     'trident',
   ]);
@@ -121,7 +119,7 @@ export function classifyProject(
     || (pkgName.includes('trident') && hasTridentDir)
     || (hasTridentDir && hasTridentAgents && pkgName.includes('brain'));
 
-  // v4.3.3: Compute language statistics
+  // v4.4.2: Compute language statistics
   const languageStats = computeLanguageStats(projectRoot);
 
   return {
@@ -220,8 +218,12 @@ function buildAST(projectRoot: string): ClassificationResult {
   const srcDir = path.join(projectRoot, 'src');
   const baseDir = fs.existsSync(srcDir) ? srcDir : projectRoot;
   const { files: allFiles } = collectProjectFiles(baseDir, projectRoot, 0, 20);
+  const PARSEABLE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
+  const sourceOnlyFiles = allFiles.filter((f: string) =>
+    PARSEABLE_EXTENSIONS.has(path.extname(f).toLowerCase())
+  );
 
-  for (const filePath of allFiles) {
+  for (const filePath of sourceOnlyFiles) {
     if (!fs.existsSync(filePath)) continue;
     const content = fs.readFileSync(filePath, 'utf-8');
     const relativePath = path.relative(projectRoot, filePath);
@@ -755,13 +757,13 @@ const SUPPORTED_EXTENSIONS = new Set([
 ]);
 
 function collectTsFiles(dir: string, projectRoot: string, depth: number = 0, maxDepth: number = 20): string[] {
-  // v4.3.3: Delegate to collectProjectFiles, filter to .ts/.tsx for backward compat
+  // v4.4.2: Delegate to collectProjectFiles, filter to .ts/.tsx for backward compat
   const { files } = collectProjectFiles(dir, projectRoot, depth, maxDepth);
   return files.filter((f: string) => f.endsWith('.ts') || f.endsWith('.tsx'));
 }
 
 /**
- * v4.3.3: Collect ALL source files for language statistics.
+ * v4.4.2: Collect ALL source files for language statistics.
  * Spec-compliant format: returns {files, skipped} for Phase 0 scanner metadata.
  * This complements collectTsFiles (which is for AST analysis) by providing
  * a broader view of the project's language composition.
@@ -804,7 +806,7 @@ function collectProjectFiles(rootDir: string, projectRoot: string, _depth: numbe
 }
 
 /**
- * v4.3.3: Compute language statistics for the project.
+ * v4.4.2: Compute language statistics for the project.
  */
 function computeLanguageStats(projectRoot: string): ProjectLanguageStats {
   const stats: ProjectLanguageStats = {

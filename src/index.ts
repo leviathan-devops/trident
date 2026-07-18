@@ -138,7 +138,7 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
   const sessionId = cast<{ sessionID?: string }>(input)?.sessionID || 'default';
   orchestrator.setSession(sessionId);
 
-  // v4.3.3: Initialize warhead intelligence system (restores NLP, evidence, persistence, etc.)
+  // v4.4.2: Initialize warhead intelligence system (restores NLP, evidence, persistence, etc.)
   await (async (): Promise<void> => {
     try {
       await registerWarheadHooks();
@@ -162,7 +162,7 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
   chainBeforeHook(hooks, buildHooks);
   chainAfterHook(hooks, buildHooks);
 
-  const tools = createTridentTools();
+  const tools = createTridentTools(input.client);
 
   // Wrap all hooks with debug logging
   const wrappedHooks: Record<string, HookHandler> = {};
@@ -201,7 +201,7 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
         const configs = getAgentConfig();
         configs['trident'] = {
           ...configs['trident'],
-          description: 'TRIDENT v4.4.2 — T3 Algorithmic Audit Engine. Allowed: all trident-* tools, task, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit.',
+          description: 'TRIDENT v4.4.2 — Algorithmic Audit Engine. Allowed: all trident-* tools, task, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit.',
           instructions: (configs['trident']?.instructions || '') + '\n\nAllowed: all trident-* tools, task, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit.',
           permission: {
             '*': 'allow',
@@ -221,6 +221,49 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
             'glob': true, 'grep': true, 'task': true,
           },
         };
+
+        // Trident_Planner subagent — used by L3 for parallel L2 spec generation.
+        // Has ONLY trident-deep-planning + read tools. Cannot write/edit/bash.
+        // Forced to call the L2 tool (which handles everything internally).
+        configs['trident_planner'] = {
+          name: 'trident_planner',
+          description: 'Trident Planner — Generates L2 engineering specs by calling trident-deep-planning. Does NOT write specs manually. Calls the tool and reports the result.',
+          instructions: [
+            'You are a trident_planner subagent.',
+            '',
+            'YOUR ONLY JOB: Call trident-deep-planning with layer=2 to generate an engineering spec.',
+            '',
+            'You will receive a targetPath and domain-specific requirements.',
+            'Call the tool IMMEDIATELY with:',
+            '  trident-deep-planning(targetPath=<path>, layer=2, requirements=<requirements>)',
+            '',
+            'DO NOT:',
+            '- Write the spec yourself',
+            '- Write any files',
+            '- Use any tool other than trident-deep-planning',
+            '- Explain what you are going to do — just do it',
+            '',
+            'The tool handles EVERYTHING internally:',
+            '- Runs AST analysis on the target codebase',
+            '- Builds a comprehensive brief',
+            '- Calls the LLM to generate the full spec (3000+ lines)',
+            '- Runs 11 quality gates (deepening + cross-section audit)',
+            '- Writes the artifact to disk automatically',
+            '',
+            'After the tool returns its completion message, report that message back.',
+            'That is your ENTIRE job. Call the tool. Report the result. Done.',
+          ].join('\n'),
+          mode: 'subagent',
+          color: '#00CC99',
+          permission: { task: 'allow' },
+          tools: {
+            'trident-deep-planning': true,
+            'read': true,
+            'glob': true,
+            'grep': true,
+          },
+        };
+
         Object.assign(agentConfig, configs);
         debugLog('CONFIG_DONE');
       } catch (e) {

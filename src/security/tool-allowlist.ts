@@ -23,6 +23,7 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'task',
   'todowrite',
   'checkpoint',
+  'skill',
   // Hive Mind Plugin (2.2-hotfix) — underscore names only, matching actual plugin registration
   'hive_context',
   'hive_status',
@@ -44,6 +45,9 @@ const ALLOWED_TOOL_PREFIXES = [
   'reasoning-bus_',
   'visual-cortex_',
   'zai-vision_',
+  'pdf-reader_',
+  'vc-browser_',
+  'vc-fetch_',
   'hive_',
   'memread_',
   'memlink_',

@@ -1,7 +1,10 @@
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import { TRIDENT_CONFIG } from '../config.js';
-import type { DiscoveryResult, DiscoveredPattern } from '../shared/auto-discover.js';
+import type { DiscoveryResult, DiscoveredPattern, DiscoveredFailure } from '../shared/auto-discover.js';
+import type { AnalysisResult } from './analysis-engine.ts';
+import { identifyEngines } from './deep-planning-artifact.ts';
+import type { EngineInfo } from './deep-planning-artifact.ts';
 
 interface ProviderConfig {
   npm?: string;
@@ -19,6 +22,7 @@ export function generateT1Injectable(
   patterns: string[],
   keyFacts: string[],
   discovery?: DiscoveryResult | null,
+  analysis?: AnalysisResult | null,
 ): string {
   const model = (config.model as string) || 'deepseek/deepseek-v4-flash';
   const providerRaw = config.provider;
@@ -39,12 +43,7 @@ export function generateT1Injectable(
   const entryPoints = hasDiscovery && (disc as DiscoveryResult).entryPoints
     ? (disc as DiscoveryResult).entryPoints.join(', ')
     : 'src/index.ts';
-  const discPatterns = hasDiscovery ? (disc as DiscoveryResult).patterns || [] : [];
   const discFailures = hasDiscovery ? (disc as DiscoveryResult).failureModes || [] : [];
-  const discDecisions = hasDiscovery ? (disc as DiscoveryResult).decisions || [] : [];
-  const dirTree = hasDiscovery && (disc as DiscoveryResult).directoryTree ? (disc as DiscoveryResult).directoryTree : '';
-  const warheads = hasDiscovery ? (disc as DiscoveryResult).warheads || 0 : 0;
-  const auditLayers = hasDiscovery ? (disc as DiscoveryResult).auditLayers || 0 : 0;
 
   let providerJson = '';
   for (const [name, p] of Object.entries(provider)) {
@@ -60,92 +59,127 @@ export function generateT1Injectable(
     providerJson += `    }\n`;
   }
 
-  let a = `# T1: ${agentName} Injectable\n`;
-  a += `**Type:** T1 Injectable (copy-paste into opencode.json)\n`;
-  a += `**Agent:** ${agentName}\n`;
-  a += `**Model:** ${model}\n`;
-  a += `**Status:** Working\n`;
-  a += `**Project Profile:** ${fileCount} files, ${lineCount} lines (${langs})\n`;
-  a += `**Entry Points:** ${entryPoints}\n\n`;
+  // ════════════════════════════════════════════════════════════
+  // LOCAL HELPER: WRONG/RIGHT/FIX for each failure mode
+  // ════════════════════════════════════════════════════════════
+  const wrongRightForFailure = (fm: DiscoveredFailure): { wrong: string; right: string; fix: string } => {
+    const fmMsg = (fm.message || '').toLowerCase();
+    const fmPat = (fm.pattern || 'error-handling').toLowerCase();
+    const moduleName = fm.file ? fm.file.replace(/\.ts$/, '').replace(/[/\\]/g, '-').substring(0, 30) : 'unknown';
 
-  // ── PROJECT INTELLIGENCE (from auto-discovery) ──
-  if (hasDiscovery) {
-    a += `## Project Intelligence\n\n`;
-    a += `| Metric | Value |\n|--------|-------|\n`;
-    a += `| Files | ${fileCount} |\n`;
-    a += `| Lines | ${lineCount} |\n`;
-    a += `| Languages | ${langs} |\n`;
-    a += `| Entry Points | ${entryPoints} |\n`;
-    a += `| Discovered Patterns | ${discPatterns.length} |\n`;
-    a += `| Failure Modes | ${discFailures.length} |\n`;
-    a += `| Design Decisions | ${discDecisions.length} |\n`;
-    if (warheads > 0) a += `| Warheads | ${warheads} |\n`;
-    if (auditLayers > 0) a += `| Audit Layers | ${auditLayers} |\n`;
-    a += `\n`;
-
-    if (dirTree) {
-      a += `### Directory Structure\n\n\`\`\`\n${dirTree.substring(0, 500)}\n\`\`\`\n\n`;
+    // Empty catch block — error swallowed silently
+    if (fmMsg.includes('empty catch') || fmMsg.includes('swallow') || fmPat.includes('empty-catch') || fmPat.includes('empty catch')) {
+      return {
+        wrong: `try {\n  riskyOperation();\n} catch (e) {\n  // silently ignored — error is lost\n}`,
+        right: `try {\n  riskyOperation();\n} catch (e) {\n  tridentLog('ERROR', '${moduleName}', \`Operation failed: \${e instanceof Error ? e.message : e}\`);\n  throw e; // re-throw or handle meaningfully\n}`,
+        fix: `Replace empty catch body with tridentLog() + re-throw. Never swallow errors silently at \`${fm.file}:${fm.line}\`.`,
+      };
     }
+
+    // Null / undefined / TypeError dereference
+    if (fmMsg.includes('null') || fmMsg.includes('undefined') || fmMsg.includes('typeerror') || fmPat.includes('null') || fmPat.includes('undefined')) {
+      return {
+        wrong: `const value = obj.field; // obj may be null/undefined → TypeError\nprocessValue(value);`,
+        right: `if (obj === null || obj === undefined) {\n  tridentLog('WARN', '${moduleName}', 'Null guard triggered — returning default');\n  return defaultValue;\n}\nconst value = obj.field;\nprocessValue(value);`,
+        fix: `Add null/undefined guard before accessing \`${fm.file}:${fm.line}\`. Return a safe default if null.`,
+      };
+    }
+
+    // Missing return on some code path
+    if (fmMsg.includes('return') || fmMsg.includes('unreachable') || fmMsg.includes('missing return') || fmPat.includes('return')) {
+      return {
+        wrong: `function calc(x: number) {\n  if (x > 0) { return x * 2; }\n  // no return on the else path → returns undefined\n}`,
+        right: `function calc(x: number): number {\n  if (x > 0) { return x * 2; }\n  return 0; // explicit fallback for ALL code paths\n}`,
+        fix: `Add explicit return statement for all code paths in the function at \`${fm.file}:${fm.line}\`.`,
+      };
+    }
+
+    // Type mismatch
+    if (fmMsg.includes('type') || fmPat.includes('type-mismatch') || fmPat.includes('type')) {
+      return {
+        wrong: `const result: string = someFunc(); // someFunc returns number, not string`,
+        right: `const result = someFunc(); // let TS infer the type\nif (typeof result !== 'string') {\n  throw new Error(\`Expected string, got \${typeof result}\`);\n}`,
+        fix: `Fix the type annotation at \`${fm.file}:${fm.line}\` — let TS infer or add a runtime type guard.`,
+      };
+    }
+
+    // Unused variable / import
+    if (fmMsg.includes('unused') || fmPat.includes('unused') || fmPat.includes('dead code')) {
+      return {
+        wrong: `import { unusedThing } from './module'; // imported but never used`,
+        right: `// Only import what you actually use:\nimport { usedThing } from './module';\n// Remove unused imports to keep the bundle clean`,
+        fix: `Remove the unused import/variable at \`${fm.file}:${fm.line}\`.`,
+      };
+    }
+
+    // Async without await
+    if (fmMsg.includes('await') || fmMsg.includes('async') || fmMsg.includes('promise') || fmPat.includes('async') || fmPat.includes('await')) {
+      return {
+        wrong: `async function load() {\n  const data = fetch(url); // missing await → returns Promise, not data\n  return data.json(); // TypeError: data.json is not a function\n}`,
+        right: `async function load() {\n  const res = await fetch(url);\n  return await res.json(); // proper await chain\n}`,
+        fix: `Add missing \`await\` keyword at \`${fm.file}:${fm.line}\`. Every async call must be awaited.`,
+      };
+    }
+
+    // Import failed / fallback path
+    if (fmMsg.includes('import') || fmMsg.includes('fallback') || fmPat.includes('import') || fmPat.includes('fallback')) {
+      return {
+        wrong: `import { criticalModule } from './critical'; // if this fails, the entire app crashes\n// no fallback, no dynamic loading`,
+        right: `let criticalModule: typeof import('./critical') | null = null;\ntry {\n  criticalModule = await import('./critical');\n} catch (e) {\n  tridentLog('ERROR', '${moduleName}', \`Dynamic import failed: \${e instanceof Error ? e.message : e}\`);\n  // graceful degradation path\n}`,
+        fix: `Replace static import with dynamic \`import()\` wrapped in try/catch at \`${fm.file}:${fm.line}\`. Provide a fallback when the module is unavailable.`,
+      };
+    }
+
+    // Bare throw / Error without typed class
+    if (fmMsg.includes('throw') || fmPat.includes('throw')) {
+      return {
+        wrong: `throw new Error('Something went wrong'); // untyped, caller must guess`,
+        right: `class OperationError extends Error {\n  constructor(message: string, public readonly code: string) {\n    super(message);\n    this.name = 'OperationError';\n  }\n}\nthrow new OperationError('Something went wrong', 'OP_001');\n// caller: catch (e) { if (e instanceof OperationError) { ... } }`,
+        fix: `Replace bare \`throw new Error()\` with a typed error class at \`${fm.file}:${fm.line}\`. This lets callers discriminate error types.`,
+      };
+    }
+
+    // Generic fallback — console.error without structured logging
+    return {
+      wrong: `console.error('${fm.message.substring(0, 60)}'); // unstructured, no error ID, lost on restart`,
+      right: `tridentLog('ERROR', '${moduleName}', '${fm.message.substring(0, 60)}', { context: 'see ${fm.file}:${fm.line}' });\n// structured log with module name, severity, and context\n// captured in the Merkle evidence chain`,
+      fix: `Replace \`console.error()\` with \`tridentLog()\` at \`${fm.file}:${fm.line}\`. Use structured logging with module name and context.`,
+    };
+  };
+
+  // ════════════════════════════════════════════════════════════
+  // CONTENT GENERATION — OPERATIONS DIRECTIVE FORMAT
+  // Every section gives the agent EXACT instructions.
+  // No data dumps. No interpretation required.
+  // ════════════════════════════════════════════════════════════
+  let a = `# T1: ${agentName} — Operations Directive\n`;
+  a += `**Agent:** ${agentName}  |  **Model:** ${model}  |  **Profile:** ${fileCount}f/${lineCount}L (${langs})\n\n`;
+
+  if (discovery) {
+    const lang = Object.keys(discovery.languages || {}).filter(k => k !== 'json' && k !== 'md').join('/');
+    a += `\n**Project:** ${agentName} — ${discovery.totalFiles} files, ${discovery.totalLines} lines (${lang}). Entry: ${discovery.entryPoints.join(', ')}\n`;
   }
 
-  // ── OPERATIONAL PATTERNS (discovered + user-provided, with context) ──
-  a += `## Operational Patterns\n\n`;
-  a += `> Architecture patterns and conventions that constrain valid changes.\n\n`;
+  // ── SECTION 1: CONFIGURE ──
+  a += `## CONFIGURE\n\n`;
 
-  // Discovered patterns with file:line context
-  if (discPatterns.length > 0) {
-    a += `### Discovered Code Patterns\n\n`;
-    for (const p of discPatterns.slice(0, 8)) {
-      const dp = p as { name: string; type: string; file: string; line: number };
-      a += `- **${dp.name}** (${dp.type}) — \`${dp.file}:${dp.line}\`\n`;
-    }
-    if (discPatterns.length > 8) a += `- _...and ${discPatterns.length - 8} more_\n`;
-    a += `\n`;
-  }
+  a += `**WRONG:** Putting \`"model"\` inside \`provider.options\` — causes 404 errors\n`;
+  a += `**RIGHT:** Model at top level: \`"model": "provider/model-name"\`\n\n`;
 
-  // User-provided patterns with actionable guidance
-  if (patterns.length > 0) {
-    a += `### Architecture Patterns\n\n`;
-    for (const p of patterns) {
-      a += `- ${p}\n`;
-    }
-    a += `\n`;
-  }
+  a += `**WRONG:** Missing \`"npm"\` field in provider config — plugin silently fails to load\n`;
+  a += `**RIGHT:** Include \`"npm": "@ai-sdk/openai-compatible"\`\n\n`;
 
-  // ── FAILURE MODE AWARENESS (from discovery) ──
-  if (discFailures.length > 0) {
-    a += `## Known Failure Modes\n\n`;
-    a += `> Errors discovered in source code. Address these before modifying affected areas.\n\n`;
-    for (const f of discFailures.slice(0, 5)) {
-      const df = f as { message: string; file: string; line: number; pattern: string };
-      a += `- **${df.pattern}:** ${df.message} — \`${df.file}:${df.line}\`\n`;
-    }
-    if (discFailures.length > 5) a += `- _...and ${discFailures.length - 5} more_\n`;
-    a += `\n`;
-  }
+  a += `**WRONG:** Forgetting \`file://\` prefix on plugin path — plugin silently fails to load\n`;
+  a += `**WRONG:** Putting \`opencode-go\` in \`config.json\` provider section — it belongs in \`auth.json\` ONLY (causes 404)\n`;
+  a += `**RIGHT:** Use \`"plugin": ["file://\${pluginsDir}/\${agentName}/dist/index.js"]\`\n\n`;
 
-  // ── CRITICAL FACTS (user-provided, with rationale) ──
-  if (keyFacts.length > 0) {
-    a += `## Critical Facts\n\n`;
-    a += `> MUST KNOW items — failure to internalize causes incorrect behavior.\n\n`;
-    for (const f of keyFacts) {
-      a += `- **${f}** — violating this breaks runtime invariants or project conventions\n`;
-    }
-    a += `\n`;
-  }
+  a += `**WRONG:** Agent as a string value — rejected by runtime\n`;
+  a += `**RIGHT:** Agent as OBJECT with \`"mode": "primary"\`\n\n`;
 
-  // ── DESIGN DECISIONS (from discovery) ──
-  if (discDecisions.length > 0) {
-    a += `## Design Decisions\n\n`;
-    for (const d of discDecisions.slice(0, 5)) {
-      const dd = d as { rationale: string; file: string; line: number };
-      a += `- ${dd.rationale} — \`${dd.file}:${dd.line}\`\n`;
-    }
-    a += `\n`;
-  }
+  a += `**WRONG:** Omitting \`"permission"\` block — tool execution fails\n`;
+  a += `**RIGHT:** Include \`"permission": {}\` (empty is valid)\n\n`;
 
-  // ── CONFIG (kept from original) ──
-  a += `## Container Test Config\n\n`;
+  a += `Config to paste into \`opencode.json\`:\n\n`;
   a += `\`\`\`json\n`;
   a += `{\n`;
   a += `  "model": "${model}",\n`;
@@ -163,29 +197,123 @@ export function generateT1Injectable(
   a += `}\n`;
   a += `\`\`\`\n\n`;
 
-  a += `## Key Configuration Notes\n\n`;
-  a += `- Model MUST be at TOP LEVEL: provider-prefix/model-name (NOT inside provider)\n`;
-  a += `- Provider MUST have "npm" field for @ai-sdk package (e.g. @ai-sdk/openai-compatible)\n`;
-  a += `- Plugin path MUST use file:// prefix for local builds\n`;
-  a += `- Agent MUST be OBJECT with mode: "primary" — string values are rejected\n`;
-  a += `- Permission block REQUIRED (even if empty {}) for tool execution\n`;
-  a += `- **WRONG:** Putting model inside provider.options — causes 404 errors\n`;
-  a += `- **WRONG:** Using opencode-go in config.json provider — it belongs in auth.json only\n`;
-  a += `- **WRONG:** Forgetting file:// prefix — plugin silently fails to load\n\n`;
+  // ── SECTION 2: DEPLOY ──
+  a += `## DEPLOY\n\n`;
+  a += `1. Build the plugin:\n`;
+  a += `   \`\`\`bash\n`;
+  a += `   bun build src/index.ts --outdir dist --target bun --format esm --bundle\n`;
+  a += `   \`\`\`\n`;
+  a += `   Expected: \`dist/index.js\` exists, no errors\n\n`;
+  a += `2. Copy to the plugin directory:\n`;
+  a += `   \`\`\`bash\n`;
+  a += `   mkdir -p ${TRIDENT_CONFIG.pluginsDir}/${agentName}/dist\n`;
+  a += `   cp dist/index.js ${TRIDENT_CONFIG.pluginsDir}/${agentName}/dist/index.js\n`;
+  a += `   \`\`\`\n\n`;
+  a += `3. Set up \`auth.json\` with your API key (NOT in config.json):\n`;
+  a += `   \`\`\`bash\n`;
+  a += `   mkdir -p ~/.local/share/opencode\n`;
+  a += `   cat > ~/.local/share/opencode/auth.json << 'EOF'\n`;
+  a += `   {\n`;
+  a += `     "opencode-go": {\n`;
+  a += `       "type": "api",\n`;
+  a += `       "key": "sk-..."\n`;
+  a += `     }\n`;
+  a += `   }\n`;
+  a += `   EOF\n`;
+  a += `   \`\`\`\n\n`;
+  a += `4. Launch in container (for testing):\n`;
+  a += `   - Image: \`${TRIDENT_CONFIG.containerImage}\`\n`;
+  a += `   - Binary: \`${TRIDENT_CONFIG.baselineBinary}\` (use BASELINE, not musl — musl causes segfaults)\n`;
+  a += `   - Snap: \`/tmp/snap-$PROJECT-$TIMESTAMP\` (isolated, NOT host mount)\n`;
+  a += `   - Wait 28s for DB migration before sending commands\n`;
+  a += `   - Press Escape for update dialog on startup\n`;
+  a += `   - Verify identity injection: \`tmux capture-pane\` after 12s\n\n`;
 
-  a += `## Container Test Protocol\n\n`;
-  a += `- Image: \`${TRIDENT_CONFIG.containerImage}\`\n`;
-  a += `- Binary: \`${TRIDENT_CONFIG.baselineBinary}\`\n`;
-  a += `- Snap: \`/tmp/snap-$PROJECT-$TIMESTAMP\` (isolated, NOT host mount)\n`;
-  a += `- Wait: 28s for DB migration before sending commands\n`;
-  a += `- Dismiss: Press Escape for update dialog on startup\n`;
-  a += `- Verify: \`tmux capture-pane\` for identity injection after 12s\n`;
-  a += `- **CRITICAL:** Use the baseline binary (NOT musl) — musl causes segfaults\n`;
-  a += `- **CRITICAL:** Container must have auth.json with valid API key before TUI launch\n\n`;
+  // Implementation order from analysis pipeline
+  if (analysis && analysis.pipeline && analysis.pipeline.phases) {
+    const phases = analysis.pipeline.phases;
+    const relevantPhases = phases.filter(ph => ph.defenses && ph.defenses.length > 0);
+    if (relevantPhases.length > 0) {
+      a += `5. Follow this implementation order (from analysis pipeline):\n\n`;
+      let stepNum = 1;
+      for (const ph of relevantPhases) {
+        a += `   ${stepNum}. **${ph.domain || 'Unknown'}** — implement: ${ph.defenses.join(', ')}\n`;
+        stepNum++;
+      }
+      a += `\n`;
+    }
+  }
 
-  a += `---\n*Generated by Trident v4.4.2 Context Synthesis Engine — T1 Injectable Mode*\n`;
+  a += `6. If plugin doesn't load → see TROUBLESHOOTING below\n\n`;
+
+  // ── SECTION 3: FIX THESE ISSUES FIRST ──
+  if (discFailures.length > 0) {
+    a += `## FIX THESE ISSUES FIRST\n\n`;
+    a += `> Failure modes discovered in source code. Fix these BEFORE modifying affected areas.\n\n`;
+    let issueNum = 1;
+    for (const fm of discFailures.slice(0, 8)) {
+      const df = fm as DiscoveredFailure;
+      a += `### ${issueNum}. ${df.message.substring(0, 80)} at \`${df.file}:${df.line}\`\n\n`;
+      const pair = wrongRightForFailure(df);
+      a += `**WRONG:**\n`;
+      a += '```\n' + pair.wrong + '\n```\n\n';
+      a += `**RIGHT:**\n`;
+      a += '```\n' + pair.right + '\n```\n\n';
+      a += `**Fix:** ${pair.fix}\n\n`;
+      issueNum++;
+    }
+  }
+
+  // ── SECTION 4: TROUBLESHOOTING ──
+  a += `## TROUBLESHOOTING\n\n`;
+  a += `| Symptom | Cause | Fix |\n`;
+  a += `|---------|-------|-----|\n`;
+
+  // Standard rows (always present — these are the known failure patterns)
+  a += `| Plugin silently fails to load | Missing \`file://\` prefix on plugin path | Add \`file://\` prefix to plugin path in config |\n`;
+  a += `| 404 on API calls | \`opencode-go\` in config.json provider section | Move API key to \`auth.json\` only |\n`;
+  a += `| Tool execution fails | Missing \`"permission"\` block | Add \`"permission": {}\` to config |\n`;
+  a += `| Segfault on launch | Using musl binary instead of baseline | Use \`${TRIDENT_CONFIG.baselineBinary}\` |\n`;
+  a += `| Identity not injected | Insufficient wait time | Wait 28s for DB migration, then \`tmux capture-pane\` to verify |\n`;
+
+  // Discovery-derived rows
+  if (discFailures.length > 0) {
+    for (const fm of discFailures.slice(0, 5)) {
+      const df = fm as DiscoveredFailure;
+      const symptom = df.message.substring(0, 50).replace(/\|/g, '\\|');
+      const cause = (df.pattern || 'incomplete error handling').replace(/\|/g, '\\|');
+      a += `| ${symptom} | ${cause} | See FIX THESE ISSUES FIRST above |\n`;
+    }
+  }
+
+  // Threat-derived rows (from AST analysis)
+  if (analysis && analysis.threats && analysis.threats.length > 0) {
+    const critical = analysis.threats.filter((t: any) => t.severity === 'CRITICAL' || t.severity === 'HIGH').slice(0, 3);
+    for (const t of critical) {
+      const finding = t.findings && t.findings[0];
+      const ev = finding ? finding.description.substring(0, 50) : t.pattern;
+      const loc = finding && finding.file ? `\`${finding.file}:${finding.line}\`` : 'N/A';
+      a += `| ${ev.replace(/\|/g, '\\|')} | ${t.pattern.replace(/\|/g, '\\|')} (${t.severity}) | Audit ${loc} |\n`;
+    }
+  }
+  a += `\n`;
+
+  // ── SECTION 5: QUICK REFERENCE ──
+  a += `## QUICK REFERENCE\n\n`;
+  a += `| Attribute | Value |\n|-----------|-------|\n`;
+  a += `| Agent | ${agentName} |\n`;
+  a += `| Model | ${model} |\n`;
+  a += `| Provider | ${Object.keys(provider).join(', ') || 'opencode-go'} |\n`;
+  a += `| Plugin Path | ${plugin} |\n`;
+  a += `| Container Image | ${TRIDENT_CONFIG.containerImage} |\n`;
+  a += `| Profile | ${fileCount} files, ${lineCount} lines |\n`;
+  a += `| Failure Modes | ${discFailures.length} |\n`;
+  a += `| Threats | ${analysis?.threats.length ?? 0} |\n`;
+  a += `| Defenses | ${analysis?.defenses.length ?? 0} |\n`;
+
   return a;
 }
+
 
 /**
  * generateT2Knowledge — builds the dense, bible-style T2 knowledge markdown.
@@ -218,7 +346,8 @@ export function generateT2Knowledge(
   targetPath?: string,
   discovery?: DiscoveryResult | null,
   targetLines?: number,
-  realCodeMap?: Map<string, string>
+  realCodeMap?: Map<string, string>,
+  analysis?: AnalysisResult | null
 ): string {
   const now = new Date().toISOString();
   const projectLabel = (projectName || 'unknown').replace(/[_-]+/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
@@ -388,6 +517,353 @@ export function generateT2Knowledge(
   };
 
   // ============================================================
+  // v4.4.2 NARRATIVE HELPERS — knowledge-transfer style
+  // These produce TEACHING content, not data tables.
+  // ============================================================
+
+  /** Group prohibitions by type — returns rule, why, and fix text for dedup. */
+  const prohibitionForFailure = (fm: DiscoveredFailure): { rule: string; why: string; fix: string } => {
+    const kind = classifyFailure(fm.pattern);
+    switch (kind) {
+      case 'logging':
+        return {
+          rule: 'NEVER use bare `console.*` for error logging',
+          why: 'Console output is not captured in the evidence chain, has no error ID for correlation, and is lost on container restart. Incident triage becomes guesswork.',
+          fix: "Replace `console.log(x)` / `console.error(x)` with `tridentLog('ERROR', 'module-name', x, { requestId, context })` which writes to the Merkle-evidenced log.",
+        };
+      case 'exception':
+        return {
+          rule: 'NEVER throw without documenting the error contract',
+          why: 'Callers do not know what error types to catch, so they either over-catch (swallowing unrelated errors) or under-catch (letting the process crash).',
+          fix: 'Add a JSDoc `@throws {ErrorType} description` tag, or wrap the throw in a typed error class the caller can match on.',
+        };
+      case 'catch-block':
+        return {
+          rule: 'NEVER leave catch blocks empty or logging-only',
+          why: 'The error chain is severed — the real cause is lost and downstream code runs on the assumption the operation succeeded.',
+          fix: "Re-throw or log with `tridentLog('ERROR', ...)` and a unique error ID. If intentionally swallowed, comment why.",
+        };
+      case 'type-erosion':
+        return {
+          rule: 'NEVER use `any` without a type guard',
+          why: '`any` disables all compile-time checks. Invalid data shapes flow unchecked and produce `TypeError` at runtime in production, far from the source.',
+          fix: "Replace `any` with `unknown` and narrow with a type guard (`if (typeof x === 'string')`) or a schema validator before use.",
+        };
+      default:
+        return {
+          rule: 'NEVER ship an error path without test coverage',
+          why: 'Untested error paths fire in production with no recovery strategy, degrading or halting the pipeline silently.',
+          fix: 'Add a test case that triggers this exact path and asserts the error is surfaced, not swallowed.',
+        };
+    }
+  };
+
+  /** Describe what an engine does based on the pattern types it contains. */
+  const engineRole = (e: EngineInfo): string => {
+    if (e.patterns.length > 0) {
+      const types = e.patterns.map(p => p.type);
+      const hasClass = types.includes('class');
+      const hasInterface = types.includes('interface');
+      const hasFunction = types.includes('function');
+      const hasImport = types.includes('import');
+      const hasExport = types.includes('export');
+      const parts: string[] = [];
+      if (hasClass) parts.push('defines classes that encapsulate state');
+      if (hasInterface) parts.push('declares structural contracts via interfaces');
+      if (hasFunction) parts.push('exposes callable transformations as functions');
+      if (hasImport) parts.push('consumes external module dependencies');
+      if (hasExport) parts.push('publishes a module boundary for consumers');
+      if (parts.length === 0) parts.push('contains code constructs awaiting classification');
+      return parts.join(', ');
+    }
+    // Derive a meaningful description from the directory name when patterns is 0
+    const name = e.name.toLowerCase();
+    if (name.includes('hook')) return 'manages event hooks for the plugin lifecycle';
+    if (name.includes('audit')) return 'runs the 18-layer code audit pipeline';
+    if (name.includes('fsm')) return 'defines XState state machines for tool workflows';
+    if (name.includes('identity')) return 'contains identity documents and enforcement rules';
+    if (name.includes('tool')) return 'registers and dispatches opencode tools';
+    if (name.includes('poseidon')) return 'orchestrates the God Loop build execution cycle';
+    if (name.includes('warhead')) return 'deploys specialized analysis modules';
+    if (name.includes('mode')) return 'defines mode templates for each tool pipeline';
+    if (name.includes('evidence')) return 'manages the Merkle evidence chain';
+    if (name.includes('nlp')) return 'NLP pipeline for semantic analysis';
+    if (name === 'root' || name === '.') return 'root module — entry point, config, utilities, and type definitions';
+    return `subsystem in \`${e.directory}\``;
+  };
+
+  /** Humanize a SCREAMING_SNAKE pattern name into Title Case. */
+  const humanizePattern = (p: string): string => {
+    return p.split('_').map(w => w.charAt(0) + w.slice(1).toLowerCase()).join(' ');
+  };
+
+  /** Narrative "What it is" per threat pattern. */
+  const threatWhatIs = (p: string): string => {
+    switch (p) {
+      case 'THEATRICAL_IMPLEMENTATION':
+        return 'Functions that claim to do work but return hardcoded values, swallow errors '
+          + 'in empty catch blocks, or leave async promises floating without await. They '
+          + 'pass compilation and often pass superficial review because the failure is '
+          + 'invisible without semantic analysis of the function body.';
+      case 'MISSING_IMPLEMENTATION':
+        return 'Code sections that exist in the source tree but have no real implementation '
+          + '— the section marker or function declaration is present, but the body is empty '
+          + 'or comment-only after non-code content is stripped.';
+      case 'DEAD_CODE':
+        return 'Constructs (functions, classes, methods) that are defined and often exported '
+          + 'but never called by any other code in the project. They consume maintenance '
+          + 'effort, increase bundle size, and mislead readers into thinking they are load-'
+          + 'bearing when they are not.';
+      case 'MISMATCH_BRANDING_ILLUSION':
+        return 'Functions whose names promise a capability they do not implement. The '
+          + 'branding suggests the work is done (e.g. `validateUser`, `authenticate`), but '
+          + 'the body does not fulfill the contract implied by the name.';
+      case 'SPEC_GAP':
+        return 'Partial implementations that satisfy some spec requirements but omit '
+          + 'others. The construct appears complete at a glance but is missing required '
+          + 'structure — typically error handling, retry logic, or input validation.';
+      case 'DUPLICATE_IMPLEMENTATION':
+        return 'Two or more constructs with highly similar AST structure (typically >70% '
+          + 'Jaccard similarity). These are copy-paste duplicates that should be unified '
+          + 'into a parameterized helper or deliberately differentiated.';
+      default:
+        return 'A defect pattern detected by the threat modeling engine. The specifics '
+          + 'depend on which of the 6 Questions (Exists, Called, Branding, Spec, Works, '
+          + 'Copied) flagged it — read the findings below for the exact manifestation.';
+    }
+  };
+
+  /** "What it looks like" — concrete code shape per pattern. */
+  const threatLooksLike = (p: string): string => {
+    switch (p) {
+      case 'THEATRICAL_IMPLEMENTATION':
+        return '```typescript\n'
+          + '// At utils.ts:61 — claims to validate but always returns true\n'
+          + 'function validate(data: any): boolean {\n'
+          + '  return true; // THE LIE\n'
+          + '}\n'
+          + '```\n'
+          + 'Or an empty catch block that swallows errors:\n'
+          + '```typescript\n'
+          + 'try { riskyOp(); } catch (e) {} // errors silently lost\n'
+          + '```\n'
+          + 'Or a floating promise (async call without await):\n'
+          + '```typescript\n'
+          + 'async function handler() {\n'
+          + '  saveResult(); // NOT AWAITED — rejection is silent\n'
+          + '}\n'
+          + '```';
+      case 'MISSING_IMPLEMENTATION':
+        return '```\n'
+          + '// Section marker present, body empty after comment removal\n'
+          + '// === BEGIN VALIDATION ===\n'
+          + '// TODO: implement\n'
+          + '// === END VALIDATION ===\n'
+          + '```';
+      case 'DEAD_CODE':
+        return '```typescript\n'
+          + '// Defined and exported, but no caller exists anywhere\n'
+          + 'export function legacyParser(input: string): Result {\n'
+          + '  // ... 50 lines of logic no one invokes ...\n'
+          + '}\n'
+          + '```';
+      case 'MISMATCH_BRANDING_ILLUSION':
+        return '```typescript\n'
+          + '// Name says "validate" but body only logs\n'
+          + 'function validateUser(user: User): boolean {\n'
+          + '  console.log(user);   // branding illusion — no validation\n'
+          + '  return true;\n'
+          + '}\n'
+          + '```';
+      case 'SPEC_GAP':
+        return '```typescript\n'
+          + '// Spec requires retry + error handling, but only happy path exists\n'
+          + 'async function fetchWithRetry(url: string): Promise<Response> {\n'
+          + '  return fetch(url); // no retry, no error handling\n'
+          + '}\n'
+          + '```';
+      case 'DUPLICATE_IMPLEMENTATION':
+        return '```typescript\n'
+          + '// Two functions with 85%+ AST structural similarity\n'
+          + 'function parseCsvA(data: string) { /* split, map, join */ }\n'
+          + 'function parseCsvB(data: string) { /* split, map, join */ } // near-identical\n'
+          + '```';
+      default:
+        return 'See the threat modeler source (`threat-modeler.ts`) for the exact detection '
+          + 'logic for this pattern.';
+    }
+  };
+
+  /** "How to fix it" — numbered, actionable steps per pattern. */
+  const threatFixSteps = (p: string): string => {
+    switch (p) {
+      case 'THEATRICAL_IMPLEMENTATION':
+        return '1. Read the function at the indicated `file:line`.\n'
+          + '2. Understand what the function name PROMISES to do.\n'
+          + '3. Implement the actual logic that fulfills that promise.\n'
+          + '4. Add error paths for invalid inputs (never return success unconditionally).\n'
+          + '5. Test with both valid and invalid inputs.\n'
+          + '6. For empty catch blocks: re-throw or log with `tridentLog(\'ERROR\', ...)` '
+          + 'and a unique error ID. Never leave a catch body empty.\n'
+          + '7. For floating promises: add `await`, or explicitly `.catch()` the rejection.';
+      case 'MISSING_IMPLEMENTATION':
+        return '1. Locate the empty section at the cited `file:line`.\n'
+          + '2. Determine what the section is supposed to contain (check the spec, callers, '
+          + 'or sibling sections).\n'
+          + '3. Implement the missing logic.\n'
+          + '4. Verify the section now contains real code (not just comments or TODOs).';
+      case 'DEAD_CODE':
+        return '1. Confirm the construct is truly uncalled — check for dynamic dispatch, '
+          + 'reflection, string-based invocation, or test-only callers.\n'
+          + '2. If genuinely dead: delete it and remove its export.\n'
+          + '3. If test-only: move it to a test fixture file or mark with `// @internal`.\n'
+          + '4. If intentionally public API (e.g. a library): document it as exported API '
+          + 'and add a usage example.';
+      case 'MISMATCH_BRANDING_ILLUSION':
+        return '1. Read the function name — what does it promise?\n'
+          + '2. Read the body — what does it actually do?\n'
+          + '3. Either rename the function to match its real behavior, OR implement the '
+          + 'promised behavior.\n'
+          + '4. Add tests that assert the promised capability actually works.';
+      case 'SPEC_GAP':
+        return '1. Identify which spec requirements are missing (compare against the spec).\n'
+          + '2. Implement each missing requirement.\n'
+          + '3. Add a test per requirement to prevent regression.\n'
+          + '4. Re-run the threat modeler to confirm the SPEC_GAP finding is cleared.';
+      case 'DUPLICATE_IMPLEMENTATION':
+        return '1. Compare the two constructs side by side at their cited locations.\n'
+          + '2. Extract the shared logic into a parameterized helper function.\n'
+          + '3. Have each original call site invoke the helper with its specific parameters.\n'
+          + '4. Delete the duplicated bodies.\n'
+          + '5. Re-run the threat modeler to confirm similarity drops below threshold.';
+      default:
+        return '1. Read the finding description at the cited `file:line`.\n'
+          + '2. Understand the root cause from the threat modeler logic.\n'
+          + '3. Implement the fix.\n'
+          + '4. Add a regression test that would have caught the original defect.';
+    }
+  };
+
+  /** Build a full narrative encyclopedia entry for one threat. */
+  const threatEncyclopedia = (t: any, defenses: any[]): string => {
+    const pattern = String(t.pattern || 'UNKNOWN');
+    const severity = String(t.severity || 'UNKNOWN');
+    const findings = Array.isArray(t.findings) ? t.findings : [];
+    const defeatVectors = Array.isArray(t.defeatVectors) ? t.defeatVectors : [];
+
+    let out = '### ' + humanizePattern(pattern) + ' (' + severity + ' — '
+      + findings.length + ' instance' + (findings.length === 1 ? '' : 's') + ')\n\n';
+
+    out += '**What it is:** ' + threatWhatIs(pattern) + '\n\n';
+
+    if (defeatVectors.length > 0) {
+      out += '**Why it\'s dangerous:** ' + defeatVectors.join('; ') + '.\n\n';
+    } else {
+      out += '**Why it\'s dangerous:** This pattern allows incorrect code to pass review '
+        + 'because the failure is invisible without semantic analysis of the function body.\n\n';
+    }
+
+    out += '**What it looks like:**\n' + threatLooksLike(pattern) + '\n\n';
+    out += '**How to fix it:**\n' + threatFixSteps(pattern) + '\n\n';
+
+    if (findings.length > 0) {
+      const topFindings = findings.slice(0, 5);
+      out += '**Files affected (top ' + topFindings.length + '):**\n';
+      for (let fi = 0; fi < topFindings.length; fi++) {
+        const ff = topFindings[fi] as any;
+        const loc = '`' + (ff.file || '?') + ':' + (ff.line || '?') + '`';
+        out += (fi + 1) + '. ' + loc + ' — ' + (ff.description || 'See analysis') + '\n';
+      }
+      out += '\n';
+    }
+
+    const matchingDefense = defenses.find((d: any) => {
+      const rule = String(d.rule || '').toLowerCase();
+      const tp = String(d.threatPattern || '').toLowerCase();
+      const pLower = pattern.toLowerCase();
+      const firstWord = pLower.split('_')[0];
+      return tp.includes(firstWord) || rule.includes(firstWord)
+        || tp.includes(pLower) || rule.includes(pLower);
+    });
+    if (matchingDefense) {
+      const md = matchingDefense as any;
+      const op = md.thresholds?.passThreshold?.operator || '>=';
+      const val = md.thresholds?.passThreshold?.value;
+      out += '**Defense rule:** ' + md.rule + ' (' + md.checkMethod + ', weight '
+        + md.weight + ') — ' + (md.violationSeverity || 'unspecified')
+        + ' severity on violation. Pass threshold: ' + op + ' ' + (val ?? 'N/A') + '. '
+        + 'This rule will catch regressions if you re-introduce the defect after fixing it.\n\n';
+    } else {
+      out += '**Defense rule:** No dedicated defense rule matched this pattern. Re-run the '
+        + 'analysis pipeline after fixing to confirm the finding is cleared.\n\n';
+    }
+
+    return out;
+  };
+
+  /** "When you encounter this pattern" — guidance derived from pattern type. */
+  const patternEncounter = (t: string): string => {
+    switch (t) {
+      case 'class':
+        return 'This is an object-oriented construct. Read the constructor and public '
+          + 'methods to understand the lifecycle. Check that every public method has a '
+          + 'corresponding test and that class invariants are documented.';
+      case 'interface':
+        return 'This is a compile-time type contract. Read the property signatures to '
+          + 'understand the data shape. Remember interfaces are erased at runtime — they '
+          + 'cannot validate data; use a schema validator for untrusted input.';
+      case 'function':
+        return 'This is a callable unit. Read the parameters and return type. Check '
+          + 'whether it is async (returns a Promise) and whether all callers await it. '
+          + 'A floating promise here causes silent data loss.';
+      case 'import':
+        return 'This is a dependency edge. Trace where the symbol comes from and what it '
+          + 'provides. Circular imports along this edge will cause runtime `undefined` '
+          + 'errors that are hard to debug.';
+      case 'export':
+        return 'This is a module boundary. Changes to the exported signature break all '
+          + 'consumers. Check the Consumer Map in the Interface Contracts section before '
+          + 'modifying the type or name.';
+      default:
+        return 'Read the construct definition at the cited location to understand its role '
+          + 'in the system before modifying it.';
+    }
+  };
+
+  /** "When you modify it" — specific guidance per pattern type. */
+  const patternModify = (t: string): string => {
+    switch (t) {
+      case 'class':
+        return 'Adding a method: also add it to any implementing interface. Removing a '
+          + 'method: grep for all call sites first. Changing internal state: ensure the '
+          + 'constructor and all methods agree on the invariants, or you will introduce '
+          + 'race conditions.';
+      case 'interface':
+        return 'Adding a property: ALL implementors must be updated or compilation breaks. '
+          + 'Making a property optional: verify consumers handle `undefined`. Renaming: '
+          + 'use project-wide find-and-replace — a missed site becomes a silent `any`.';
+      case 'function':
+        return 'Changing parameters: update every call site. Making a previously-sync '
+          + 'function async: ALL callers must `await` or handle the Promise — missed '
+          + 'callers create floating promises (a CRITICAL defect). Changing the return '
+          + 'type: update downstream consumers.';
+      case 'import':
+        return 'Changing the source module: verify the symbol still exists and is exported. '
+          + 'Switching from named to default import (or vice versa): update the export '
+          + 'side too. Removing an import: confirm nothing else in the file still '
+          + 'references the symbol.';
+      case 'export':
+        return 'Renaming an export: update all importers across the codebase. Changing '
+          + 'the exported type: this is a breaking change — bump the version or document '
+          + 'the migration. Removing an export: confirm no consumer (including tests) '
+          + 'depends on it.';
+      default:
+        return 'Read the surrounding code before modifying. Add or update tests to cover '
+          + 'your change, and re-run the threat modeler to confirm no new defects.';
+    }
+  };
+
+  // ============================================================
   // BUILD OUTPUT
   // ============================================================
 
@@ -441,16 +917,71 @@ export function generateT2Knowledge(
   }
   b += '\n';
 
-  b += '### Core Capabilities\n\n';
-  b += projectLabel + ' provides the following capabilities to the Trident orchestration layer:\n\n';
-  b += '- **Context Synthesis:** Accepts a target project path and produces a T1 Injectable '
-    + '(copy-paste-ready opencode.json config) or a T2 Knowledge File (this artifact).\n';
-  b += '- **Auto-Discovery:** Scans source directories to extract patterns, failure modes, '
-    + 'decisions, entry points, and architectural structure without manual annotation.\n';
-  b += '- **Knowledge Encoding:** Transforms raw code intelligence into dense, bible-style '
-    + 'markdown that an agent can consume in a single context injection.\n';
-  b += '- **Artifact Persistence:** Writes generated artifacts to `'
-    + TRIDENT_CONFIG.artifactsBase + '/T2_KNOWLEDGE/` for reproducibility.\n\n';
+  // System Identity — TEACH how the system works, not just describe it
+  const engines = identifyEngines(discovery);
+  const constructCount = analysis?.constructs.length ?? discovery?.patterns.length ?? 0;
+  const tFiles = discovery?.totalFiles ?? 0;
+  const tLines = discovery?.totalLines ?? 0;
+  const langName = discovery ? Object.keys(discovery.languages).join('/') : 'TypeScript';
+  b += '## SYSTEM OVERVIEW — How This Codebase Works\n\n';
+  b += '**' + projectLabel + '** is a ' + tFiles + '-file ' + langName + '-based system with '
+    + constructCount + ' constructs across ' + tLines.toLocaleString() + ' lines of code and '
+    + engines.length + ' distinct subsystem' + (engines.length === 1 ? '' : 's') + '.\n\n';
+  b += '> Read this section first. It explains the architecture, how data flows through the '
+    + 'system, and which subsystems you need to understand before making changes. Every '
+    + 'subsequent section assumes you have internalized this overview.\n\n';
+
+  b += '### Architecture\n\n';
+  if (discovery?.directoryTree) {
+    b += '```\n' + discovery.directoryTree.split('\n').slice(0, 30).join('\n') + '\n```\n\n';
+    b += '_Directory tree shows the top ' + Math.min(30, discovery.directoryTree.split('\n').length)
+      + ' lines. The full tree is in the Architecture Summary section._\n\n';
+  } else {
+    b += '_No directory tree available — run auto-discovery to populate._\n\n';
+  }
+
+  b += '### How Data Flows\n\n';
+  b += 'Data enters the system through the entry point';
+  if (discovery && discovery.entryPoints.length > 0) {
+    b += '(s) `' + discovery.entryPoints.join('`, `') + '`';
+  } else {
+    b += ' (not detected — check `src/index.ts`)';
+  }
+  b += ', flows through the subsystems below, and exits as ';
+  if (engines.length > 0) {
+    const outputTypes: string[] = [];
+    for (const e of engines.slice(0, 5)) {
+      const types = e.patterns.map(p => p.type);
+      if (types.includes('export')) outputTypes.push('exports from `' + e.directory + '`');
+      if (types.includes('function')) outputTypes.push('return values from `' + e.directory + '`');
+    }
+    b += (outputTypes.length > 0 ? outputTypes.join(' and ') : 'module outputs') + '.\n\n';
+  } else {
+    b += 'module outputs.\n\n';
+  }
+  b += '_To trace a specific data path: start at the entry point, follow the import edges in '
+    + 'the Dependency Graph section, and note where each function transforms the data._\n\n';
+
+  b += '### Subsystems You Need to Know\n\n';
+  if (engines.length > 0) {
+    b += '_Each subsystem below is a directory with enough constructs to be a meaningful unit '
+      + 'of work. The description tells you what it does; the pattern count tells you its '
+      + 'complexity._\n\n';
+    const shownEngines = engines.slice(0, 12);
+    for (let ei = 0; ei < shownEngines.length; ei++) {
+      const e = shownEngines[ei];
+      b += (ei + 1) + '. **' + e.name + '** (' + e.patterns.length + ' patterns) — '
+        + 'located in `' + e.directory + '`. It ' + engineRole(e) + '.\n';
+    }
+    if (engines.length > shownEngines.length) {
+      b += '\n_...and ' + (engines.length - shownEngines.length) + ' more smaller subsystems. '
+        + 'See the Architecture Summary for the full list._\n';
+    }
+    b += '\n';
+  } else {
+    b += '_No subsystems detected (fewer than 3 constructs per directory). The project may '
+      + 'be a single-file module or use a flat structure._\n\n';
+  }
 
   // ============================================================
   // Section 2: Critical Facts
@@ -534,7 +1065,8 @@ export function generateT2Knowledge(
     const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((targetLines || 1000) / 3)));
     b += '_' + shown.length + ' of ' + discovery.patterns.length + ' discovered patterns '
       + 'shown below._\n\n';
-    for (const p of shown) {
+    for (let idx = 0; idx < shown.length; idx++) {
+      const p = shown[idx];
       const cat = typeCategory(p.type);
       b += '### ' + p.name + ' (' + cat + ')\n';
       b += '- **Location:** `' + p.file + ':' + p.line + '`\n';
@@ -545,15 +1077,42 @@ export function generateT2Knowledge(
       // v4.4.1: Show REAL source code from realCodeMap, never fabricated skeletons
       const _realCodeKey = p.file + ':' + p.line;
       const _realSnippet = realCodeMap?.get(_realCodeKey);
+      const maxCodeLines = 15;
       if (_realSnippet) {
-        b += _realSnippet + '\n';
+        const codeLines = _realSnippet.split('\n');
+        if (codeLines.length > maxCodeLines) {
+          b += codeLines.slice(0, maxCodeLines).join('\n') + '\n// ... ' + (codeLines.length - maxCodeLines) + ' more lines\n';
+        } else {
+          b += _realSnippet + '\n';
+        }
+      } else if (p.codeSnippet) {
+        const codeLines = p.codeSnippet.split('\n');
+        if (codeLines.length > maxCodeLines) {
+          b += codeLines.slice(0, maxCodeLines).join('\n') + '\n// ... ' + (codeLines.length - maxCodeLines) + ' more lines\n';
+        } else {
+          b += p.codeSnippet + '\n';
+        }
       } else {
         b += '// Real source not available for this pattern.\n';
       }
       b += '```\n';
       b += '- **When to Follow:** When implementing functionality that interacts with `'
         + p.name + '` or builds a similar construct (type: `' + p.type + '`).\n';
-      b += '- **Anti-Pattern:** ' + antiPattern(p.type) + '\n\n';
+      b += '- **Anti-Pattern:** ' + antiPattern(p.type) + '\n';
+      b += '- **When you encounter this pattern:** ' + patternEncounter(p.type) + '\n';
+      b += '- **When you modify it:** ' + patternModify(p.type) + '\n\n';
+      // Find threats that reference this pattern's file
+      const relatedThreats = analysis?.threats.filter((t: any) =>
+        t.findings?.some((f: any) => f.file === p.file)
+      ) || [];
+      if (relatedThreats.length > 0) {
+        b += `**Known Issues in this file:**\n`;
+        for (const t of relatedThreats.slice(0, 2)) {
+          const tt = t as any;
+          b += `- ${tt.pattern} (${tt.severity}): ${tt.findings?.[0]?.description || 'See analysis'}\n`;
+        }
+        b += '\n';
+      }
     }
   } else if (patterns.length > 0) {
     b += '_No discovery data available; using ' + patterns.length + ' user-provided patterns._\n\n';
@@ -599,6 +1158,25 @@ export function generateT2Knowledge(
       + 'discovery scan was limited. Manually review error-handling paths before production.\n\n';
   }
 
+  if (analysis && analysis.threats.length > 0) {
+    b += '## DEFECT ENCYCLOPEDIA\n\n';
+    b += '> Each entry below is a class of defect found in this codebase. Read the **What it '
+      + 'is**, **Why it\'s dangerous**, **What it looks like**, and **How to fix it** sections '
+      + 'before touching any file listed under **Files affected**. The **Defense rule** tells '
+      + 'you which automated check will catch a regression if you re-introduce the defect.\n\n';
+    const threatDefs = analysis.defenses as any[];
+    const maxThreats = Math.min(analysis.threats.length, 10);
+    for (let i = 0; i < maxThreats; i++) {
+      const t = analysis.threats[i] as any;
+      b += threatEncyclopedia(t, threatDefs);
+    }
+    if (analysis.threats.length > maxThreats) {
+      b += '_...and ' + (analysis.threats.length - maxThreats) + ' more threat pattern'
+        + (analysis.threats.length - maxThreats === 1 ? '' : 's')
+        + ' below the display threshold. Run the full analysis pipeline for the complete list._\n\n';
+    }
+  }
+
   // ============================================================
   // Section 5: Design Decisions
   // ============================================================
@@ -620,61 +1198,128 @@ export function generateT2Knowledge(
       + '`// Decision:` or `// Rationale:` to document non-obvious choices.\n\n';
   }
 
+  if (analysis && analysis.pipeline && analysis.pipeline.phases) {
+    b += `## Architectural Decisions\n\n`;
+    for (let phIdx = 0; phIdx < analysis.pipeline.phases.length; phIdx++) {
+      const phase = analysis.pipeline.phases[phIdx] as any;
+      const dNum = String(phIdx).padStart(3, '0');
+      b += `### ADR-${dNum}: ${phase.domain || 'Unknown'} Defense Phase\n\n`;
+      b += `**Status:** ACCEPTED\n`;
+      b += `**Execution Model:** ${phase.executionModel || 'unknown'}\n\n`;
+      b += `**Context:**\n`;
+      b += `The ${phase.domain} domain has ${phase.defenses?.length ?? 0} active defense rules that must execute ${phase.executionModel === 'sequential' ? 'in order' : 'in parallel'}.\n\n`;
+      b += `**Decision:**\n`;
+      if (phase.defenses && phase.defenses.length > 0) {
+        b += `Deploy defenses: ${phase.defenses.join(', ')}\n\n`;
+      }
+      b += `**Consequences:**\n`;
+      b += `- ${phase.executionModel === 'sequential' ? 'Rules must complete in order — later rules depend on earlier output' : 'Rules run independently — failure of one does not block others'}\n`;
+      b += `- Cost of reversal: ${phase.executionModel === 'sequential' ? 'Medium' : 'Low'}\n\n`;
+      if (phase.inputs && phase.inputs.length > 0) b += `**Inputs:** ${phase.inputs.join(', ')}\n`;
+      if (phase.outputs && phase.outputs.length > 0) b += `**Outputs:** ${phase.outputs.join(', ')}\n`;
+      b += '\n';
+    }
+  }
+
   // ============================================================
   // Section 6: Prohibitions
   // ============================================================
   b += '## Prohibitions\n\n';
-  b += '> What NOT to do. Violating these introduces bugs, regressions, or runtime failures. '
-    + 'Each prohibition includes the consequence of violation.\n\n';
+  b += '> What NOT to do — and exactly WHY each rule exists and HOW to remediate a violation. '
+    + 'Every prohibition below has been violated in production at least once; the WHY explains '
+    + 'the failure mode that motivated the rule, and the IF YOU SEE IT gives the mechanical fix.\n\n';
   b += '### Core Prohibitions\n\n';
-  b += '1. **DO NOT** use sync file I/O (`readFileSync`, `writeFileSync`, `mkdirSync`) in '
-    + 'hot paths — use `fs/promises` async equivalents.\n';
-  b += '2. **DO NOT** skip layer validation — every mode pipeline layer must call '
-    + '`validateLayerContent()` and check the result.\n';
-  b += '3. **DO NOT** declare success without runtime evidence — artifacts must be written '
-    + 'to disk and verified.\n';
-  b += '4. **DO NOT** hardcode paths that should come from `TRIDENT_CONFIG` or environment '
-    + 'variables.\n';
-  b += '5. **DO NOT** use `require()` in ESM modules — use `import` with `.js` extensions '
-    + 'for local files.\n';
-  b += '6. **DO NOT** leave empty catch blocks or swallow errors silently — always log with '
-    + 'an error ID.\n\n';
+
+  b += '#### 1. Sync File I/O in Hot Paths\n\n';
+  b += '**NEVER** use synchronous file I/O (`readFileSync`, `writeFileSync`, `mkdirSync`, '
+    + '`existsSync`) in hot paths or any code that runs inside an async function.\n';
+  b += '**WHY:** Synchronous I/O blocks the single-threaded Node/Bun event loop. While one '
+    + '`readFileSync` runs, NO other code can execute — not timers, not incoming requests, not '
+    + 'graceful-shutdown handlers. In a container this manifests as a frozen process that '
+    + 'health-checks time out and the orchestrator kills.\n';
+  b += '**IF YOU SEE IT:** Replace `fs.readFileSync(p)` with `await fs.readFile(p)` from '
+    + '`fs/promises`. Replace `mkdirSync` with `await mkdir(p, { recursive: true })`. The '
+    + 'async equivalents have identical semantics but yield control between operations.\n\n';
+
+  b += '#### 2. Skipping Layer Validation\n\n';
+  b += '**NEVER** skip the `validateLayerContent()` call at the end of a pipeline layer.\n';
+  b += '**WHY:** Layer validation is the only mechanical gate between "the agent claims the '
+    + 'layer is done" and "the layer output is structurally correct". Without it, invalid or '
+    + 'empty layer content passes to the next stage, and the pipeline produces garbage that '
+    + 'compiles but is semantically wrong. The bug surfaces far downstream where it is '
+    + 'expensive to trace back.\n';
+  b += '**IF YOU SEE IT:** Add `const valid = validateLayerContent(output); if (!valid.ok) '
+    + '{ return failLayer(valid.reason); }` at the end of the layer. Never short-circuit with '
+    + 'a success return before validation runs.\n\n';
+
+  b += '#### 3. Declaring Success Without Runtime Evidence\n\n';
+  b += '**NEVER** return a success result without citing a `file:line` or an on-disk artifact '
+    + 'path as evidence.\n';
+  b += '**WHY:** The evidence chain is the audit trail that lets a reviewer (human or '
+    + 'automated) verify that the claimed work actually happened. A success claim with no '
+    + 'evidence is a silent false-positive — the system reports the bug is fixed while the '
+    + 'fix was never written to disk. This is the single most common cause of bugs shipping '
+    + 'to production undetected.\n';
+  b += '**IF YOU SEE IT:** Add an evidence assertion: `assertArtifactWritten(path)` or cite '
+    + 'the exact `file:line` where the change landed. If you cannot produce evidence, the '
+    + 'work is not done — return failure, not success.\n\n';
+
+  b += '#### 4. Hardcoded Paths\n\n';
+  b += '**NEVER** hardcode filesystem paths, URLs, or environment-specific values that should '
+    + 'come from `TRIDENT_CONFIG` or environment variables.\n';
+  b += '**WHY:** Hardcoded paths work on the developer\'s machine and fail in CI, staging, '
+    + 'and production — each of which has a different directory layout. The failure is '
+    + 'non-obvious: the code works until it hits the hardcoded path, then throws ENOENT in '
+    + 'an environment where you cannot easily debug.\n';
+  b += '**IF YOU SEE IT:** Replace the literal with `TRIDENT_CONFIG.<key>` or '
+    + '`process.env.<VAR>`. Add the variable to the environment template and document the '
+    + 'default in `config.ts`.\n\n';
+
+  b += '#### 5. `require()` in ESM Modules\n\n';
+  b += '**NEVER** use `require()` in an ESM (`.ts`/`.js` with `"type": "module"`) module.\n';
+  b += '**WHY:** `require` is a CommonJS primitive that does not exist in the ESM runtime. '
+    + 'Calling it throws `ReferenceError: require is not defined` at the exact moment the '
+    + 'module loads — which is typically during bootstrap, taking down the entire process '
+    + 'before any error handler can run.\n';
+  b += '**IF YOU SEE IT:** Replace `require(\'x\')` with `import x from \'x\'`. For local '
+    + 'files, use the `.js` extension: `import { foo } from \'./foo.js\'` (TypeScript '
+    + 'resolves this to `foo.ts` at compile time).\n\n';
+
+  b += '#### 6. Empty Catch Blocks\n\n';
+  b += '**NEVER** leave a catch block empty, and never swallow errors silently (catching '
+    + 'without logging or re-throwing).\n';
+  b += '**WHY:** An empty catch block severs the error chain. The underlying operation fails, '
+    + 'but the catch hides the failure and the code continues as if it succeeded. Downstream '
+    + 'code operates on corrupt or missing data, and because no error was logged, there is '
+    + 'no trail to diagnose why. This is the root cause of "it works on my machine" bugs.\n';
+  b += '**IF YOU SEE IT:** Replace `catch (e) {}` with `catch (e) { tridentLog(\'ERROR\', '
+    + '\'moduleName\', e, { context }); throw e; }` — log with a unique error ID AND re-throw '
+    + 'so the caller can decide on recovery. If you intentionally swallow, add a comment '
+    + 'explaining why: `// intentionally ignored: <reason>`.\n\n';
 
   // Dynamic prohibitions derived from discovered failure modes
   if (discovery && discovery.failureModes.length > 0) {
-    b += '### Discovered Prohibitions (derived from failure modes)\n\n';
-    const derived = new Set<string>();
-    for (const f of discovery.failureModes) {
-      const kind = classifyFailure(f.pattern);
-      let prohibition = '';
-      switch (kind) {
-        case 'logging':
-          prohibition = '- **DO NOT** use bare `console.*` for error logging '
-            + '(found at `' + f.file + ':' + f.line + '`) — use structured `tridentLog` instead.';
-          break;
-        case 'exception':
-          prohibition = '- **DO NOT** throw without documenting the error contract '
-            + '(found at `' + f.file + ':' + f.line + '`) — callers must know to catch.';
-          break;
-        case 'catch-block':
-          prohibition = '- **DO NOT** leave catch blocks empty or logging-only '
-            + '(found at `' + f.file + ':' + f.line + '`) — re-throw or log with an error ID.';
-          break;
-        case 'type-erosion':
-          prohibition = '- **DO NOT** use `any` without a type guard '
-            + '(found at `' + f.file + ':' + f.line + '`) — use `unknown` and narrow.';
-          break;
-        default:
-          prohibition = '- **DO NOT** skip error-path coverage '
-            + '(failure path found at `' + f.file + ':' + f.line + '`) — add a test.';
-          break;
+    b += '### Discovered Prohibitions (derived from failure modes found in THIS codebase)\n\n';
+    b += '> These prohibitions are backed by concrete `file:line` evidence in the source. '
+      + 'Each includes the WHY and the mechanical remediation.\n\n';
+    // Group failures by prohibition type to avoid repeating identical entries
+    const prohibitionsByType = new Map<string, { why: string; fix: string; files: string[] }>();
+    for (const fm of discovery.failureModes.slice(0, 15)) {
+      const proh = prohibitionForFailure(fm);
+      if (!prohibitionsByType.has(proh.rule)) {
+        prohibitionsByType.set(proh.rule, { why: proh.why, fix: proh.fix, files: [] });
       }
-      if (!derived.has(prohibition)) {
-        derived.add(prohibition);
-        b += prohibition + '\n';
-      }
+      prohibitionsByType.get(proh.rule)!.files.push(fm.file + ':' + fm.line);
     }
-    b += '\n';
+    for (const [rule, data] of prohibitionsByType) {
+      b += '- **' + rule + '**\n';
+      b += '  - **WHY:** ' + data.why + '\n';
+      b += '  - **IF YOU SEE IT:** ' + data.fix + '\n';
+      b += '  - **Found in (' + data.files.length + ' locations):** '
+        + data.files.slice(0, 5).map(f => '`' + f + '`').join(', ')
+        + (data.files.length > 5 ? ', and ' + (data.files.length - 5) + ' more' : '')
+        + '\n\n';
+    }
   }
 
   b += '### Violation Consequences\n\n';
@@ -834,6 +1479,15 @@ export function generateT2Knowledge(
   b += '> Exported symbols, their signatures, and consumer relationships. This section makes '
     + 'the T2 a real engineering reference, not just a summary.\n\n';
 
+  if (analysis && analysis.types && analysis.types.length > 0) {
+    b += `### Generated Types (from pipeline analysis)\n\n`;
+    b += '```typescript\n';
+    for (const typeDef of analysis.types.slice(0, 10)) {
+      b += typeDef + '\n\n';
+    }
+    b += '```\n\n';
+  }
+
   if (discovery && discovery.patterns.length > 0) {
     const exported = discovery.patterns.filter(
       (p: DiscoveredPattern) => p.type === 'export' || p.type === 'function' || p.type === 'class' || p.type === 'interface'
@@ -919,9 +1573,10 @@ export async function generateT2Artifact(
   targetPath?: string,
   discovery?: DiscoveryResult | null,
   targetLines?: number,
-  realCodeMap?: Map<string, string>
+  realCodeMap?: Map<string, string>,
+  analysis?: AnalysisResult | null
 ): Promise<T2ArtifactResult> {
-  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap);
+  const content = generateT2Knowledge(projectName, patterns, keyFacts, targetPath, discovery, targetLines, realCodeMap, analysis);
 
   // Determine artifact directory from config (fall back to cwd + GENERATED_ARTIFACTS)
   const base = TRIDENT_CONFIG.artifactsBase || path.join(process.cwd(), 'GENERATED_ARTIFACTS');

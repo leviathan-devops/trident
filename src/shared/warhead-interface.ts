@@ -1,15 +1,12 @@
-import { HookRegistry } from './warhead-registry.js';
-
 /**
  * Warhead interface — EVERY warhead implements this.
  *
  * WHY: Forces every warhead to provide:
- *   register() — attaches REAL hook handlers (not text strings)
  *   getT0() — returns REAL runtime counters (not hardcoded text)
  *   getStatus() — for evidence logging and debugging
  *
  * ANTI-PATTERN: A warhead that only has getT0() returning hardcoded text
- * but no register() attaching real hooks is THEATRICAL.
+ * but no real enforcement logic is THEATRICAL.
  */
 export interface Warhead {
   /** Unique identifier, e.g. 'runtime-grade-intelligence' */
@@ -26,15 +23,6 @@ export interface Warhead {
    * ANTI-PATTERN: init() that does nothing or only logs.
    */
   init?(): Promise<void>;
-
-  /**
-   * Register hook handlers on the HookRegistry.
-   * This is where REAL enforcement happens.
-   *
-   * ANTI-PATTERN: register() that only calls tridentLog() without
-   * attaching real hook handlers via hooks.on().
-   */
-  register(hooks: HookRegistry): void;
 
   /**
    * Get the T0 injectable string — injected into system prompt.

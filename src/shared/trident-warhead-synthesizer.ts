@@ -2,7 +2,6 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tridentLog } from '../utils.js';
-import { hookRegistry } from './warhead-registry.js';
 import { Warhead } from './warhead-interface.js';
 import { registerProjectFolderWarheadHooks } from './project-folder-warhead/project-folder-warhead.js';
 import { ContextSynthesisEngine } from '../modes/context-synthesis-engine.js';
@@ -30,7 +29,7 @@ const __dirname = path.dirname(__filename);
 // files can't be loaded from disk.
 const FALLBACK_TOOLS_MD = `# TOOLS.md (Bundle Fallback)
 - trident-code-audit (17-layer), trident-deep-planning, trident-problem-solving
-- trident-context-synthesis, trident-poseidon, trident-gate, trident-status, trident-help
+- trident-context-synthesis, trident-gate, trident-status, trident-vision, trident-help
 - hive_context, hive_remember, todowrite
 - BLOCKED: edit, write, bash, terminal, execute, exec
 - TASK: allowed unconditionally`;
@@ -74,9 +73,9 @@ L5: 11 anti-derailment classes (host fallback, success claims, mocks, scope cree
 L3: Theatrical detection — keyword + Merkle cross-reference.
 CFW: Contextual Firewall — PLAN phase blocks write/edit/patch/create.`;
 
-const FALLBACK_COMPACT_IDENTITY = `who/what → "Trident Brain v4.4.2 — T3 Algorithmic Intelligence."
+const FALLBACK_COMPACT_IDENTITY = `who/what → "Trident Agent — code audit engine."
 are you opencode → "No. I am Trident. opencode is the runtime platform."
-can you edit → "Not in Normal Mode. Trident audits. Build agents implement changes. Poseidon Mode unlocks bash/write/edit."
+can you edit → "No. Trident audits and documents. Build agents implement changes."
 Block: edit, write, bash. task: ALLOWED unconditionally. LayerEngine enforces.`;
 
 const FALLBACK_NLP_PIPELINE = `  Chat message analysis via wink-nlp tokenizer (10+ attributes per token).
@@ -338,7 +337,7 @@ function buildIdentityBindingT1(): string {
   const t2 = ensureT2Cache();
   const tridentMd = t2.get('TRIDENT.md') || '';
   const compact = [
-    'Trident Brain v4.4.2 — T3 Algorithmic Audit Engine.',
+    'Trident Agent — Code audit and analysis engine.',
     'Audits code. Generates review artifacts. Directs build agents.',
     'NOT opencode. NOT a chatbot. NOT an assistant.',
     'Two modes: AGENT (nav/gen) + AUDITOR (review/plan/synthesize).',
@@ -486,20 +485,16 @@ export async function registerWarheadHooks(): Promise<void> {
       if (w.init) {
         await w.init();
       }
-      w.register(hookRegistry);
-      tridentLog('INFO', 'warhead-synthesizer', `Warhead registered: ${w.id}`);
+      tridentLog('INFO', 'warhead-synthesizer', `Warhead initialized: ${w.id}`);
     } catch (e: unknown) {
       tridentLog('ERROR', 'warhead-synthesizer',
-        `Warhead ${w.id} registration failed: ${e instanceof Error ? e.message : String(e)}`);
+        `Warhead ${w.id} initialization failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
   }
 
   tridentLog('INFO', 'warhead-synthesizer',
-    `${warheads.length} warheads registered, ${hookRegistry.getEventCount()} events, ` +
-    `tool.execute.before=${hookRegistry.getHandlerCount('tool.execute.before')}, ` +
-    `tool.execute.after=${hookRegistry.getHandlerCount('tool.execute.after')}, ` +
-    `chat.message=${hookRegistry.getHandlerCount('chat.message')}`);
+    `${warheads.length} warheads initialized`);
 }
 
 // ── Safe T0 getter (wraps getT0() in try/catch with typed return) ──

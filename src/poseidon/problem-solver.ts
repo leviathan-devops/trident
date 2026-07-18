@@ -87,7 +87,7 @@ class FiveWhysFramework implements ProblemSolvingFramework {
       current = result.answer;
     }
 
-    const rootCause = chain.length > 0 ? chain[chain.length - 1] : 'Could not trace root cause via Five Whys';
+    const rootCause = chain.length > 0 ? chain[chain.length - 1] : 'Insufficient evidence for automated root cause — manual investigation required';
 
     let solutionType: Diagnosis['solutionType'] = 'FIX_SOURCE';
     if (rootCause.includes('checker') || rootCause.includes('R8') || rootCause.includes('R15') || rootCause.includes('R16')) solutionType = 'FIX_CHECKER';
@@ -769,15 +769,18 @@ class HypothesisDrivenFramework implements ProblemSolvingFramework {
 }
 
 // ============================================================================
-// MAIN SOLVER - Orchestrates all frameworks
+// FRAMEWORK REGISTRY — Classification-aware framework selection
+// Frameworks are now SELECTABLE TOOLS, not mandatory pipeline stages.
+// selectForClassification() picks the right framework(s) based on the
+// problem's nature, not just "does it apply?".
 // ============================================================================
 
-export class ProblemSolver {
-  private frameworks: ProblemSolvingFramework[];
-  private targetPath: string;
+type ProblemClassification = 'root-cause' | 'multiple-failures' | 'systemic' | 'too-many' | 'fundamental' | 'hypothesis';
 
-  constructor(targetPath: string) {
-    this.targetPath = targetPath;
+export class FrameworkRegistry {
+  private frameworks: ProblemSolvingFramework[];
+
+  constructor() {
     this.frameworks = [
       new FiveWhysFramework(),
       new FaultTreeFramework(),
@@ -788,14 +791,203 @@ export class ProblemSolver {
     ];
   }
 
+  /**
+   * Classify the stall/problem into a framework category.
+   * This replaces the old "run all frameworks that apply" approach.
+   */
+  classifyProblem(context: ProblemContext): ProblemClassification {
+    const symptom = context.symptom.toLowerCase();
+
+    // Too many findings → Pareto (80/20)
+    if (context.findingCount > 10) return 'too-many';
+
+    // Multiple failure modes → Fault Tree
+    if (context.findingLayers.length > 5) return 'multiple-failures';
+
+    // Systemic/stall loop → Systems Thinking
+    if (context.stalledSince > 0 || context.cycle > 5 ||
+        symptom.includes('loop') || symptom.includes('feedback') || symptom.includes('cycle')) {
+      return 'systemic';
+    }
+
+    // Fundamental design / architecture issue
+    if (symptom.includes('architecture') || symptom.includes('design') ||
+        symptom.includes('fundamental') || symptom.includes('restructure')) {
+      return 'fundamental';
+    }
+
+    // Hypothesis testing needed
+    if (symptom.includes('hypothesis') || symptom.includes('test') || symptom.includes('assume')) {
+      return 'hypothesis';
+    }
+
+    // Default: root cause tracing
+    return 'root-cause';
+  }
+
+  /**
+   * Select frameworks based on problem classification.
+   * Unlike the old appliesTo() filter, this picks frameworks
+   * PURPOSEFULLY for the problem type.
+   */
+  selectForClassification(classification: ProblemClassification, context: ProblemContext): ProblemSolvingFramework[] {
+    const byName = (name: string): ProblemSolvingFramework | undefined =>
+      this.frameworks.find((f: ProblemSolvingFramework) => f.name === name);
+
+    const selected: ProblemSolvingFramework[] = [];
+
+    switch (classification) {
+      case 'root-cause': {
+        const fw = byName('Five Whys');
+        if (fw) selected.push(fw);
+        // Add Hypothesis-Driven as secondary for validation
+        const hd = byName('Hypothesis-Driven Debugging');
+        if (hd && hd.appliesTo(context)) selected.push(hd);
+        break;
+      }
+      case 'multiple-failures': {
+        const ft = byName('Fault Tree Analysis');
+        if (ft) selected.push(ft);
+        const fw = byName('Five Whys');
+        if (fw) selected.push(fw);
+        break;
+      }
+      case 'systemic': {
+        const st = byName('Systems Thinking');
+        if (st) selected.push(st);
+        const hd = byName('Hypothesis-Driven Debugging');
+        if (hd) selected.push(hd);
+        break;
+      }
+      case 'too-many': {
+        const pa = byName('Pareto Analysis');
+        if (pa) selected.push(pa);
+        const ft = byName('Fault Tree Analysis');
+        if (ft) selected.push(ft);
+        break;
+      }
+      case 'fundamental': {
+        const fp = byName('First Principles');
+        if (fp) selected.push(fp);
+        const st = byName('Systems Thinking');
+        if (st) selected.push(st);
+        break;
+      }
+      case 'hypothesis': {
+        const hd = byName('Hypothesis-Driven Debugging');
+        if (hd) selected.push(hd);
+        const fw = byName('Five Whys');
+        if (fw) selected.push(fw);
+        break;
+      }
+    }
+
+    // Fallback: if nothing selected, try appliesTo() on all
+    if (selected.length === 0) {
+      return this.frameworks.filter((f: ProblemSolvingFramework) => f.appliesTo(context));
+    }
+
+    return selected;
+  }
+
+  /**
+   * Get all frameworks (for backward compatibility and full analysis).
+   */
+  getAll(): ProblemSolvingFramework[] {
+    return this.frameworks;
+  }
+}
+
+// ============================================================================
+// STALL DETECTOR — For Poseidon integration
+// Implements the Stall detection loop (triviality gate → classify → gather → decide →
+// act → verify) with a HARD BOUND of 3 failed fix-verify cycles.
+// ============================================================================
+
+export class StallDetector {
+  private failures: number = 0;
+  private readonly HARD_BOUND: number = 3;
+  private attempts: string[] = [];
+  private results: string[] = [];
+
+  /**
+   * Reset failure tracking (called when score improves).
+   */
+  reset(): void {
+    this.failures = 0;
+    this.attempts = [];
+    this.results = [];
+  }
+
+  /**
+   * Record a failed fix-verify cycle.
+   */
+  recordFailure(attempt: string, result: string): void {
+    this.failures++;
+    this.attempts.push(attempt);
+    this.results.push(result);
+  }
+
+  /**
+   * Check if the hard bound has been reached.
+   * After 3 failed fix-verify cycles on the same issue → STOP.
+   */
+  isHardBoundReached(): boolean {
+    return this.failures >= this.HARD_BOUND;
+  }
+
+  /**
+   * Get failure report for hard-bound abort.
+   */
+  getFailureReport(): string {
+    const lines: string[] = [];
+    lines.push('[HARD BOUND REACHED]');
+    lines.push(`After ${this.failures} failed fix-verify cycles, the problem could not be resolved automatically.`);
+    lines.push('');
+    lines.push('ATTEMPTS AND RESULTS:');
+    for (let i = 0; i < this.attempts.length; i++) {
+      lines.push(`  ${i + 1}. Attempted: ${this.attempts[i]}`);
+      lines.push(`     Result: ${this.results[i]}`);
+    }
+    lines.push('');
+    lines.push('HANDING BACK TO USER. Manual investigation required.');
+    return lines.join('\n');
+  }
+
+  getFailureCount(): number {
+    return this.failures;
+  }
+}
+
+// ============================================================================
+// MAIN SOLVER — Orchestrates frameworks via classification-aware registry
+// Backward compatible: solve() still works for god-loop.ts
+// New: runStallDiagnosis() adds Stall detection loop with hard bound for stall detection
+// ============================================================================
+
+export class ProblemSolver {
+  private registry: FrameworkRegistry;
+  private stallDetector: StallDetector;
+  private targetPath: string;
+
+  constructor(targetPath: string) {
+    this.targetPath = targetPath;
+    this.registry = new FrameworkRegistry();
+    this.stallDetector = new StallDetector();
+  }
+
+  /**
+   * Classic solve — backward compatible with god-loop.ts.
+   * Uses classification-aware framework selection internally.
+   */
   solve(context: ProblemContext): ProblemSolution {
-    // 1. Select applicable frameworks
-    const applicable = this.frameworks.filter((f: ProblemSolvingFramework) => f.appliesTo(context));
+    const classification = this.registry.classifyProblem(context);
+    const selected = this.registry.selectForClassification(classification, context);
 
-    // 2. Run each framework
-    const diagnoses = applicable.map((f: ProblemSolvingFramework) => f.analyze(context));
+    // Run selected frameworks
+    const diagnoses = selected.map((f: ProblemSolvingFramework) => f.analyze(context));
 
-    // 3. Synthesize - pick highest-confidence diagnosis as primary
+    // Synthesize — pick highest-confidence diagnosis as primary
     const sorted = [...diagnoses].sort((a: Diagnosis, b: Diagnosis) => b.confidence - a.confidence);
     const primary = sorted[0];
 
@@ -810,11 +1002,8 @@ export class ProblemSolver {
         instructions: '[PROBLEM_SOLVE] No framework could diagnose the stall. Manual investigation needed.',
       };
     } else {
-      // 4. Generate action plan from root cause
       const actionPlan = this.generateActionPlan(primary, context);
-
-      // 5. Generate forceful instructions
-      const instructions = this.generateInstructions(primary, actionPlan);
+      const instructions = this.generateInstructions(primary, actionPlan, classification);
 
       result = {
         rootCause: primary.rootCause,
@@ -826,6 +1015,105 @@ export class ProblemSolver {
       };
     }
     return result;
+  }
+
+  /**
+   * Stall detection loop — for Poseidon stall detection.
+   * Runs the full Stall detection loop: classify → gather evidence → decide → act → verify.
+   * Enforces hard bound (3 failures → abort).
+   */
+  runStallDiagnosis(context: ProblemContext): ProblemSolution {
+    // Check hard bound first
+    if (this.stallDetector.isHardBoundReached()) {
+      return {
+        rootCause: 'HARD BOUND REACHED — 3 failed fix-verify cycles',
+        solutionType: 'FIX_SOURCE',
+        diagnoses: [],
+        actionPlan: [],
+        expectedOutcome: 'Manual intervention required',
+        instructions: this.stallDetector.getFailureReport(),
+      };
+    }
+
+    // Step 0: Triviality gate — is this a simple stall?
+    if (context.score > 90 && context.findingCount <= 2) {
+      // Trivial: just fix the remaining findings
+      const result = this.solve(context);
+      return result;
+    }
+
+    // Step 1: Classify the stall
+    const classification = this.registry.classifyProblem(context);
+
+    // Step 2-3: Select frameworks and gather evidence
+    const selected = this.registry.selectForClassification(classification, context);
+    const diagnoses = selected.map((f: ProblemSolvingFramework) => f.analyze(context));
+
+    // Step 4: Decide — synthesize
+    const sorted = [...diagnoses].sort((a: Diagnosis, b: Diagnosis) => b.confidence - a.confidence);
+    const primary = sorted[0];
+
+    if (!primary) {
+      // No diagnosis — record failure for hard bound tracking
+      this.stallDetector.recordFailure(
+        'Framework analysis with classification: ' + classification,
+        'No framework could produce a diagnosis'
+      );
+      return {
+        rootCause: 'No framework could diagnose this stall',
+        solutionType: 'FIX_SOURCE',
+        diagnoses: [],
+        actionPlan: [],
+        expectedOutcome: 'Manual investigation required',
+        instructions: '[STALL DIAGNOSIS] Classification: ' + classification + '. No diagnosis produced. Failures: ' + this.stallDetector.getFailureCount() + '/3.',
+      };
+    }
+
+    // Step 5: Act — generate action plan
+    const actionPlan = this.generateActionPlan(primary, context);
+
+    // Step 6: Verify — assessment
+    const instructions = this.generateInstructions(primary, actionPlan, classification);
+    const failureNote = this.stallDetector.getFailureCount() > 0
+      ? `\n\nNOTE: ${this.stallDetector.getFailureCount()}/3 failures recorded. Hard bound at 3.`
+      : '';
+
+    return {
+      rootCause: primary.rootCause,
+      solutionType: primary.solutionType,
+      diagnoses,
+      actionPlan,
+      expectedOutcome: actionPlan.length > 0 ? actionPlan[0].expectedOutcome : 'Apply fix and re-audit',
+      instructions: instructions + failureNote,
+    };
+  }
+
+  /**
+   * Record a failed fix-verify cycle (for Poseidon to call after a failed wave).
+   */
+  recordFailedCycle(attempt: string, result: string): void {
+    this.stallDetector.recordFailure(attempt, result);
+  }
+
+  /**
+   * Reset failure tracking (call when score improves).
+   */
+  resetFailures(): void {
+    this.stallDetector.reset();
+  }
+
+  /**
+   * Check if hard bound reached.
+   */
+  isHardBoundReached(): boolean {
+    return this.stallDetector.isHardBoundReached();
+  }
+
+  /**
+   * Get the stall detector instance (for external access).
+   */
+  getStallDetector(): StallDetector {
+    return this.stallDetector;
   }
 
   private generateActionPlan(primary: Diagnosis, context: ProblemContext): ActionStep[] {
@@ -892,34 +1180,26 @@ export class ProblemSolver {
     return steps;
   }
 
-  private generateInstructions(primary: Diagnosis, actionPlan: ActionStep[]): string {
+  private generateInstructions(primary: Diagnosis, actionPlan: ActionStep[], classification: string): string {
     const lines: string[] = [];
-    lines.push('[POSEIDON: PROBLEM_SOLVE - INTELLIGENT DIAGNOSIS]');
+    // Outcome-first format — no scaffolding headers
+    lines.push('## Diagnosis');
     lines.push('');
-    lines.push('ROOT CAUSE: ' + primary.rootCause);
-    lines.push('SOLUTION TYPE: ' + primary.solutionType);
-    lines.push('CONFIDENCE: ' + (primary.confidence * 100).toFixed(0) + '%');
+    lines.push('**Root cause:** ' + primary.rootCause);
+    lines.push('**Confidence:** ' + (primary.confidence * 100).toFixed(0) + '%');
     lines.push('');
-    lines.push('EVIDENCE:');
+    lines.push('## Evidence');
     for (const e of primary.evidence.slice(0, 5)) {
-      lines.push('  - ' + e);
+      lines.push('- ' + e);
     }
     lines.push('');
-    lines.push('ACTION PLAN:');
+    lines.push('## Action Plan');
     for (let i = 0; i < actionPlan.length; i++) {
       const step = actionPlan[i];
-      lines.push('  ' + (i + 1) + '. ' + step.description);
-      lines.push('     FILE: ' + step.targetFile);
-      lines.push('     WHY: ' + step.rationale);
-      lines.push('     EXPECTED: ' + step.expectedOutcome);
+      lines.push((i + 1) + '. ' + step.description + ' (`' + step.targetFile + '`)');
+      lines.push('   - Why: ' + step.rationale);
+      lines.push('   - Verify: ' + step.expectedOutcome);
     }
-    lines.push('');
-    lines.push('MANDATORY NEXT ACTIONS (Do NOT wait for user. Execute NOW.):');
-    lines.push('1. Read the target files listed in the action plan');
-    lines.push('2. Apply the fixes described');
-    lines.push('3. Rebuild with bun build');
-    lines.push('4. Re-audit to verify the fix worked');
-    lines.push('Do NOT stop. Do NOT ask the user. ENGINEER THE SOLUTION.');
 
     return lines.join('\n');
   }

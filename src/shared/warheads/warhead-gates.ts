@@ -9,7 +9,6 @@
  * ANTI-PATTERN: CI/CD pipeline gates in an audit engine.
  */
 
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog } from '../../utils.js';
@@ -53,81 +52,6 @@ class AuditLayerProgressionWarhead implements Warhead {
     this.load();
   }
 
-  register(hooks: HookRegistry): void {
-    // Track audit layer completion from trident-code-audit output
-    hooks.on('tool.execute.after', async (input: Record<string, unknown>, output: Record<string, unknown>) => {
-      try {
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = cast<Record<string, unknown>>(input);
-        const agentName = cast<string>(inputR.agent);
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        if (typeof toolName !== 'string' || toolName !== 'trident-code-audit') return;
-
-        this.auditCount++;
-
-        if (typeof output !== 'object' || output === null) return;
-        const outputR = cast<Record<string, unknown>>(output);
-        const layers = outputR.layers;
-        if (Array.isArray(layers)) {
-          for (const layer of layers) {
-            if (typeof layer !== 'object' || layer === null) continue;
-            const l = cast<Record<string, unknown>>(layer);
-            const layerId = cast<string>(l.layer);
-            const findingCount = typeof l.findingCount === 'number' ? l.findingCount : 0;
-
-            if (layerId && AUDIT_LAYERS.includes(cast<AuditLayer>(layerId))) {
-              this.findingsPerLayer[layerId] = findingCount;
-              if (findingCount === 0 && !this.completedLayers.includes(layerId)) {
-                this.completedLayers.push(layerId);
-              } else if (findingCount > 0 && !this.failedLayers.includes(layerId)) {
-                this.failedLayers.push(layerId);
-              }
-            }
-          }
-        }
-
-        // Advance to next incomplete layer
-        this.advanceCurrentLayer();
-        this.save();
-
-        await tridentLog('INFO', 'warhead-audit-layers',
-          `Audit #${this.auditCount}: ${this.completedLayers.length}/${AUDIT_LAYERS.length} layers completed`);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-audit-layers', `Tracking failed: ${msg}`);
-        return;
-      }
-    });
-
-    // Track layer-specific gate checks
-    hooks.on('tool.execute.before', async (input: Record<string, unknown>, _output: Record<string, unknown>) => {
-      try {
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = cast<Record<string, unknown>>(input);
-        const agentName = cast<string>(inputR.agent);
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        if (toolName !== 'trident-gate') return;
-
-        this.layerCheckCount++;
-        const rawArgs = inputR.args;
-        if (typeof rawArgs !== 'object' || rawArgs === null) return;
-        const args = cast<Record<string, unknown>>(rawArgs);
-        const layer = cast<string>(args.layer);
-
-        if (layer && AUDIT_LAYERS.includes(cast<AuditLayer>(layer))) {
-          const isCompleted = this.completedLayers.includes(layer);
-          await tridentLog('INFO', 'warhead-audit-layers',
-            `Layer ${layer}: ${isCompleted ? 'PASSED' : 'NOT DONE'} (${this.layerCheckCount} checks)`);
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-audit-layers', `Gate hook failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   private advanceCurrentLayer(): void {
     for (const layer of AUDIT_LAYERS) {

@@ -1,4 +1,4 @@
-# QUALITY — Trident Explore v4.3.3
+# QUALITY — Trident Explore v4.4.2
 
 ## Finding Requirements
 - Every finding MUST include: file path, line number, evidence excerpt

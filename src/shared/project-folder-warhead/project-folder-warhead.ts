@@ -13,7 +13,6 @@ import * as os from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { hookRegistry } from '../warhead-registry.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { setProjectRoot, getProjectRoot, getContextManagementPath, isInitialized, migrateProjectRoot, persistMarkerFile } from './memory-store.js';
 import { tridentLog } from '../../utils.js';
@@ -441,31 +440,6 @@ function injectProjectFolderContext(_input: Record<string, unknown>, output: Rec
 }
 
 export function registerProjectFolderWarheadHooks(): void {
-  hookRegistry.on('session.created', async (input: Record<string, unknown>, _output: Record<string, unknown>) => {
-    if (typeof input !== 'object' || input === null) return; // input not an object — skip
-    const inputR = cast<Record<string, unknown>>(input);
-    const agentName = typeof inputR.agent === 'string'
-      ? inputR.agent : '';
-    if (!isTridentAgent(cast<string | undefined>(agentName))) return;
-    await handleSessionCreated(input);
-  });
-
-  hookRegistry.on('tool.execute.before', async (input: Record<string, unknown>, _output: Record<string, unknown>) => {
-    if (typeof input !== 'object' || input === null) return; // input not an object — skip
-    const inputR = cast<Record<string, unknown>>(input);
-    const agent = typeof inputR.agent === 'string' ? inputR.agent : '';
-    if (!isTridentAgent(cast<string | undefined>(agent))) return;
-    await fileWriteRouter(input);
-  });
-
-  hookRegistry.on('system.transform', async (input: Record<string, unknown>, output: Record<string, unknown>) => {
-    if (typeof input !== 'object' || input === null) return; // input not an object — skip
-    const inputR = cast<Record<string, unknown>>(input);
-    const agent = typeof inputR.agent === 'string' ? inputR.agent : '';
-    if (!isTridentAgent(cast<string | undefined>(agent))) return;
-    injectProjectFolderContext(input, output);
-  });
-
-  log('INFO', 'project-folder',
-    'Project folder warhead registered (session.created, tool.before, system.transform)');
+  // Hook registry removed — project folder enforcement handled directly in trident-hooks.ts
+  log('INFO', 'project-folder', 'Project folder warhead initialized (hooks handled in trident-hooks.ts)');
 }

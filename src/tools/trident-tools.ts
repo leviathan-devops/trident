@@ -3,6 +3,7 @@ import { tool } from '@opencode-ai/plugin';
 import { z } from 'zod';
 import * as path from 'path';
 import * as fs from 'fs/promises';
+import * as crypto from 'crypto';
 import { tridentLog } from '../utils.js';
 import { orchestrator } from '../orchestrator.js';
 import { AuditEngine } from '../audit-engine/index.js';
@@ -10,32 +11,497 @@ import type { AuditFinding } from '../audit-engine/types.js';
 import { generateCodeReviewArtifact } from '../artifacts/code-review-artifact.ts';
 import { generateLayer1InitialPlan, generateLayer2DetailedWorkflow, generateContextLibraryManifest, generateContextBrief, buildLayer1Prompt } from '../artifacts/deep-planning-artifact.ts';
 import { generatePipelineSpec } from '../artifacts/pipeline-generator.ts';
+import { analyzeProject } from '../artifacts/analysis-engine.ts';
 import { classifyProject } from '../audit-engine/code-classifier.ts';
-import { generatePlanArtifact } from '../artifacts/problem-solving-artifact.ts';
-import { ProblemSolver } from '../poseidon/problem-solver.js';
 import type { ProblemContext } from '../poseidon/problem-solver.js';
 import { generateT1Injectable, generateT2Artifact } from '../artifacts/context-synthesis-artifact.ts';
 import { contextSynthesisEngine } from '../modes/context-synthesis-engine.js';
 import * as fsSync from 'fs';
 import { TRIDENT_CONFIG } from '../config.js';
 import { deepPlanningModule } from '../modes/deep-planning.js';
-import { problemSolvingModule } from '../modes/problem-solving.js';
 import { contextSynthesisModule } from '../modes/context-synthesis.js';
 // trident-vision REMOVED — replaced by zai-vision_* and visual-cortex_* MCP tools
 import { tridentPoseidonTool } from './trident-poseidon.js';
+import { godLoopOrchestrator } from '../poseidon/god-loop.js';
 import { discoverProject, type DiscoveryResult, type DiscoveredPattern, type DiscoveredFailure, type DiscoveredDecision } from '../shared/auto-discover.js';
 import { interpret } from 'xstate';
 import { deepPlanningMachine } from '../fsm/deep-planning-machine.js';
 import { contextSynthesisMachine } from '../fsm/context-synthesis-machine.js';
-import { problemSolvingMachine } from '../fsm/problem-solving-machine.js';
 import { TsProgramWrapper } from '../warheads/ts-compiler-api/index.js';
 import type { AnalyzerResult } from '../warheads/ts-compiler-api/program.js';
 import { P1P10Verification } from '../warheads/p1-p10-scanner/index.js';
+import { deriveFullStrategy, getDefaultStrategy, type L2Strategy } from '../artifacts/l2-strategy.ts';
+import { buildBrief, readSourceFiles, appendComplianceAndAppendix, formatDeepeningFeedback, formatAuditFeedback } from '../artifacts/l2-brief-builder.ts';
+import { runDeepeningChecks, runCrossSectionAudit, type DeepeningResult, type CrossSectionAuditResult } from '../artifacts/l2-quality-audit.ts';
+import { REFERENCE_EXCERPTS } from '../artifacts/l2-reference-library.ts';
+import { generateSpecViaLLM, generateSpecViaLLMAsync, setClientGetter } from '../artifacts/l2-llm-generator.ts';
+import { runInternalLLMLoop } from '../artifacts/shared-llm-loop.ts';
+import { buildL1Brief } from '../artifacts/l1-brief-builder.ts';
+import { buildT1Brief } from '../artifacts/t1-brief-builder.ts';
+import { buildT2Brief } from '../artifacts/t2-brief-builder.ts';
+import { detectEngineDomains, scopeAnalysisToDomain } from '../artifacts/l3-engine-discoverer.ts';
+import { setPendingDispatch, setPendingL1Path } from '../hooks/agent-state.js';
 
 // M7: No shared singleton — create fresh AuditEngine per invocation
 // M3: Wire completeLayer/failLayer for state machine hardening
 
+// ═══ L2 DESIGN MODE HELPERS ═══
+
+/**
+ * Extract the most important terms from a requirements string.
+ * Used by the topic alignment quality gate to verify the LLM output
+ * matches what was asked for.
+ *
+ * Strategy: Find domain-specific capitalized words, CamelCase identifiers,
+ * and key nouns that appear in the requirements. Filter out common words.
+ */
+function extractKeyTerms(requirements: string): string[] {
+  const STOP_WORDS = new Set([
+    'the', 'and', 'for', 'with', 'that', 'this', 'from', 'are', 'was', 'were',
+    'have', 'has', 'will', 'can', 'not', 'but', 'all', 'any', 'new', 'use',
+    'must', 'should', 'system', 'tool', 'agent', 'engine', 'layer', 'phase',
+    'step', 'section', 'build', 'spec', 'output', 'input', 'file', 'code',
+  ]);
+
+  const terms = new Set<string>();
+
+  // Strategy 1: CamelCase identifiers (WarheadNode, ContextMatcher, etc.)
+  const camelCase = requirements.match(/\b[A-Z][a-z]+[A-Z][a-zA-Z]*\b/g) || [];
+  for (const term of camelCase) {
+    if (term.length > 3) terms.add(term);
+  }
+
+  // Strategy 2: ALL_CAPS constants
+  const allCaps = requirements.match(/\b[A-Z]{2,}[A-Z_]*\b/g) || [];
+  for (const term of allCaps) {
+    if (term.length > 2 && term !== 'API' && term !== 'TUI' && term !== 'LLM') terms.add(term);
+  }
+
+  // Strategy 3: Key nouns — words that appear multiple times in requirements
+  const words = requirements.toLowerCase().split(/[^a-z]+/);
+  const wordCounts: Record<string, number> = {};
+  for (const word of words) {
+    if (word.length < 4 || STOP_WORDS.has(word)) continue;
+    wordCounts[word] = (wordCounts[word] || 0) + 1;
+  }
+  // Words appearing 2+ times are likely key terms
+  for (const [word, count] of Object.entries(wordCounts)) {
+    if (count >= 2) terms.add(word);
+  }
+
+  // Strategy 4: Words from quoted strings
+  const quoted = requirements.match(/"([^"]{3,30})"/g) || [];
+  for (const q of quoted) {
+    const inner = q.replace(/"/g, '').toLowerCase();
+    if (inner.length > 3 && !STOP_WORDS.has(inner)) terms.add(inner);
+  }
+
+  // Return top 8 terms (sorted by length descending — longer terms are more specific)
+  const result = [...terms].sort((a, b) => b.length - a.length).slice(0, 8);
+  return result.length > 0 ? result : [];
+}
+
+/**
+ * Build a brief for design mode — requirements are PRIMARY directive.
+ * Unlike audit mode (which leads with codebase analysis), design mode
+ * leads with what the user wants to build, using contextFiles as reference.
+ */
+function buildDesignBrief(
+  args: Record<string, any>,
+  sourceExtracts: Map<string, string>,
+  strategy: any,
+  projectName: string,
+): string {
+  const L: string[] = [];
+
+  L.push(`# BUILD SPEC: ${projectName}`);
+  L.push('');
+  L.push('## PRIMARY DIRECTIVE — What This Spec Must Cover');
+  L.push('');
+  L.push(args.requirements || 'No requirements provided.');
+  L.push('');
+
+  // Architecture
+  if (args.architecture) {
+    L.push('## Architecture (provided by user)');
+    L.push('');
+    L.push(args.architecture);
+    L.push('');
+  }
+
+  // Data model
+  if (args.dataModel) {
+    L.push('## Data Model (provided by user)');
+    L.push('');
+    L.push(args.dataModel);
+    L.push('');
+  }
+
+  // Engine design
+  if (args.engineDesign) {
+    L.push('## Engine Design (provided by user)');
+    L.push('');
+    L.push(args.engineDesign);
+    L.push('');
+  }
+
+  // Defense rules
+  if (args.defenseRules && args.defenseRules.length > 0) {
+    L.push('## Defense Rules (provided by user)');
+    L.push('');
+    for (const rule of args.defenseRules) {
+      L.push(`- ${rule}`);
+    }
+    L.push('');
+  }
+
+  // Integration plan
+  if (args.integrationPlan) {
+    L.push('## Integration Plan (provided by user)');
+    L.push('');
+    L.push(args.integrationPlan);
+    L.push('');
+  }
+
+  // Test specs
+  if (args.testSpecs) {
+    L.push('## Test Specifications (provided by user)');
+    L.push('');
+    L.push(args.testSpecs);
+    L.push('');
+  }
+
+  // Migration strategy
+  if (args.migrationStrategy) {
+    L.push('## Migration Strategy (provided by user)');
+    L.push('');
+    L.push(args.migrationStrategy);
+    L.push('');
+  }
+
+  // Blind spots
+  if (args.blindSpots) {
+    L.push('## Blind Spots (provided by user)');
+    L.push('');
+    L.push(args.blindSpots);
+    L.push('');
+  }
+
+  // Reference source files (CONTEXT, not analysis target)
+  if (sourceExtracts.size > 0) {
+    L.push('## REFERENCE MATERIAL (context — do NOT analyze these as codebases to audit)');
+    L.push('');
+    L.push('The following source files are REFERENCE for your design. Use them to understand');
+    L.push('existing patterns, interfaces, and architecture. Do NOT write a spec ABOUT these files.');
+    L.push('Write a spec FOR the system described in the PRIMARY DIRECTIVE above.');
+    L.push('');
+    for (const [filePath, content] of sourceExtracts) {
+      L.push(`### Reference: ${path.basename(filePath)}`);
+      L.push('```');
+      // Truncate large files to avoid overwhelming the brief
+      L.push(content.length > 3000 ? content.substring(0, 3000) + '\n... (truncated)' : content);
+      L.push('```');
+      L.push('');
+    }
+  }
+
+  // Generation instructions — L2 engineering spec format
+  L.push('## GENERATION INSTRUCTIONS');
+  L.push('');
+  L.push('Write a COMPLETE engineering spec for the system described in the PRIMARY DIRECTIVE.');
+  L.push('The spec MUST cover the topic described in PRIMARY DIRECTIVE — do NOT drift to other topics.');
+  L.push('Use the user-provided sections above as the spec content structure.');
+  L.push('Include: Executive Summary, Architecture, Data Model, Engine Class, Defense Rules,');
+  L.push('Algorithm Specs, Test Specs, Integration, Compliance Matrix, What This Spec Does NOT Cover.');
+  L.push('60%+ TypeScript code blocks. Real implementations, not pseudocode.');
+  L.push('Maximum 5000 lines. Output ONLY the spec document.');
+  L.push('');
+  L.push('## THRESHOLD RATIONALE REQUIREMENT (CRITICAL)');
+  L.push('');
+  L.push('Every numeric threshold, constant, limit, and cutoff in this spec MUST include a');
+  L.push('"BECAUSE" paragraph explaining the engineering reasoning for that specific value.');
+  L.push('');
+  L.push('Format:');
+  L.push('  threshold = X BECAUSE [specific engineering reasoning — what failure mode');
+  L.push('  occurs at X-0.1, what false positives occur at X+0.1, what analysis or data');
+  L.push('  supports choosing X over alternatives]');
+  L.push('');
+  L.push('Examples:');
+  L.push('  passThreshold = 0.7 BECAUSE agents below 70% alignment introduce 3x more defects.');
+  L.push('  Analysis of 50 build sessions shows defect rate correlates with alignment');
+  L.push('  score at r=0.82. Below 0.7, false-negative rate exceeds 15%. Above 0.8,');
+  L.push('  false-positive rate exceeds 20% (legitimate exploration flagged as drift).');
+  L.push('');
+  L.push('  windowSize = 10 BECAUSE windows <8 produce excessive noise (single outlier');
+  L.push('  dominates distribution). Windows >15 introduce lag (agent has already moved');
+  L.push('  to next phase before stagnation is detected).');
+  L.push('');
+  L.push('A threshold WITHOUT a BECAUSE paragraph is a DEFECT. The build agent cannot');
+  L.push('tune, validate, or understand thresholds without the reasoning. Every threshold');
+  L.push('must answer: "Why this value and not something else?"');
+  L.push('');
+
+  return L.join('\n');
+}
+
+// ═══ L1 CONTENT GENERATOR BRIEF ═══
+// L1 is a <800 line chat prompt / content generator. NOT an engineering spec.
+// Takes requirements + reference docs and generates whatever content is asked for.
+// Can produce: deployment guides, subagent prompts, context docs, behavior alignment, etc.
+
+function buildL1ContentBrief(
+  args: Record<string, any>,
+  sourceExtracts: Map<string, string>,
+  projectName: string,
+): string {
+  const L: string[] = [];
+
+  L.push(`# CONTENT GENERATION TASK: ${projectName}`);
+  L.push('');
+
+  // FIRST-HAND CONTEXT — this is the PRIMARY source of truth
+  if (args.context && args.context.length > 10) {
+    L.push('## PRIMARY FIRST-HAND CONTEXT — SOURCE OF TRUTH');
+    L.push('');
+    L.push('The following is first-hand knowledge from the agent that called this tool.');
+    L.push('EVERY name, file, component, gate, tier, and structure mentioned below is REAL and ACTUAL.');
+    L.push('You MUST use ONLY these names and structures in your output.');
+    L.push('NEVER invent alternative names, fictional scripts, fictional gates, or idealized architectures.');
+    L.push('If the context says the system has 7 circuit breaker checks, write about 7 — NOT 8.');
+    L.push('If the context says scripts are named deploy.sh, write deploy.sh — NOT 01-inject-artifacts.sh.');
+    L.push('');
+    L.push(args.context);
+    L.push('');
+  }
+
+  // Key facts — must appear verbatim
+  if (args.keyFacts && args.keyFacts.length > 0) {
+    L.push('## KEY FACTS — MUST APPEAR IN OUTPUT');
+    L.push('');
+    for (const fact of args.keyFacts) {
+      L.push(`- ${fact}`);
+    }
+    L.push('');
+  }
+
+  // What to generate
+  L.push('## WHAT TO GENERATE');
+  L.push('');
+  L.push(args.requirements || 'No requirements specified. Generate based on context and reference material below.');
+  L.push('');
+
+  // Inline parameters (if provided)
+  if (args.architecture) {
+    L.push('## ARCHITECTURE CONTEXT');
+    L.push(args.architecture);
+    L.push('');
+  }
+  if (args.dataModel) {
+    L.push('## DATA MODEL CONTEXT');
+    L.push(args.dataModel);
+    L.push('');
+  }
+  if (args.integrationPlan) {
+    L.push('## INTEGRATION CONTEXT');
+    L.push(args.integrationPlan);
+    L.push('');
+  }
+
+  // Reference material
+  if (sourceExtracts.size > 0) {
+    L.push('## REFERENCE MATERIAL');
+    L.push('');
+    L.push('Use the following as reference. Synthesize into the output. Do NOT copy verbatim.');
+    L.push('');
+    for (const [filePath, content] of sourceExtracts) {
+      const truncated = content.length > 3000 ? content.substring(0, 3000) + '\n... (truncated)' : content;
+      L.push(`### ${path.basename(filePath)}`);
+      L.push('```');
+      L.push(truncated);
+      L.push('```');
+      L.push('');
+    }
+  }
+
+  // Format — L1 specific, NOT L2 structure
+  L.push('## FORMAT');
+  L.push('');
+  L.push('Generate the content described in WHAT TO GENERATE above.');
+  L.push('Target 200-800 lines depending on task complexity. Maximum 1500 lines. No imposed section structure.');
+  L.push('The output format depends entirely on what the requirements ask for.');
+  L.push('If asked for a guide → write a guide. If asked for a prompt → write a prompt.');
+  L.push('If asked for a checklist → write a checklist.');
+  L.push('Use the reference material to inform and enrich the output.');
+  L.push('Output ONLY the requested content. No preamble. No meta-commentary.');
+  L.push('');
+
+  return L.join('\n');
+}
+
+// ═══ PROBLEM SOLVING BRIEF ═══
+// PS is an LLM-powered diagnostic tool — same architecture as L1.
+// Reads actual source code, builds a brief, LLM produces comprehensive analysis.
+
+function buildProblemSolvingBrief(
+  problem: string,
+  sourceExtracts: Map<string, string>,
+  findings: string[],
+  reasoning: string[],
+  projectName: string,
+): string {
+  const L: string[] = [];
+
+  L.push(`# PROBLEM SOLVING TASK: ${projectName}`);
+  L.push('');
+
+  L.push('## PROBLEM');
+  L.push('');
+  L.push(problem);
+  L.push('');
+
+  if (reasoning && reasoning.length > 0) {
+    L.push('## REASONING CHAIN (user-provided context)');
+    L.push('');
+    for (const r of reasoning) {
+      L.push(`- ${r}`);
+    }
+    L.push('');
+  }
+
+  if (findings && findings.length > 0) {
+    L.push('## KNOWN FINDINGS (from audit or prior analysis)');
+    L.push('');
+    for (const f of findings) {
+      L.push(`- ${f}`);
+    }
+    L.push('');
+  }
+
+  if (sourceExtracts.size > 0) {
+    L.push('## SOURCE CODE (read this carefully — trace root causes to specific lines)');
+    L.push('');
+    for (const [file, code] of sourceExtracts) {
+      const truncated = code.length > 4000 ? code.substring(0, 4000) + '\n... (truncated)' : code;
+      L.push(`### ${file}`);
+      L.push('```typescript');
+      L.push(truncated);
+      L.push('```');
+      L.push('');
+    }
+  }
+
+  L.push('## OUTPUT FORMAT');
+  L.push('');
+  L.push('Produce a comprehensive diagnostic analysis. Structure:');
+  L.push('');
+  L.push('1. **Classification**: Is this a question, task, or plan-first?');
+  L.push('2. **Root Cause Analysis**: Trace the problem to its fundamental cause.');
+  L.push('   Ask "why?" repeatedly. Each answer MUST cite specific file:line from the source code above.');
+  L.push('   Do NOT say "insufficient evidence" — the code is right there. Read it and analyze it.');
+  L.push('3. **Evidence**: List every code pattern that contributes to the problem, with file:line citations.');
+  L.push('4. **Fix Strategy**: Prioritized phases. Each fix references exact file:line and what to change.');
+  L.push('   Include the corrected code for each fix.');
+  L.push('5. **Risk Assessment**: What could break? Blast radius of each fix?');
+  L.push('6. **Verification Plan**: How to verify each fix worked.');
+  L.push('');
+  L.push('Target 300-800 lines. Every claim must cite file:line. No template phrases.');
+  L.push('Output ONLY the analysis. No preamble. No meta-commentary.');
+
+  return L.join('\n');
+}
+
+// ═══ T1 INJECTABLE BRIEF ═══
+// T1 is a 150-350 line operational protocol — NOT an engineering spec.
+// Format: dense bullets, correct/wrong pairs, troubleshooting, lookup tables.
+// Battle-scarred, imperative, zero theory. Agent reads this and knows EXACTLY what to do.
+
+function buildT1InjectableBrief(
+  args: Record<string, any>,
+  sourceExtracts: Map<string, string>,
+  projectName: string,
+): string {
+  const L: string[] = [];
+
+  L.push(`# T1 INJECTABLE GENERATION: ${projectName}`);
+  L.push('');
+
+  // What this injectable covers
+  L.push('## WHAT THIS INJECTABLE COVERS');
+  L.push('');
+  L.push(args.requirements || `Operational protocol for ${projectName}.`);
+  L.push('');
+
+  // Reference material
+  if (sourceExtracts.size > 0) {
+    L.push('## REFERENCE MATERIAL');
+    L.push('');
+    L.push('Mine the following for rules, patterns, gotchas, and failure modes.');
+    L.push('Extract the PRACTICAL knowledge — what breaks, what works, what to NEVER do.');
+    L.push('');
+    for (const [filePath, content] of sourceExtracts) {
+      const truncated = content.length > 3000 ? content.substring(0, 3000) + '\n... (truncated)' : content;
+      L.push(`### ${path.basename(filePath)}`);
+      L.push('```');
+      L.push(truncated);
+      L.push('```');
+      L.push('');
+    }
+  }
+
+  // T1 format — VERY specific to injectable quality bar
+  L.push('## T1 INJECTABLE FORMAT — FOLLOW EXACTLY');
+  L.push('');
+  L.push('Generate a T1 INJECTABLE document. This is an OPERATIONAL PROTOCOL, not an engineering spec.');
+  L.push('');
+  L.push('### STRUCTURE (use these sections):');
+  L.push('1. **CRITICAL RULES** — Bullet list of hard ALWAYS/NEVER rules. Each rule 1-2 sentences max.');
+  L.push('2. **CORRECT/WRONG PAIRS** — For every key rule, show ✅ CORRECT and ❌ WRONG code example.');
+  L.push('3. **STEP-BY-STEP PROCEDURES** — Numbered steps with exact bash/python commands. Copy-paste-ready.');
+  L.push('4. **TROUBLESHOOTING MATRIX** — Table or bullet list: error → cause → fix.');
+  L.push('5. **QUICK REFERENCE** — Compact lookup table at the end with key facts.');
+  L.push('');
+  L.push('### QUALITY BAR:');
+  L.push('- 150-600 lines depending on complexity. Every line must earn its place.');
+  L.push('- Dense. Zero fluff. Zero theory. Zero explanation of WHY.');
+  L.push('- Imperative tone: ALWAYS, NEVER, MUST, FORBIDDEN.');
+  L.push('- Battle-scarred: write from accumulated failures, not first principles.');
+  L.push('- Copy-paste code blocks must be RUNNABLE as-is.');
+  L.push('- An agent reads this and knows EXACTLY what to do — no ambiguity.');
+  L.push('');
+  L.push('### FORBIDDEN:');
+  L.push('- NO Executive Summary, Architecture, Data Model, or any L2-style sections.');
+  L.push('- NO trade-off analysis, alternative comparison, or design justification.');
+  L.push('- NO prose paragraphs longer than 2 sentences.');
+  L.push('- NO pseudocode — only real runnable commands.');
+  L.push('- NO "implement actual logic" or other template phrases.');
+  L.push('');
+  L.push('Output ONLY the T1 injectable document.');
+  L.push('');
+
+  return L.join('\n');
+}
+
 // FINDING #10 FIX: Async readFile instead of sync readFileSync
+
+/** Collect all .ts/.js source files from a directory (recursive, max 50). */
+async function collectSourceFiles(dir: string): Promise<string[]> {
+  const results: string[] = [];
+  try {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (results.length >= 50) break;
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
+        const sub = await collectSourceFiles(fullPath);
+        results.push(...sub);
+      } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js') || entry.name.endsWith('.md')) {
+        results.push(fullPath);
+      }
+    }
+  } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+  return results;
+}
 async function resolveProjectName(targetPath: string): Promise<string> {
   try {
     const pkgPath = path.join(targetPath, 'package.json');
@@ -55,10 +521,12 @@ const ARTIFACTS_BASE = TRIDENT_CONFIG.artifactsBase;
 
 const MODE_FOLDERS: Record<string, string> = {
   CODE_REVIEW: 'CODE_REVIEW',
-  BUILD_SPEC: 'BUILD_SPEC',
-  PLAN: 'PLAN',
-  T1_INJECTABLE: 'T1_INJECTABLE',
-  T2_KNOWLEDGE: 'T2_KNOWLEDGE',
+  DP_L2_SPEC: 'DP_L2_SPEC',
+  DP_L1_CONTENT: 'DP_L1_CONTENT',
+  DP_L3_LIBRARY: 'DP_L3_LIBRARY',
+  PROBLEM_SOLVING: 'PROBLEM_SOLVING',
+  CS_T1_INJECTABLE: 'CS_T1_INJECTABLE',
+  CS_T2_KNOWLEDGE: 'CS_T2_KNOWLEDGE',
 };
 
 function extractSemanticName(content: string, modeFolder: string): string {
@@ -116,8 +584,39 @@ async function fileExists(filePath: string): Promise<boolean> {
   try { await fs.access(filePath); return true; } catch { return false; }
 }
 
-async function writeArtifactFile(modeFolder: string, content: string): Promise<string> {
+async function writeArtifactFile(modeFolder: string, content: string, outputPath?: string, outputName?: string, fileName?: string): Promise<string> {
   const folder = MODE_FOLDERS[modeFolder] || modeFolder;
+  // PRIORITY: outputPath + fileName → write to outputPath/fileName.md directly
+  if (outputPath && fileName) {
+    try {
+      if (!(await fileExists(outputPath))) {
+        await fs.mkdir(outputPath, { recursive: true });
+      }
+      const finalPath = path.join(outputPath, `${fileName}.md`);
+      await fs.writeFile(finalPath, content, 'utf-8');
+      tridentLog('INFO', 'trident-tools', `Artifact saved to: ${finalPath}`);
+      return finalPath;
+    } catch (err) {
+      tridentLog('ERROR', 'trident-tools', `writeArtifactFile fileName path failed: ${(err instanceof Error ? err : new Error(String(err))).message}`);
+    }
+  }
+
+  // If outputPath specified, write directly there instead of GENERATED_ARTIFACTS
+  if (outputPath) {
+    try {
+      const dir = path.dirname(outputPath);
+      if (!(await fileExists(dir))) {
+        await fs.mkdir(dir, { recursive: true });
+      }
+      const finalPath = outputName ? path.join(dir, outputName) : outputPath;
+      await fs.writeFile(finalPath, content, 'utf-8');
+      tridentLog('INFO', 'trident-tools', `Artifact saved to custom path: ${finalPath}`);
+      return finalPath;
+    } catch (err) {
+      tridentLog('ERROR', 'trident-tools', `writeArtifactFile custom path failed: ${(err instanceof Error ? err : new Error(String(err))).message}`);
+      // Fall through to default behavior
+    }
+  }
   const artifactDir = path.join(ARTIFACTS_BASE, folder);
   try {
     if (!(await fileExists(artifactDir))) {
@@ -234,7 +733,7 @@ function formatValidationReport(
 
   let r = `## Mode Validation — ${modeName}\n\n`;
 
-  // v4.3.3: No more escape hatch — report all failures, never skip
+  // v4.4.2: No more escape hatch — report all failures, never skip
   if (noneValid) {
     r += `⚠ ALL LAYERS FAILED VALIDATION\n\n`;
   }
@@ -253,17 +752,13 @@ function formatValidationReport(
 }
 
 // ============================================================================
-// SEMANTIC LAYER DETECTION FUNCTIONS
+// SEMANTIC DETECTION FUNCTIONS
 // ============================================================================
 
 /**
- * Detect which problem-solving layer the user wants based on problem text.
- * Layer 1 = Assumption (default)
- * Layer 2 = Action
- * Layer 3 = Observation
- * Layer 4 = Gap Analysis
- * Layer 5 = Meta-Reflection
- * Layer 6 = Verification
+ * @deprecated The Problem solving loop replaced 6-layer pipeline. This function is kept
+ * for backward compatibility but no longer called by the trident-problem-solving
+ * tool. Classification is handled by the LLM diagnostic engine.
  */
 function detectProblemSolvingLayer(problem: string): 1 | 2 | 3 | 4 | 5 | 6 {
   const lower = (problem || '').toLowerCase();
@@ -291,7 +786,14 @@ function detectContextSynthesisLayer(text: string, outputMode: string): 'T1' | '
   return 'T1';  // Safe default
 }
 
-export function createTridentTools() {
+let opencodeClient: any = null;
+
+export function getOpencodeClient(): any { return opencodeClient; }
+
+export function createTridentTools(client?: any) {
+  opencodeClient = client || null;
+  setClientGetter(() => opencodeClient);
+  godLoopOrchestrator.setClientGetter(() => opencodeClient);
   return {
     'trident-code-audit': tool({
       description: 'Run CODE_REVIEW mode: 3-layer pipeline (preflight → 17-layer audit R0-R16 → artifact) against a project path. Produces dense code review artifact with findings table, fix code, verification checklist.',
@@ -433,15 +935,19 @@ export function createTridentTools() {
     'trident-deep-planning': tool({
       description: 'Run DEEP_PLANNING mode: 3-layer pipeline (Initial Plan → Detailed Workflow → Context Library). Validates output against DeepPlanningModule requirements at each layer. Produces Build Spec + Context Library Manifest.',
       args: {
-        targetPath: z.string().optional().describe('Absolute path to the project root (omit for pure forward-mapping from requirements)'),
-        requirements: z.string().optional().describe('What this project needs to do — requirements text (required for forward-mapping when targetPath omitted)'),
-        architecture: z.string().optional().describe('Architecture description — how the system is structured (auto-discovered if omitted)'),
+        targetPath: z.string().optional().describe('Absolute path to project root. Source files are read as REFERENCE material for the spec. The tool does NOT audit or analyze this code — it reads it as context.'),
+        requirements: z.string().optional().describe('PRIMARY input. What system to design and build. The spec will be generated from these requirements using contextFiles as reference material.'),
+        architecture: z.string().optional().describe('Architecture description for the spec'),
         patterns: z.array(z.string()).optional().describe('Known patterns to include in context library (merged with auto-discovered patterns)'),
         failures: z.array(z.string()).optional().describe('Known failure modes to document (merged with auto-discovered failures)'),
         decisions: z.array(z.string()).optional().describe('Design decisions already made (merged with auto-discovered decisions)'),
         layer: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('Explicit layer override: 1=Initial Plan, 2=Detailed Workflow, 3=Context Library (auto-detected from requirements if omitted)'),
+        context: z.string().describe('MANDATORY: First-hand context from the calling agent. Paste actual file names, actual architecture, actual implementation details. The LLM uses this as PRIMARY source of truth and will NOT invent alternatives.'),
+        keyFacts: z.array(z.string()).optional().describe('Critical facts that MUST appear in the output verbatim'),
+        outputPath: z.string().describe('MANDATORY: Absolute directory path where the artifact .md file must be written.'),
+        fileName: z.string().optional().describe('Output filename WITHOUT extension. Example: "FULL_BUILD_REPORT" → writes FULL_BUILD_REPORT.md. The agent MUST provide this.'),
+        outputName: z.string().optional().describe('DEPRECATED: Use fileName instead.'),
         contextFiles: z.array(z.string()).optional().describe('MANDATORY for L2/L3 when generating from external source code. Absolute paths to ALL source files the tool must read before generating. The tool reads each file, extracts TypeScript interfaces/classes/functions/algorithms, and returns a STRUCTURED BRIEF that tells the agent exactly what to write in each spec section. Without this, the tool can only template-fill from the section parameters below.'),
-        outputPath: z.string().optional().describe('Absolute path where the final artifact .md file should be written. If omitted, defaults to GENERATED_ARTIFACTS/BUILD_SPEC/.'),
 
         // FULL MARKDOWN SECTIONS — agent writes complete engineering content:
         executiveSummary: z.string().optional().describe('Full markdown for Executive Summary section. Write complete paragraphs with engineering reasoning. Include problem statement, failure analysis, and solution approach.'),
@@ -486,10 +992,9 @@ export function createTridentTools() {
         }
 
         try {
-          // Step 1: Layer determination — explicit parameter ALWAYS wins
-          // When targetPath is provided (backward mode), default to Layer 2 to trigger
-          // the deterministic pipeline. When no targetPath (forward mode), default to Layer 1.
-          const layer = args.layer || (args.targetPath ? 2 : 1);
+          // Step 1: Layer determination — default to L1 (content generation).
+          // L1 is the most common layer. L2/L3 require explicit layer=2 or layer=3.
+          const layer = args.layer || 1;
           const layerNames: Record<number, string> = {
             1: 'INITIAL PROMPT',
             2: 'DETAILED WORKFLOW (Implementation Build Spec)',
@@ -542,110 +1047,393 @@ export function createTridentTools() {
 
           const targetPathForGen = args.targetPath || 'context-ingestion';
 
-          // Step 2: L1 = AUTO-GENERATE FROM DISCOVERY (no blank templates)
+          // ═══ v4.4.2 L1 — CONTENT GENERATOR (<1000 lines, chat prompt) ═══
+          // L1 takes requirements + contextFiles and generates content.
+          // Can generate: build directives, context docs, subagent prompts,
+          // behavior alignment, etc. Whatever the requirements specify.
+          // Uses buildDesignBrief() — same data path as L2, shorter output.
           if (layer === 1) {
-            // Auto-fill sections from discovery data so Layer 1 produces real content
-            const disc1 = discovery;
-            const fc1 = disc1 ? disc1.totalFiles : 0;
-            const lc1 = disc1 ? disc1.totalLines : 0;
-            const langs1 = disc1 ? Object.entries(disc1.languages).map(function(e: [string, number]) { return e[0] + ' (' + e[1] + ')'; }).join(', ') : 'TypeScript';
-            const eps1 = disc1 ? disc1.entryPoints.join(', ') : 'index.ts';
-
-            if (!args.executiveSummary) (args as Record<string, unknown>).executiveSummary =
-              '## Executive Summary\n\nRequirements: ' + inputParams + '\n\nProject: ' + fc1 + ' files, ' + lc1 + ' lines (' + langs1 + '). Entry points: ' + eps1 + '.\n' +
-              (disc1 ? 'Discovery: ' + disc1.patterns.length + ' patterns, ' + disc1.failureModes.length + ' failure modes, ' + disc1.decisions.length + ' decisions.' : '');
-
-            if (!args.architectureOverview) (args as Record<string, unknown>).architectureOverview =
-              '## Architecture Overview\n\n' + (disc1 ? disc1.directoryTree : 'See project structure.') + '\n\nEntry points: ' + eps1;
-
-            if (!args.dataModel) (args as Record<string, unknown>).dataModel =
-              '## Data Model\n\nKey types and interfaces from discovery:\n' +
-              (disc1 ? disc1.patterns.slice(0, 10).map(function(p: DiscoveredPattern) { return '- ' + p.name + ' (' + p.type + ') at ' + p.file + ':' + p.line; }).join('\n') : 'No patterns discovered.');
-
-            if (!args.engineDesign) (args as Record<string, unknown>).engineDesign =
-              '## Engine Class Design\n\nBased on ' + (disc1 ? disc1.patterns.length : 0) + ' discovered patterns and ' + (disc1 ? disc1.failureModes.length : 0) + ' failure modes.';
-
-            if (!args.defenseRules || (Array.isArray(args.defenseRules) && args.defenseRules.length === 0)) (args as Record<string, unknown>).defenseRules =
-              ['Validate inputs at boundaries', 'Log all errors with context', 'Use discriminated unions'];
-
-            if (!args.blindSpots) (args as Record<string, unknown>).blindSpots =
-              '## Blind Spots\n\n' + (disc1 && disc1.failureModes.length > 0
-                ? 'Known failures: ' + disc1.failureModes.slice(0, 5).map(function(f: DiscoveredFailure) { return f.message; }).join('; ')
-                : 'No failure modes discovered.');
-
-            if (!args.integrationPlan) (args as Record<string, unknown>).integrationPlan =
-              '## Integration Plan\n\n1. Implement types\n2. Build engine\n3. Wire into ' + eps1 + '\n4. Add defense rules\n5. Write tests';
-
-            if (!args.evidenceFormat) (args as Record<string, unknown>).evidenceFormat =
-              '## Evidence Format\n\nAll claims cite file:line evidence. Runtime verified via container TUI testing.';
-
-            if (!args.testSpecs) (args as Record<string, unknown>).testSpecs =
-              '## Test Specifications\n\n1. Unit tests for types\n2. Integration tests for engine\n3. Container TUI tests for runtime';
-
-            if (!args.migrationStrategy) (args as Record<string, unknown>).migrationStrategy =
-              '## Migration Strategy\n\nPhase 1: Add types (non-breaking)\nPhase 2: Build engine\nPhase 3: Wire in\nPhase 4: Deploy';
-
-            tridentLog('INFO', 'trident-deep-planning', 'Layer 1 auto-generated all sections from discovery data.');
-            // Fall through to assembly below — treat as Layer 2 with auto-filled sections
-          }
-
-          // === v4.4 PIPELINE PATH: Auto-generate spec from AST analysis ===
-          // When layer=2 is called WITHOUT contextFiles and WITHOUT section content,
-          // run the deterministic pipeline directly — no manual section writing needed.
-          const hasPipelineSections = args.executiveSummary || args.dataModel || args.engineDesign ||
-                                      args.defenseRules || args.integrationPlan || args.testSpecs;
-          if (layer === 2 && !args.contextFiles && !hasPipelineSections) {
-            try {
-              const tsconfigPath = path.join(targetPathForGen, 'tsconfig.json');
-              const tsconfig = fsSync.existsSync(tsconfigPath)
-                ? JSON.parse(fsSync.readFileSync(tsconfigPath, 'utf-8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, ''))
-                : null;
-              const preflight = {
-                typeCheckPassed: true, typeCheckError: null,
-                buildPassed: true, buildError: null,
-                distExists: false, distIsSingleFile: false,
-                distSize: 0, hasRelativeImports: false, sourceMapExists: false,
-                findings: [] as { check: string; passed: boolean; detail: string }[],
-              };
-              const pkgJson = discovery?.packageJson
-                ? (discovery.packageJson as Record<string, unknown>) as Record<string, unknown> | null
-                : null;
-              const analysisContext = classifyProject(targetPathForGen, preflight, pkgJson, tsconfig, null);
-              if (analysisContext && analysisContext.constructs.length > 0) {
-                tridentLog('INFO', 'trident-deep-planning', `Pipeline mode: ${analysisContext.constructs.length} constructs, callGraph ${analysisContext.callGraph?.coveragePercent ?? 0}%`);
-                const pipelineOutput = generatePipelineSpec(
-                  analysisContext.constructs,
-                  analysisContext.callGraph,
-                  inputParams,
-                  architecture,
-                  discovery,
-                  projectName,
-                  targetPathForGen,
-                );
-                const pipelineArtifactPath = await writeArtifactFile('BUILD_SPEC', pipelineOutput);
-                storeArtifacts({
-                  'layer': '2',
-                  'layer-name': 'DETAILED WORKFLOW (PIPELINE)',
-                  'output': pipelineOutput,
-                  'mode': 'PIPELINE_GENERATED',
-                });
-                try { machineActor.send({ type: 'SUBMIT_LAYER2', count: 10 }); orchestrator.completeLayer(); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
-                return pipelineOutput + (pipelineArtifactPath ? `\n\n---\n📄 Artifact saved: \`${pipelineArtifactPath}\`` : '');
+          try {
+            tridentLog('INFO', 'trident-deep-planning', 'L1: Generating content from requirements + contextFiles');
+            // Read contextFiles as reference material
+            const l1SourceExtracts = args.contextFiles
+              ? readSourceFiles(args.contextFiles)
+              : new Map<string, string>();
+            // If targetPath provided, read its source files as additional reference
+            if (targetPathForGen && targetPathForGen !== 'context-ingestion') {
+              const targetFiles = await collectSourceFiles(targetPathForGen);
+              for (const tf of targetFiles.slice(0, 15)) {
+                try {
+                  const content = fsSync.readFileSync(tf, 'utf-8');
+                  l1SourceExtracts.set(tf, content);
+                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
               }
-              // classifyProject returned no constructs — fall through to contextFiles requirement
-              tridentLog('INFO', 'trident-deep-planning', 'Pipeline mode: no constructs found, falling through to contextFiles');
-            } catch (pipeErr) {
-              tridentLog('WARN', 'trident-deep-planning', `Pipeline mode failed: ${pipeErr instanceof Error ? pipeErr.message : String(pipeErr)} — falling through`);
             }
+            const l1Strategy = getDefaultStrategy();
+            const l1Brief = buildL1ContentBrief(args, l1SourceExtracts, projectName);
+            const L1_SYSTEM = 'You are an elite content generator. ' +
+              'You generate content based on FIRST-HAND CONTEXT provided by the calling agent. ' +
+              'Target 200-800 lines depending on task complexity. Maximum 1500 lines. ' +
+              'Output ONLY the requested content. No meta-commentary. No preamble.\n\n' +
+              'ANTI-HALLUCINATION RULES — ZERO TOLERANCE:\n' +
+              '1. NEVER invent file names, script names, or component names. Use ONLY names that appear in the PRIMARY FIRST-HAND CONTEXT.\n' +
+              '2. NEVER invent architecture. If the context describes 7 gates, write about 7 — not 8. If it describes 5 tiers, write about 5 — not 3.\n' +
+              '3. NEVER idealize or improve the architecture. Document WHAT EXISTS, not what SHOULD exist.\n' +
+              '4. If you lack context for a section, write "CONTEXT NEEDED: [describe what is missing]" — do NOT fabricate.\n' +
+              '5. NEVER create fictional evidence bundles, fictional circuit breakers, or fictional detection mechanisms.\n' +
+              '6. The PRIMARY FIRST-HAND CONTEXT is the source of truth. The requirements describe what to GENERATE from that context.\n' +
+              '7. If the requirements say "document what was built" — use the context to describe what was ACTUALLY built, not an idealized version.';
+            const l1Output = await runInternalLLMLoop(l1Brief, null, l1Strategy, {
+              useSplit: false, maxIterations: 1, skipQualityChecks: true,
+              systemOverride: L1_SYSTEM,
+            });
+            const l1Path = await writeArtifactFile('DP_L1_CONTENT', l1Output, args.outputPath, args.outputName, args.fileName);
+            setPendingL1Path(l1Path);
+            storeArtifacts({ 'layer': '1', 'layer-name': 'INITIAL PLAN', 'mode': 'LLM_GENERATED', 'artifact-path': l1Path });
+            try { machineActor.send({ type: 'SUBMIT_LAYER1' }); orchestrator.completeLayer(); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+            const l1Lines = l1Output.split('\n').length;
+            const l1Sha = crypto.createHash('sha256').update(l1Output).digest('hex').substring(0, 16);
+            tridentLog('INFO', 'trident-deep-planning', `L1 COMPLETE: ${l1Lines} lines written to ${l1Path} (sha256: ${l1Sha})`);
+            return JSON.stringify({
+              status: 'L1_CONTENT_WRITTEN',
+              path: l1Path,
+              lines: l1Lines,
+              sha256: l1Sha,
+              preview: l1Output.split('\n').slice(0, 10).join('\n'),
+              message: `L1 content (${l1Lines} lines) written directly to ${l1Path}. Do NOT rewrite, truncate, or summarize.`,
+            }, null, 2);
+          } catch (l1Err: unknown) {
+            const l1Msg = l1Err instanceof Error ? l1Err.message : String(l1Err);
+            tridentLog('ERROR', 'trident-deep-planning', `L1 FAILED: ${l1Msg}`);
+            return `L1 GENERATION ERROR: ${l1Msg}`;
+          }
           }
 
-          // Step 3: L2/L3 REQUIRE contextFiles (when pipeline didn't produce output)
-          if ((layer === 2 || layer === 3) && (!args.contextFiles || args.contextFiles.length === 0)) {
-            throw new Error(
-              'contextFiles is REQUIRED for Layer ' + layer + '. ' +
-              'Alternatively, ensure the targetPath contains .ts files for auto-analysis. ' +
-              'Example: contextFiles=["/path/to/file1.ts", "/path/to/file2.ts"]'
-            );
+          // ═══ v4.4.2 L2 — DENSE ENGINEERING SPEC (3000+ lines, written to disk) ═══
+          // L2 takes requirements + contextFiles and generates a dense engineering
+          // spec for building a system from scratch. Like CME/Kronos reference specs.
+          // Uses buildDesignBrief() — same data path as L1, longer/denser output.
+          // NO analyzeProject. NO audit mode. Requirements + reference docs only.
+          if (layer === 2) {
+          try {
+            tridentLog('INFO', 'trident-deep-planning', 'L2: Generating engineering spec from requirements + contextFiles');
+
+            // ── STEP 1: GATHER REFERENCE MATERIAL ──
+            const l2SourceExtracts = args.contextFiles
+              ? readSourceFiles(args.contextFiles)
+              : new Map<string, string>();
+            // If targetPath provided, read its source files as additional reference
+            if (targetPathForGen && targetPathForGen !== 'context-ingestion') {
+              const targetFiles = await collectSourceFiles(targetPathForGen);
+              for (const tf of targetFiles.slice(0, 15)) {
+                try {
+                  const content = fsSync.readFileSync(tf, 'utf-8');
+                  l2SourceExtracts.set(tf, content);
+                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+              }
+              tridentLog('INFO', 'trident-deep-planning', `L2: Read ${targetFiles.length} reference files from targetPath`);
+            }
+            const l2HasSourceFiles = l2SourceExtracts.size > 0;
+            const l2HasRequirements = !!args.requirements && args.requirements.length > 50;
+
+            if (!l2HasSourceFiles && !l2HasRequirements) {
+              throw new Error(
+                'Insufficient Context. Provide:\n' +
+                '  - requirements: Detailed description of the system to build\n' +
+                '  - contextFiles: Reference docs/source files to synthesize into the spec\n' +
+                '  - targetPath: Project to read as additional reference material',
+              );
+            }
+
+            // ── STEP 2: DERIVE STRATEGY ──
+            const l2Strategy = getDefaultStrategy();
+            (l2Strategy as any).references = REFERENCE_EXCERPTS;
+
+            // ── STEP 3: BUILD BRIEF (always from requirements + reference docs) ──
+            const l2Brief = buildDesignBrief(args, l2SourceExtracts, l2Strategy, projectName);
+
+            tridentLog('INFO', 'trident-deep-planning',
+              `L2 brief built: ${l2Brief.split('\n').length} lines — ` +
+              `source files: ${l2SourceExtracts.size}, ` +
+              `has requirements: ${l2HasRequirements}`);
+
+            // ── STEP 4: INTERNAL LLM GENERATION LOOP (max 3 iterations) ──
+            const MAX_L2_ITERATIONS = 3;
+            let generatedSpec = '';
+            let lastFeedback = '';
+
+            for (let l2Iter = 1; l2Iter <= MAX_L2_ITERATIONS; l2Iter++) {
+              tridentLog('INFO', 'trident-deep-planning',
+                `L2 generation iteration ${l2Iter}/${MAX_L2_ITERATIONS}`);
+
+              try {
+                generatedSpec = await generateSpecViaLLM(l2Brief, lastFeedback || undefined);
+              } catch (llmErr) {
+                tridentLog('ERROR', 'trident-deep-planning',
+                  `L2 LLM generation failed on iteration ${l2Iter}: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`);
+                if (l2Iter === MAX_L2_ITERATIONS) {
+                  throw new Error(
+                    `L2 generation failed after ${MAX_L2_ITERATIONS} iterations. ` +
+                    `Last error: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`,
+                  );
+                }
+                continue;
+              }
+
+              tridentLog('INFO', 'trident-deep-planning',
+                `L2 iteration ${l2Iter}: LLM generated ${generatedSpec.split('\n').length} lines`);
+
+              // ── TOPIC ALIGNMENT GATE ──
+              // Extract key terms from requirements, verify they appear in output.
+              // Prevents topic drift (e.g., "warhead generation" → "memory lifecycle").
+              if (args.requirements && args.requirements.length > 50) {
+                const keyTerms = extractKeyTerms(args.requirements);
+                const missingTerms = keyTerms.filter(term =>
+                  !generatedSpec.toLowerCase().includes(term.toLowerCase())
+                );
+                if (missingTerms.length > 0) {
+                  tridentLog('WARN', 'trident-deep-planning',
+                    `L2 TOPIC DRIFT detected: missing terms [${missingTerms.join(', ')}] — requesting revision`);
+                  lastFeedback = `TOPIC ALIGNMENT FAILURE: The generated spec does not contain these key terms from the requirements: ${missingTerms.join(', ')}.\n` +
+                    `The spec has drifted to a different topic. Regenerate with EXPLICIT focus on: ${missingTerms.join(', ')}.\n` +
+                    `The requirements clearly state this is about: "${args.requirements.substring(0, 200)}..."\n` +
+                    `Do NOT write about memory management, theatrical detection, or any other topic. Write about EXACTLY what the requirements describe.`;
+                  if (l2Iter === MAX_L2_ITERATIONS) {
+                    tridentLog('ERROR', 'trident-deep-planning',
+                      `L2 TOPIC DRIFT persists after ${MAX_L2_ITERATIONS} iterations — saving despite drift`);
+                  }
+                  continue; // Skip other quality checks, go to next iteration
+                }
+                tridentLog('INFO', 'trident-deep-planning',
+                  `L2 topic alignment PASSED: all ${keyTerms.length} key terms present`);
+              }
+
+              // No analysis-based quality checks (no analyzeProject in L2).
+              // Topic alignment gate above is the primary quality check.
+              break;
+            }
+
+            // ── STEP 5: FINALIZE AND WRITE ──
+            const l2FinalDoc = generatedSpec; // No appendComplianceAndAppendix (no analysis data)
+            let l2ArtifactPath: string;
+            if (args.outputPath) {
+              // Respect user-specified output path
+              try {
+                const outDir = path.dirname(args.outputPath);
+                await fs.mkdir(outDir, { recursive: true });
+                await fs.writeFile(args.outputPath, l2FinalDoc, 'utf-8');
+                l2ArtifactPath = args.outputPath;
+                tridentLog('INFO', 'trident-tools', `Artifact saved to user-specified path: ${l2ArtifactPath}`);
+              } catch (writeErr) {
+                tridentLog('WARN', 'trident-tools', `Failed to write to outputPath ${args.outputPath}: ${writeErr instanceof Error ? writeErr.message : String(writeErr)} — falling back to default`);
+                l2ArtifactPath = await writeArtifactFile('DP_L2_SPEC', l2FinalDoc, args.outputPath, args.outputName);
+              }
+            } else {
+              l2ArtifactPath = await writeArtifactFile('DP_L2_SPEC', l2FinalDoc, args.outputPath, args.outputName);
+            }
+
+            storeArtifacts({
+              'layer': '2',
+              'layer-name': 'DETAILED WORKFLOW (LLM-GENERATED)',
+              'output': l2FinalDoc,
+              'mode': 'LLM_GENERATED',
+              'quality': 'GOLD',
+              'line-count': String(l2FinalDoc.split('\n').length),
+            });
+
+            try { machineActor.send({ type: 'SUBMIT_LAYER2', count: 10 }); orchestrator.completeLayer(); }
+            catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+
+            const l2Lines = l2FinalDoc.split('\n').length;
+            const l2Tests = (l2FinalDoc.match(/expect\(/g) || []).length;
+            const l2CodeBlocks = (l2FinalDoc.match(/```/g) || []).length / 2;
+
+            tridentLog('INFO', 'trident-deep-planning',
+              `L2 BUILD SPEC COMPLETE: ${l2Lines} lines — ` +
+              `${(l2FinalDoc.match(/threat/gi) || []).length} threats, ${(l2FinalDoc.match(/defense|defend/gi) || []).length} defenses, ${l2Tests} test assertions`);
+
+            return `L2 BUILD SPEC COMPLETE
+
+Lines: ${l2Lines}
+Quality: LLM-GENERATED from requirements + reference docs
+Test assertions: ${l2Tests}
+Code blocks: ${l2CodeBlocks}
+
+📄 Artifact saved: ${l2ArtifactPath}`;
+          } catch (l2Err: unknown) {
+            const l2ErrMsg = l2Err instanceof Error ? l2Err.message : String(l2Err);
+            const l2ErrStack = l2Err instanceof Error ? l2Err.stack : '';
+            tridentLog('ERROR', 'trident-deep-planning', `L2 INTERNAL LOOP FAILED: ${l2ErrMsg}`);
+            tridentLog('ERROR', 'trident-deep-planning', `L2 STACK: ${l2ErrStack}`);
+            return `L2 GENERATION ERROR: ${l2ErrMsg}\n\nStack: ${l2ErrStack || 'no stack'}`;
+          }
+          }
+
+          // ═══ v4.4.2 L3 CONTEXT LIBRARY — PARALLEL SUBAGENT DISPATCH ═══
+          // L3 operates in 2 phases:
+          // Phase 1: Discover domains, return dispatch instructions (fast, deterministic)
+          // Agent: Dispatches parallel trident_planner subagents, each calls L2 for one domain
+          // Phase 2: Agent calls back with engineSpecs, tool assembles manifest + index + folder
+          if (layer === 3) {
+          try {
+            // ── DOMAIN DETECTION (file-based, NOT code audit) ──
+            const l3SourceFiles = await collectSourceFiles(targetPathForGen);
+            if (l3SourceFiles.length === 0) throw new Error('Insufficient Context for L3. No source files found at targetPath.');
+            // Create lightweight construct objects from file paths for domain detection
+            const l3FakeAnalysis = { constructs: l3SourceFiles.map(f => ({ filePath: f, name: path.basename(f) })), threats: [] };
+            tridentLog('INFO', 'trident-deep-planning', `L3: Found ${l3SourceFiles.length} source files at ${targetPathForGen}`);
+
+            // ── PHASE 2 CHECK: Did the agent return completed engine specs? ──
+            if (args.engineSpecs && args.engineSpecs.length > 0 &&
+                (args.engineSpecs[0] === 'completed' || args.engineSpecs[0]?.includes('COMPLETE'))) {
+
+              tridentLog('INFO', 'trident-deep-planning', 'L3 Phase 2: Assembling context library from completed specs');
+
+              // Find all L2 spec artifacts written by subagents
+              const artifactsDir = path.join(ARTIFACTS_BASE, 'DP_L3_LIBRARY');
+              let specFiles: string[] = [];
+              try {
+                const allFiles = await fs.readdir(artifactsDir);
+                specFiles = allFiles.filter(f => f.endsWith('.md')).map(f => path.join(artifactsDir, f));
+              } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+
+              if (specFiles.length === 0) throw new Error('No L2 spec artifacts found for L3 assembly.');
+
+              // Read each spec, extract metadata
+              const specs: { name: string; path: string; lines: number; threats: string }[] = [];
+              for (const specPath of specFiles) {
+                try {
+                  const content = await fs.readFile(specPath, 'utf-8');
+                  const lines = content.split('\n').length;
+                  const name = path.basename(specPath, '.md');
+                  // Extract threat patterns from content
+                  const threatMatches = content.match(/DEAD_CODE|THEATRICAL|DUPLICATE/g) || [];
+                  const threats = [...new Set(threatMatches)].slice(0, 3).join(', ');
+                  specs.push({ name, path: specPath, lines, threats });
+                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+              }
+
+              // Build the context library folder
+              const libDir = path.join(targetPathForGen || ARTIFACTS_BASE, 'context-library');
+              try { await fs.mkdir(libDir, { recursive: true }); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+
+              // Write each spec to the context library
+              for (const spec of specs) {
+                const destPath = path.join(libDir, `${spec.name}.md`);
+                try {
+                  const content = await fs.readFile(spec.path, 'utf-8');
+                  await fs.writeFile(destPath, content, 'utf-8');
+                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+              }
+
+              // Assemble the master index — this is the "ship manifest using L1" concept
+              let index = `# Context Library — ${projectName}\n\n`;
+              index += `**Generated:** ${new Date().toISOString()}\n`;
+              index += `**Engine Specs:** ${specs.length}\n`;
+              index += `**Total Lines:** ${specs.reduce((s, sp) => s + sp.lines, 0)}\n`;
+              index += `**Location:** \`${libDir}\`\n\n`;
+              index += `## Engine Specs\n\n`;
+              index += `| Engine | Lines | Key Threats | File |\n`;
+              index += `|--------|-------|-------------|------|\n`;
+              for (const spec of specs) {
+                index += `| ${spec.name} | ${spec.lines} | ${spec.threats || 'none'} | \`${spec.name}.md\` |\n`;
+              }
+              index += `\n## How to Use This Library\n\n`;
+              index += `1. Read the MASTER_INDEX.md (this file) first for an overview.\n`;
+              index += `2. Read each engine spec for domain-specific architecture, threats, and defenses.\n`;
+              index += `3. Each spec is self-contained — can be read independently after compaction.\n\n`;
+              index += `## Cross-Reference Index\n\n`;
+              index += `Threats are addressed by defense rules in each engine spec. Cross-references below\n`;
+              index += `show which engine handles each threat pattern:\n\n`;
+              const allThreats = new Set<string>();
+              for (const spec of specs) {
+                if (spec.threats) spec.threats.split(', ').forEach(t => allThreats.add(t.trim()));
+              }
+              for (const threat of allThreats) {
+                const engines = specs.filter(s => s.threats?.includes(threat)).map(s => s.name);
+                index += `- **${threat}**: addressed in ${engines.join(', ')}\n`;
+              }
+
+              const indexPath = path.join(libDir, 'MASTER_INDEX.md');
+              await fs.writeFile(indexPath, index, 'utf-8');
+
+              // Also save to artifacts
+              const manifestArtifactPath = await writeArtifactFile('DP_L3_LIBRARY', index);
+              storeArtifacts({ 'layer': '3', 'output': index, 'mode': 'SUBAGENT_PARALLEL' });
+              try { machineActor.send({ type: 'SUBMIT_LAYER3', content: index }); orchestrator.completeLayer(); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+
+              const totalLines = specs.reduce((sum, s) => sum + s.lines, 0);
+              tridentLog('INFO', 'trident-deep-planning', `L3 COMPLETE: ${specs.length} specs, ${totalLines} total lines, context library at ${libDir}`);
+              return `L3 CONTEXT LIBRARY COMPLETE
+
+Engine specs assembled: ${specs.length}
+Total lines: ${totalLines}
+Context library: ${libDir}
+
+Specs:
+${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})`).join('\n')}
+
+📄 Master Index: ${indexPath}
+📄 Manifest artifact: ${manifestArtifactPath}`;
+            }
+
+            // ── PHASE 1: Discover domains, create folder, return dispatch manifest ──
+            tridentLog('INFO', 'trident-deep-planning', 'L3 Phase 1: Domain discovery + dispatch manifest');
+            const engineDomains = detectEngineDomains(l3FakeAnalysis);
+            tridentLog('INFO', 'trident-deep-planning', `L3: ${engineDomains.length} engine domains detected: ${engineDomains.map(d => d.name).join(', ')}`);
+
+            // Create context library folder for planner agents to write to
+            const libDir = path.join(targetPathForGen, 'context-library');
+            try { fsSync.mkdirSync(libDir, { recursive: true }); } catch (e: unknown) {
+              tridentLog('WARN', 'trident-deep-planning', `L3: Could not create context-library dir: ${e instanceof Error ? e.message : String(e)}`);
+            }
+            tridentLog('INFO', 'trident-deep-planning', `L3: Context library folder created at ${libDir}`);
+
+            // Build per-domain dispatch prompts (file-based, NOT threat-based)
+            const domainBriefs: { name: string; files: number; constructs: number; threats: string; taskPrompt: string }[] = [];
+            for (const d of engineDomains) {
+              const domainFiles = [...d.filePaths].slice(0, 10);
+              const domainReqs = `Generate engineering spec for the ${d.name} domain. Focus on files: ${domainFiles.join(', ')}.`;
+              const escapedReqs = domainReqs.replace(/'/g, "\\'");
+              const taskPrompt = `Call trident-deep-planning with targetPath='${targetPathForGen}', layer=2, requirements='${escapedReqs}'. Do NOT write the spec yourself. Call the tool IMMEDIATELY.`;
+
+              domainBriefs.push({
+                name: d.name,
+                files: d.filePaths.size,
+                constructs: d.constructs.length,
+                threats: 'none',
+                taskPrompt,
+              });
+            }
+
+            // Set pendingDispatch flag for hook enforcement
+            setPendingDispatch(engineDomains.length, 'default');
+
+            // Build compact dispatch manifest
+            let response = `L3 CONTEXT LIBRARY — DISPATCH REQUIRED\n\n`;
+            response += `📁 Folder: ${libDir}\n`;
+            response += `📊 ${engineDomains.length} domains: ${domainBriefs.map(d => d.name).join(', ')}\n\n`;
+            response += `DISPATCH ${engineDomains.length} trident_planner AGENTS NOW — ALL IN ONE RESPONSE.\n`;
+            response += `This is MECHANICALLY ENFORCED — your response will be blocked until you dispatch.\n\n`;
+
+            for (let i = 0; i < domainBriefs.length; i++) {
+              const d = domainBriefs[i];
+              response += `Agent ${i + 1} — ${d.name} (${d.files} files, ${d.constructs} constructs, ${d.threats}):\n`;
+              response += `  task(subagent_type="trident_planner", prompt="${d.taskPrompt}")\n\n`;
+            }
+
+            response += `AFTER ALL ${engineDomains.length} RETURN:\n`;
+            response += `Call trident-deep-planning(layer=3, targetPath="${targetPathForGen}", engineSpecs=["completed"])\n`;
+
+            storeArtifacts({ 'layer': '3', 'phase': 'discovery', 'domains': String(engineDomains.length) });
+
+            return response;
+
+          } catch (l3Err: unknown) {
+            const l3Msg = l3Err instanceof Error ? l3Err.message : String(l3Err);
+            tridentLog('ERROR', 'trident-deep-planning', `L3 FAILED: ${l3Msg}`);
+            return `L3 GENERATION ERROR: ${l3Msg}`;
+          }
           }
 
           // ====================================================================
@@ -810,7 +1598,7 @@ export function createTridentTools() {
             );
           }
 
-          artifactPath = await writeArtifactFile('BUILD_SPEC', output);
+          artifactPath = await writeArtifactFile('DP_L2_SPEC', output);
           if (args.outputPath) {
             try {
               await fs.writeFile(args.outputPath, output, 'utf-8');
@@ -883,12 +1671,14 @@ export function createTridentTools() {
     }),
 
     'trident-problem-solving': tool({
-      description: 'Run PROBLEM_SOLVING mode: 6-layer pipeline (Assumption → Action → Observation → Gap Analysis → Meta-Reflection → Verification). Validates output against ProblemSolvingModule requirements at each layer. Produces plan artifact with reasoning chain, RCA, working plan.',
+      description: 'Run problem-solving loop: Triviality Gate -> Classify -> Define Done -> Gather Evidence -> Decide (with framework selection) -> Act (intent gate) -> Verify -> Report. Frameworks (Five Whys, Fault Tree, Systems Thinking, Pareto, First Principles, Hypothesis-Driven) are selectable tools within the Decide step, not mandatory stages. Produces outcome-first artifact with no layer scaffolding.',
       args: {
         targetPath: z.string().describe('Absolute path to the affected project'),
+        outputPath: z.string().describe('MANDATORY: Absolute path where the diagnostic artifact must be written.'),
+        outputName: z.string().optional().describe('Optional filename override. If omitted, auto-generated from first heading.'),
         problem: z.string().describe('Problem statement — what is broken or wrong'),
-        reasoning: z.array(z.string()).describe('Reasoning chain steps. Use "observation|hypothesis|evidence|conclusion" pipe format for best table output'),
-        workingPlan: z.array(z.string()).describe('Working plan phases. Use "description|files|expected outcome|risk|rollback" pipe format for best table output'),
+        reasoning: z.array(z.string()).describe('Reasoning chain steps. Use "observation|hypothesis|evidence|conclusion" pipe format for best evidence output'),
+        workingPlan: z.array(z.string()).describe('Working plan phases. Use "description|files|expected outcome|risk|rollback" pipe format for best recommendation output'),
         findings: z.array(z.string()).optional().describe('Findings discovered during investigation'),
       },
       execute: async (args: {
@@ -902,131 +1692,70 @@ export function createTridentTools() {
           throw new Error('targetPath does not exist: ' + args.targetPath);
         }
         try {
-          // Detect which problem-solving layer the user wants (for semantic routing)
-          const detectedLayer = detectProblemSolvingLayer(args.problem);
           orchestrator.startProblemSolving();
-          const psMachineActor = interpret(problemSolvingMachine).start();
 
-          // Wire auto-discovery for genuine evidence synthesis (D3/D5/D6 fixes)
-          let discovery;
+          // === LLM-POWERED PROBLEM SOLVING ===
+          // Read actual source code, build brief, LLM generates comprehensive analysis.
+          // Enriches findings with discovery data (patterns, failure modes) if available.
+          const psSourceExtracts = new Map<string, string>();
+          if (args.targetPath && args.targetPath !== 'context-ingestion') {
+            const targetFiles = await collectSourceFiles(args.targetPath);
+            for (const tf of targetFiles.slice(0, 15)) {
+              try {
+                const content = fsSync.readFileSync(tf, 'utf-8');
+                psSourceExtracts.set(tf, content);
+              } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+            }
+          }
+
+          // Enrich findings with auto-discovery data
+          let psDiscoveryFindings: string[] = args.findings || [];
           try {
-            discovery = await discoverProject(args.targetPath || process.cwd());
+            const psDiscovery = await discoverProject(args.targetPath || process.cwd());
+            for (const pat of psDiscovery.patterns.slice(0, 20)) {
+              psDiscoveryFindings.push(`${pat.type}: ${pat.name} at ${pat.file}:${pat.line}`);
+            }
+            for (const fail of psDiscovery.failureModes.slice(0, 10)) {
+              psDiscoveryFindings.push(`FAILURE: ${fail.message} at ${fail.file}:${fail.line}`);
+            }
           } catch (e: unknown) {
-            tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`);
-            discovery = undefined;
-            // Safe to continue — discovery stays undefined, artifact generator handles null discovery
+            tridentLog('WARN', 'trident-tools', `PS discovery failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
           }
 
-          // Populate realCodeMap for reasoning chain evidence (same pattern as context-synthesis T2)
-          const psRealCodeMap = new Map<string, string>();
-          if (args.targetPath && discovery && discovery.patterns.length > 0) {
-            const psFileIndex = new Map<string, string[]>();
-            const psBuildIndex = (dir: string, depth: number) => {
-              if (depth > 10) return;
-              try {
-                for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
-                  if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
-                  const full = path.join(dir, entry.name);
-                  if (entry.isDirectory()) psBuildIndex(full, depth + 1);
-                  else if (entry.isFile()) {
-                    const arr = psFileIndex.get(entry.name) || [];
-                    arr.push(full);
-                    psFileIndex.set(entry.name, arr);
-                  }
-                }
-              } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); /* skip */ }
-            };
-            psBuildIndex(args.targetPath, 0);
-            for (const pat of discovery.patterns.slice(0, 30)) {
-              try {
-                const candidates = psFileIndex.get(pat.file);
-                if (!candidates || candidates.length === 0) continue;
-                const content = fsSync.readFileSync(candidates[0], 'utf-8');
-                const lines = content.split('\n');
-                const startLine = Math.max(0, pat.line - 1);
-                const snippet = lines.slice(startLine, startLine + 20).join('\n');
-                psRealCodeMap.set(pat.file + ':' + pat.line, snippet);
-              } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); /* skip */ }
-            }
-          }
+          const psProjectName = args.targetPath ? await resolveProjectName(args.targetPath) : 'problem-analysis';
 
-          const iteration = problemSolvingModule.getIteration();
-          
-          // === 6-FRAMEWORK PROBLEM SOLVER ENGINE ===
-          // Run the intelligent ProblemSolver with Five Whys, Fault Tree, Systems Thinking,
-          // Pareto, First Principles, and Hypothesis-Driven frameworks
-          let frameworkAnalysis = '';
-          try {
-            const solver = new ProblemSolver(args.targetPath);
-            const findingLayers: string[] = [];
-            const findingBreakdown: Record<string, number> = {};
-            if (discovery) {
-              for (const pat of discovery.patterns) {
-                const layerName = pat.type + ':' + pat.name;
-                if (findingLayers.indexOf(layerName) === -1) findingLayers.push(layerName);
-                findingBreakdown[layerName] = (findingBreakdown[layerName] || 0) + 1;
-              }
-              for (const fail of discovery.failureModes) {
-                const layerName = 'FAILURE:' + fail.pattern;
-                if (findingLayers.indexOf(layerName) === -1) findingLayers.push(layerName);
-                findingBreakdown[layerName] = (findingBreakdown[layerName] || 0) + 1;
-              }
-            }
-            const context: ProblemContext = {
-              symptom: args.problem,
-              score: 0,
-              highestScore: 0,
-              cycle: 0,
-              stalledSince: 0,
-              targetPath: args.targetPath,
-              findingLayers,
-              findingCount: findingLayers.length,
-              findingBreakdown,
-              scoreHistory: [],
-            };
-            const solution = solver.solve(context);
-            frameworkAnalysis = solution.instructions + '\n\n---\n\n';
-            tridentLog('INFO', 'trident-problem-solving', `6-framework analysis complete: rootCause=${solution.rootCause.substring(0, 80)}, confidence=${solution.diagnoses.length} frameworks applied`);
-          } catch (fwErr) {
-            tridentLog('WARN', 'trident-problem-solving', `Framework analysis failed (non-fatal), using template only: ${fwErr instanceof Error ? fwErr.message : String(fwErr)}`);
-          }
-          
-          const artifact = frameworkAnalysis + generatePlanArtifact(
-            args.targetPath,
+          const psBrief = buildProblemSolvingBrief(
             args.problem,
-            args.reasoning,
-            args.workingPlan,
-            args.findings || [],
-            discovery
+            psSourceExtracts,
+            psDiscoveryFindings,
+            args.reasoning || [],
+            psProjectName,
           );
 
-          const validations: Array<{ layer: number; name: string; valid: boolean; missing: string[] }> = [];
-          for (let layer = 1; layer <= 6; layer++) {
-            const config = problemSolvingModule.getLayerConfig(layer);
-            const v = problemSolvingModule.validateLayerContent(layer, artifact);
-            validations.push({ layer, name: config?.name || `Layer ${layer}`, ...v });
-            // Validation failure is a WARNING, not an error — always advance
-            orchestrator.completeLayer();
+          const PS_SYSTEM = 'You are an elite diagnostic engineer. ' +
+            'You solve problems by reading actual code, tracing root causes to specific file:line patterns, ' +
+            'and producing comprehensive fix strategies with corrected code. ' +
+            'You NEVER say "insufficient evidence" — the code is provided. Read it and analyze it. ' +
+            'Every claim MUST cite file:line. Every fix MUST include the corrected code. ' +
+            'Trace root causes by asking "why?" repeatedly until you reach the fundamental cause. ' +
+            'Output ONLY the analysis. No preamble. No meta-commentary.';
 
-            // Wire FSM events for each problem-solving layer
-            if (layer === 1) psMachineActor.send({ type: 'SUBMIT_ASSUMPTION' });
-            else if (layer === 2) psMachineActor.send({ type: 'SUBMIT_ACTION' });
-            else if (layer === 3) psMachineActor.send({ type: 'SUBMIT_OBSERVATION' });
-            else if (layer === 4) psMachineActor.send({ type: 'SUBMIT_GAP' });
-            else if (layer === 5) psMachineActor.send({ type: 'SUBMIT_META' });
-            else if (layer === 6) psMachineActor.send({ type: 'SUBMIT_VERIFICATION' });
-          }
+          tridentLog('INFO', 'trident-problem-solving', `PS: Generating analysis from ${psSourceExtracts.size} source files`);
 
-          const mdPath = await writeArtifactFile('PLAN', artifact);
-          storeArtifacts({
-            'problem-solving-plan': artifact,
-            'artifact-path': mdPath,
-            'validation-report': JSON.stringify(validations),
-            'iteration': String(iteration),
-            'detected-layer': String(detectedLayer),
+          const psOutput = await runInternalLLMLoop(psBrief, null, getDefaultStrategy(), {
+            useSplit: false, maxIterations: 1, skipQualityChecks: true,
+            systemOverride: PS_SYSTEM,
           });
 
-          return artifact + (mdPath ? `\n\n---\n📄 Artifact saved: \`${mdPath}\`` : '') + '\n\n---\n\n' + formatValidationReport(validations, `PROBLEM_SOLVING (${iteration})`);
+          const mdPath = await writeArtifactFile('PROBLEM_SOLVING', psOutput, args.outputPath, args.outputName);
+          storeArtifacts({
+            'problem-solving-plan': psOutput,
+            'artifact-path': mdPath,
+            'mode': 'LLM_GENERATED',
+          });
+
+          tridentLog('INFO', 'trident-problem-solving', `PS COMPLETE: ${psOutput.split('\n').length} lines written to ${mdPath}`);
+          return psOutput + (mdPath ? `\n\n---\n📄 Artifact saved: \`${mdPath}\`` : '');
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errorId = `PS-ERR-${Date.now()}`;
@@ -1047,6 +1776,7 @@ export function createTridentTools() {
         targetPaths: z.array(z.string()).optional().describe('File paths for trident_explore subagent dispatch (T2 mode only)'),
         outputMode: z.enum(['T1', 'T2']).default('T1').describe('T1 (default) = lightweight injectable config. T2 = dense, bible-style standalone knowledge file written to disk.'),
         targetLines: z.number().min(100).max(16000).default(1000).optional().describe('Target line count for T2 artifact. Controls how many patterns, failure modes, imports, etc. are sampled. Higher = more discovery data included.'),
+        executiveSummary: z.string().optional().describe('TWO-CALL PATTERN: Call 1 (empty) returns a data brief. Call 2 (provide >100 chars for T1, >200 chars for T2) saves the LLM-written content as the artifact.'),
       },
       execute: async (args: {
         projectName: string;
@@ -1057,6 +1787,7 @@ export function createTridentTools() {
         targetPaths?: string[];
         outputMode: 'T1' | 'T2';
         targetLines?: number;
+        executiveSummary?: string;
       }) => {
         try {
           orchestrator.startContextSynthesis();
@@ -1085,214 +1816,96 @@ export function createTridentTools() {
           }
 
           if (mode === 'T2') {
-            // Auto-discover for dense T2 content — discovery already run above
-
-            // ---- T2: Dense knowledge file written to disk ----
-            // v4.4.1: Kill fabricated code examples. Read REAL source files and feed through engine.
-            const realCodeMap = new Map<string, string>();
-
-            // Build a basename → fullpath index for the project so we can resolve pattern.file
-            const _basePath = args.targetPath || '';
-            if (_basePath && discovery && discovery.patterns.length > 0) {
-              const fileIndex = new Map<string, string[]>();
-              const buildIndex = (dir: string, depth: number) => {
-                if (depth > 10) return;
-                try {
-                  for (const entry of fsSync.readdirSync(dir, { withFileTypes: true })) {
-                    if (entry.name === 'node_modules' || entry.name === '.git' || entry.name === 'dist') continue;
-                    const full = path.join(dir, entry.name);
-                    if (entry.isDirectory()) buildIndex(full, depth + 1);
-                    else if (entry.isFile()) {
-                      const arr = fileIndex.get(entry.name) || [];
-                      arr.push(full);
-                      fileIndex.set(entry.name, arr);
-                    }
-                  }
-                } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable dirs */ }
-              };
-              buildIndex(_basePath, 0);
-
-              // For each discovered pattern, read the ACTUAL source file
-              const shown = discovery.patterns.slice(0, Math.max(30, Math.floor((args.targetLines || 1000) / 10)));
-              for (const pat of shown) {
-                try {
-                  const candidates = fileIndex.get(pat.file);
-                  if (!candidates || candidates.length === 0) continue;
-                  const content = fsSync.readFileSync(candidates[0], 'utf-8');
-                  const lines = content.split('\n');
-                  const startLine = Math.max(0, pat.line - 1);
-                  // v4.4.1: Scale code examples to meet targetLines (75-90% of target)
-                  const scaleFactor = Math.max(1, Math.floor((args.targetLines || 1000) / 500));
-                  const snippetLines = Math.min(30 * scaleFactor, 80); // 30, 60, 80 lines based on scale
-                  const snippet = lines.slice(startLine, startLine + snippetLines).join('\n');
-                  realCodeMap.set(pat.file + ':' + pat.line, snippet);
-                } catch (e: unknown) {
-                  tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`);
-                  // Skip unreadable files
+            // ═══ v4.4.2 T2 INTERNAL LLM GENERATION ═══
+            // T2 produces a Knowledge Transfer Bible — compaction-proof context synthesis.
+            // NO appendComplianceAndAppendix — that's L2-specific. T2 has its own closing format.
+            try {
+              tridentLog('INFO', 'trident-context-synthesis', 'T2: Internal LLM generation (bible format)');
+              // Read reference material from targetPath and contextFiles
+              const t2SourceExtracts = new Map<string, string>();
+              if (args.targetPath) {
+                const t2Files = await collectSourceFiles(args.targetPath);
+                for (const tf of t2Files.slice(0, 15)) {
+                  try { t2SourceExtracts.set(tf, fsSync.readFileSync(tf, 'utf-8')); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
                 }
               }
-              tridentLog('INFO', 'trident-context-synthesis', `T2 real source: read ${realCodeMap.size} actual code snippets from disk`);
-            }
-
-            // Build source material from REAL code for engine synthesis
-            const t2SourceMap = new Map<string, string>();
-            if ((args.keyFacts || []).length > 0) t2SourceMap.set('key-facts', (args.keyFacts || []).join('\n'));
-            if ((args.patterns || []).length > 0) t2SourceMap.set('user-patterns', (args.patterns || []).join('\n'));
-            for (const [key, snippet] of realCodeMap) {
-              t2SourceMap.set('code/' + key, snippet);
-            }
-
-            // Synthesize through engine: collect → score → compress → inject
-            let t2EngineSections: string[] = [];
-            try {
-              if (t2SourceMap.size > 0) {
-                const t2EngineResult = await contextSynthesisEngine.synthesize(t2SourceMap);
-                t2EngineSections = t2EngineResult.sections;
-                tridentLog('INFO', 'trident-context-synthesis', `T2 engine: synthesized ${t2EngineResult.totalTokens} tokens across ${t2EngineSections.length} sections`);
+              if (args.targetPaths) {
+                for (const tf of args.targetPaths) {
+                  try { t2SourceExtracts.set(tf, fsSync.readFileSync(tf, 'utf-8')); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+                }
               }
-            } catch (e: unknown) {
-              tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`);
-              tridentLog('WARN', 'trident-context-synthesis', `T2 engine synthesis failed: ${e instanceof Error ? e.message : String(e)}`);
-              return;
-            }
-
-            const t2 = await generateT2Artifact(
-              args.projectName,
-              args.patterns || [],
-              args.keyFacts || [],
-              args.targetPath,
-              discovery,
-              args.targetLines,
-              realCodeMap,
-            );
-            // Append engine-synthesized sections to T2 content if produced
-            const t2Content = t2EngineSections.length > 0
-              ? t2.content + '\n\n## Engine-Synthesized Context (Real Source)\n\n' + t2EngineSections.join('\n\n') + '\n'
-              : t2.content;
-            csMachineActor.send({ type: 'COLLECT', context: t2Content });
-
-            // Auto-dispatch trident_explore subagents if targetPaths provided and outputMode is T2
-            if (args.targetPaths && args.targetPaths.length > 0 && mode === 'T2') {
-              const explorePlan = contextSynthesisModule.buildExplorerDispatchTemplate(
-                args.targetPaths.slice(0, 5),
-                Math.min(args.targetPaths.length, 5)
-              );
-              storeArtifacts({
-                'explore-dispatch-plan': explorePlan,
+              const t2Strategy = getDefaultStrategy();
+              const t2Brief = buildDesignBrief(args, t2SourceExtracts, t2Strategy, args.projectName);
+              const t2Output = await runInternalLLMLoop(t2Brief, null, t2Strategy, {
+                useSplit: true, maxIterations: 3,
               });
-              tridentLog('INFO', 'trident-context-synthesis', `Explore dispatch plan generated for ${Math.min(args.targetPaths.length, 5)} subagents`);
+
+              // MANDATORY: Verify compaction-proof marking exists
+              // The entire point of T2 is compaction-proof context synthesis
+              if (!/compaction.proof|compaction-proof/i.test(t2Output)) {
+                tridentLog('WARN', 'trident-context-synthesis',
+                  'T2: Missing compaction-proof marking — appending mandatory footer');
+                // Append the mandatory compaction-proof closing if the LLM didn't include it
+                const compactionFooter = `\n\n---\n\n## THE FINAL WORD\n\n` +
+                  `This document is **compaction-proof** — read it after context loss.\n` +
+                  `Every rule was earned by regression. Every decision is documented.\n` +
+                  `No excuse for regression. This bible IS the system knowledge.\n\n` +
+                  `*END OF ${args.projectName.toUpperCase()} BIBLE*`;
+                const t2FinalDoc = t2Output + compactionFooter;
+                const t2Path = await writeArtifactFile('CS_T2_KNOWLEDGE', t2FinalDoc, args.outputPath, args.outputName);
+                storeArtifacts({ 'output': t2FinalDoc, 'mode': 'LLM_GENERATED' });
+                try { csMachineActor.send({ type: 'FORMAT', sections: [t2FinalDoc] }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+                tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2FinalDoc.split('\n').length} lines (compaction footer appended)`);
+                return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2FinalDoc.split('\n').length}\nCompaction-proof: YES (footer appended)\n\n📄 Artifact saved: ${t2Path}`;
+              }
+
+              // Compaction-proof marking present — save as-is
+              const t2Path = await writeArtifactFile('CS_T2_KNOWLEDGE', t2Output, args.outputPath, args.outputName);
+              storeArtifacts({ 'output': t2Output, 'mode': 'LLM_GENERATED' });
+              try { csMachineActor.send({ type: 'FORMAT', sections: [t2Output] }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+              tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2Output.split('\n').length} lines (compaction-proof verified)`);
+              return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2Output.split('\n').length}\nCompaction-proof: VERIFIED\n\n📄 Artifact saved: ${t2Path}`;
+            } catch (t2Err: unknown) {
+              const t2Msg = t2Err instanceof Error ? t2Err.message : String(t2Err);
+              tridentLog('ERROR', 'trident-context-synthesis', `T2 FAILED: ${t2Msg}`);
+              return `T2 GENERATION ERROR: ${t2Msg}`;
             }
-
-            const validations: Array<{ layer: number; name: string; valid: boolean; missing: string[] }> = [];
-            for (let layer = 1; layer <= 4; layer++) {
-              const config = contextSynthesisModule.getLayerConfig(layer);
-              const v = contextSynthesisModule.validateLayerContent(layer, t2Content);
-              validations.push({ layer, name: config?.name || `Layer ${layer}`, ...v });
-              // Validation failure is a WARNING, not an error — always advance
-              orchestrator.completeLayer();
-
-              // Wire FSM events for CS layers
-              if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: t2Content });
-              else if (layer === 2) csMachineActor.send({ type: 'SCORE' });
-              else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: t2Content });
-              else if (layer === 4) csMachineActor.send({ type: 'FORMAT', sections: t2.sections });
-            }
-
-            // v4.4.1: Re-write artifact to disk with engine-enriched content
-            if (t2Content !== t2.content) {
-              try { await fs.writeFile(t2.path, t2Content, 'utf-8'); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); /* non-fatal */ }
-            }
-
-            storeArtifacts({
-              't2-knowledge': t2Content,
-              't2-artifact-path': t2.path,
-              'validation-report': JSON.stringify(validations),
-              't2-metadata': JSON.stringify({ lineCount: t2.lineCount, sizeKB: t2.sizeKB, sections: t2.sections }),
-            });
-
-            let summary = `# T2 Knowledge File Generated: ${args.projectName}\n\n`;
-            summary += `**Output Mode:** T2 (dense, bible-style standalone knowledge file)\n`;
-            summary += `**File Path:** \`${t2.path}\`\n\n`;
-            summary += `## Structure Overview\n\n`;
-            summary += `| Metric | Value |\n`;
-            summary += `|--------|-------|\n`;
-            summary += `| Lines | ${t2.lineCount} |\n`;
-            summary += `| Size | ${t2.sizeKB} KB |\n`;
-            summary += `| Sections | ${t2.sections.length} |\n\n`;
-            summary += `**Sections Detected:**\n`;
-            for (const s of t2.sections) { summary += `- ${s}\n`; }
-            summary += `\n## Preview (first 500 chars)\n\n`;
-            summary += `\`\`\`markdown\n${t2.preview}\n\`\`\`\n\n`;
-            summary += `---\n📄 T2 Knowledge File saved: \`${t2.path}\`\n\n`;
-            summary += `---\n\n` + formatValidationReport(validations, 'CONTEXT_SYNTHESIS (T2)');
-            return {
-              output: t2Content,
-              summary,
-              artifactPath: t2.path,
-              sections: t2.sections,
-              lineCount: t2.lineCount,
-              sizeKB: t2.sizeKB,
-            };
           }
 
-          // ---- T1 (default): Lightweight injectable ----
-          // v4.4.1: Use ACTUAL engine pipeline instead of dead artifact generators
-          // Build source material from user input
-          const t1SourceMap = new Map<string, string>();
-          if ((args.patterns || []).length > 0) t1SourceMap.set('user-patterns', (args.patterns || []).join('\n'));
-          if ((args.keyFacts || []).length > 0) t1SourceMap.set('key-facts', (args.keyFacts || []).join('\n'));
-
-          // Run through engine: collect → score → compress → inject
-          let t1EngineOutput = '';
-          try {
-            if (t1SourceMap.size > 0) {
-              const t1Result = await contextSynthesisEngine.synthesize(t1SourceMap);
-              t1EngineOutput = t1Result.sections.join('\n\n');
-              tridentLog('INFO', 'trident-context-synthesis', `T1 engine: synthesized ${t1Result.totalTokens} tokens across ${t1Result.sections.length} sections`);
+          // ═══ v4.4.2 T1 INTERNAL LLM GENERATION ═══
+          {
+            try {
+              tridentLog('INFO', 'trident-context-synthesis', 'T1: Internal LLM generation');
+              // Read reference material
+              const t1SourceExtracts = new Map<string, string>();
+              if (args.targetPath) {
+                const t1Files = await collectSourceFiles(args.targetPath);
+                for (const tf of t1Files.slice(0, 10)) {
+                  try { t1SourceExtracts.set(tf, fsSync.readFileSync(tf, 'utf-8')); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+                }
+              }
+              if (args.targetPaths) {
+                for (const tf of args.targetPaths) {
+                  try { t1SourceExtracts.set(tf, fsSync.readFileSync(tf, 'utf-8')); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+                }
+              }
+              const t1Strategy = getDefaultStrategy();
+              const t1Brief = buildT1InjectableBrief(args, t1SourceExtracts, args.projectName || 'agent');
+              const t1Output = await runInternalLLMLoop(t1Brief, null, t1Strategy, {
+                useSplit: false, maxIterations: 1, skipQualityChecks: true,
+              });
+              const t1Path = await writeArtifactFile('CS_T1_INJECTABLE', t1Output, args.outputPath, args.outputName);
+              storeArtifacts({ 'output': t1Output, 'mode': 'LLM_GENERATED' });
+              try { csMachineActor.send({ type: 'COLLECT', context: t1Output }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
+              tridentLog('INFO', 'trident-context-synthesis', `T1 COMPLETE: ${t1Output.split('\n').length} lines`);
+              return `T1 INJECTABLE COMPLETE\n\nLines: ${t1Output.split('\n').length}\n\n📄 Artifact saved: ${t1Path}`;
+            } catch (t1Err: unknown) {
+              const t1Msg = t1Err instanceof Error ? t1Err.message : String(t1Err);
+              tridentLog('ERROR', 'trident-context-synthesis', `T1 FAILED: ${t1Msg}`);
+              return `T1 GENERATION ERROR: ${t1Msg}`;
             }
-          } catch (e: unknown) {
-            tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`);
-            tridentLog('WARN', 'trident-context-synthesis', `T1 engine synthesis failed: ${e instanceof Error ? e.message : String(e)}`);
-            return;
           }
 
-          // Generate base config + append engine output as enrichment
-          const artifact = generateT1Injectable(
-            args.projectName,
-            args.config || { model: 'deepseek/deepseek-v4-flash' },
-            args.patterns || [],
-            args.keyFacts || [],
-            discovery || null,
-          );
-          // Append engine-synthesized context if produced
-          const finalArtifact = t1EngineOutput
-            ? artifact + '\n\n## Engine-Synthesized Context (NLP Pipeline)\n\n' + t1EngineOutput + '\n'
-            : artifact;
-          csMachineActor.send({ type: 'COLLECT', context: finalArtifact });
-
-          const validations: Array<{ layer: number; name: string; valid: boolean; missing: string[] }> = [];
-          for (let layer = 1; layer <= 4; layer++) {
-            const config = contextSynthesisModule.getLayerConfig(layer);
-            const v = contextSynthesisModule.validateLayerContent(layer, finalArtifact);
-            validations.push({ layer, name: config?.name || `Layer ${layer}`, ...v });
-            // Validation failure is a WARNING, not an error — always advance
-            orchestrator.completeLayer();
-
-            // Wire FSM events for CS layers
-            if (layer === 1) csMachineActor.send({ type: 'COLLECT', context: finalArtifact });
-            else if (layer === 2) csMachineActor.send({ type: 'SCORE' });
-            else if (layer === 3) csMachineActor.send({ type: 'COMPRESS', compressed: finalArtifact });
-            else if (layer === 4) csMachineActor.send({ type: 'FORMAT', sections: [finalArtifact] });
-          }
-
-          const mdPath = await writeArtifactFile('T1_INJECTABLE', finalArtifact);
-          storeArtifacts({
-            't1-injectable': finalArtifact,
-            'artifact-path': mdPath,
-            'validation-report': JSON.stringify(validations),
-          });
-
-          return finalArtifact + (mdPath ? `\n\n---\n📄 Artifact saved: \`${mdPath}\`` : '') + '\n\n---\n\n' + formatValidationReport(validations, 'CONTEXT_SYNTHESIS');
         } catch (err: unknown) {
           const errMsg = err instanceof Error ? err.message : String(err);
           const errorId = `CS-ERR-${Date.now()}`;
@@ -1353,10 +1966,27 @@ export function createTridentTools() {
         try {
           const engine = new AuditEngine();
           const result = await engine.auditSingleLayer(args.targetPath, args.layer);
+          const gateFindings = result.findings;
+          const corrections = new Set(gateFindings.map((f: any) => f.correction || ''));
+          const sharedCorrection = corrections.size === 1 ? Array.from(corrections)[0] : null;
+          const compactFindings = gateFindings.map((f: any) => ({
+            file: f.file, line: f.line, severity: f.severity, category: f.category,
+            description: f.description,
+            evidence: typeof f.evidence === 'string' ? f.evidence.substring(0, 80) : f.evidence,
+            confidence: f.confidence,
+          }));
           return JSON.stringify({
             layer: args.layer,
-            findingsCount: result.findings.length,
-            findings: result.findings,
+            findingsCount: gateFindings.length,
+            severityBreakdown: {
+              critical: gateFindings.filter((f: any) => f.severity === 'CRITICAL').length,
+              high: gateFindings.filter((f: any) => f.severity === 'HIGH').length,
+              medium: gateFindings.filter((f: any) => f.severity === 'MEDIUM').length,
+              low: gateFindings.filter((f: any) => f.severity === 'LOW').length,
+            },
+            sharedCorrection: sharedCorrection,
+            topFindings: compactFindings.slice(0, 15),
+            remainingCount: Math.max(0, compactFindings.length - 15),
             overallScore: result.score,
             grade: result.grade,
           }, null, 2);
@@ -1371,7 +2001,7 @@ export function createTridentTools() {
     }),
 
     'trident-status': tool({
-      description: 'Show current Trident Brain v4.3 state: mode, layer, iteration, status, artifact metadata',
+      description: 'Show current Trident Agent state: mode, layer, iteration, status, artifact metadata',
       args: {},
       execute: async () => {
         const state = orchestrator.getState();
@@ -1403,10 +2033,10 @@ export function createTridentTools() {
     }),
 
     'trident-help': tool({
-      description: 'Show Trident Brain v4.3 help: modes, commands, 17-layer audit engine, artifacts',
+      description: 'Show Trident Agent help: modes, commands, 17-layer audit engine, artifacts',
       args: {},
       execute: async () => {
-        return `## TRIDENT BRAIN v4.3 — Runtime Grade Audit Engine
+        return `## TRIDENT — Runtime Grade Audit Engine
 
 **CORE PRINCIPLE:** "Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes."
 
@@ -1415,7 +2045,7 @@ export function createTridentTools() {
 |------|------|-----------------|-----------|
 | trident-code-audit | CODE_REVIEW | 3 stages (preflight → R0-R16 → artifact) | Code review report |
 | trident-deep-planning | DEEP_PLANNING | 3 layers (L1 first-principles → L2 workflow → L3 context-lib) | Build Spec + Context Library |
-| trident-problem-solving | PROBLEM_SOLVING | 6 layers (assumption→action→observe→gap→meta→verify) | Plan + RCA |
+| trident-problem-solving | PROBLEM_SOLVING | Problem solving loop (triviality→classify→done→evidence→decide→act→verify→report) | Outcome-first result |
 | trident-context-synthesis | CONTEXT_SYNTHESIS | 4 layers (collect→score→compress→inject) | T1 Injectable (outputMode=T1) / T2 Knowledge File (outputMode=T2) |
 
 **SUPPORTING TOOLS:**

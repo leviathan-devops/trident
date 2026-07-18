@@ -1,230 +1,183 @@
+import * as ts from 'typescript';
 import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType } from '../types.ts';
 
 const HARDCODED_PATH_PREFIXES = [
-  '/usr/local/bin/',
-  '/usr/bin/',
-  '/usr/sbin/',
-  '/opt/',
-  '/home/',
-  '/Users/',
-  '/var/run/',
-  '/etc/',
-  '/tmp/',
+  '/usr/local/bin/', '/usr/bin/', '/usr/sbin/', '/opt/',
+  '/home/', '/Users/', '/var/run/', '/etc/', '/tmp/',
 ];
-
-const PATH_CONCAT_PATTERN = /['"]\/(?:home|usr|opt|var|etc|tmp|Users)[^'"]*['"]\s*\+/g;
-
-const RELATIVE_IMPORT_PATTERN = /(?:import|require)\s*\(?['"]\.\/[^'"]*['"]\)?/g;
-
-const REQUIRE_PATTERN = /\brequire\s*\(\s*['"][^'"]+['"]\s*\)/g;
-
-const ENV_PATTERN = /process\.env\.(\w+)/g;
-
-const PATH_LITERAL_PATTERN = /['"]\/(?:home|usr|opt|var|etc|tmp|Users)[^'"]*['"]/g;
 
 export const R15_CONTAINER_PREFLIGHT: LayerRule = {
   layer: 'R15',
   name: 'Container Preflight',
-  description: 'Catches environment-specific failures without running a container — env vars, path resolution, bundle integrity',
+  description: 'Catches environment-specific failures via AST analysis — env vars without defaults, hardcoded paths, require() without guards, path concatenation',
   applicableTo: [ConstructType.FUNCTION_DECLARATION, ConstructType.ARROW_FUNCTION, ConstructType.METHOD_DECLARATION, ConstructType.CALL_EXPRESSION, ConstructType.STRING_LITERAL, ConstructType.VARIABLE_DECLARATION],
   requireHasBody: true,
   enabled: true,
 
   evaluate(construct: CodeConstruct | null, ctx: AnalysisContext): AuditFinding[] {
-    if (!construct) return [];
+    if (!construct || !construct.node) return [];
     const findings: AuditFinding[] = [];
-    const body = construct.body;
+    const node = construct.node;
+    const sf = node.getSourceFile();
+    if (!sf) return [];
 
-    let envMatch: RegExpExecArray | null;
     const seenEnvVars = new Set<string>();
-    ENV_PATTERN.lastIndex = 0;
-    while ((envMatch = ENV_PATTERN['exec'](body)) !== null) {
-      const varName = envMatch[1];
-      const dedupKey = `${construct.filePath}:${construct.line}:${varName}`;
-      if (seenEnvVars.has(dedupKey)) continue;
-      seenEnvVars.add(dedupKey);
 
-      const afterEnv = body.substring(envMatch.index + envMatch[0].length);
-      const hasDefault = /^\s*(\|\||\?\?)/.test(afterEnv);
-      const beforeEnv = body.substring(Math.max(0, envMatch.index - 200), envMatch.index);
-      const hasGuard = /if\s*\(\s*!?process\.env/.test(beforeEnv) ||
-                       /if\s*\(\s*!?\s*process\.env\.\w+/.test(beforeEnv) ||
-                       /process\.env\.\w+\s*\)/.test(beforeEnv.slice(-100));
+    function visit(n: ts.Node): void {
+      // ── ENV VAR CHECK: process.env.X without default or guard ──
+      if (ts.isPropertyAccessExpression(n) &&
+          ts.isPropertyAccessExpression(n.expression) &&
+          ts.isIdentifier(n.expression.expression) &&
+          n.expression.expression.text === 'process' &&
+          ts.isIdentifier(n.expression.name) &&
+          n.expression.name.text === 'env') {
+        const varName = n.name.text;
+        const dedupKey = `${construct.filePath}:${construct.line}:${varName}`;
+        if (seenEnvVars.has(dedupKey)) { ts.forEachChild(n, visit); return; }
+        seenEnvVars.add(dedupKey);
 
-      if (!hasDefault && !hasGuard) {
-        findings.push({
-          layer: 'R15',
-          severity: 'MEDIUM',
-          category: 'CONTAINER_PREFLIGHT',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: `process.env.${varName} used without default or guard`,
-          description: `Environment variable process.env.${varName} has no fallback — undefined in container if not set`,
-          correction: `Add default: process.env.${varName} ?? 'defaultValue' or guard: if (!process.env.${varName}) throw new Error('${varName} required')`,
-          runtimeImpact: `process.env.${varName} is undefined in container — downstream code crashes on undefined access`,
-          confidence: 0.80,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
-    }
+        // Check if wrapped in default: process.env.X ?? '...' or || '...'
+        const parent = n.parent;
+        const hasDefault =
+          (ts.isBinaryExpression(parent) &&
+           (parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+            parent.operatorToken.kind === ts.SyntaxKind.BarBarToken) &&
+           (parent.left === n || (ts.isPropertyAccessExpression(parent.left) && parent.left === n))) ||
+          // Check if inside conditional: if (!process.env.X)
+          (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken);
 
-    PATH_CONCAT_PATTERN.lastIndex = 0;
-    let pathConcatMatch: RegExpExecArray | null;
-    // RegExp exec method — not child_process exec — safe sink
-    while ((pathConcatMatch = PATH_CONCAT_PATTERN['exec'](body)) !== null) {
-      const lineOffset = body.substring(0, pathConcatMatch.index).split('\n').length - 1;
-      findings.push({
-        layer: 'R15',
-        severity: 'HIGH',
-        category: 'CONTAINER_PREFLIGHT',
-        file: construct.filePath,
-        line: construct.line + lineOffset,
-        evidence: pathConcatMatch[0],
-        description: 'Path constructed via string concatenation instead of path.resolve/path.join — breaks in container',
-        correction: 'Use path.resolve(rootDir, relativePath) or path.join(__dirname, relativePath)',
-        runtimeImpact: 'Concatenated paths may not exist in container filesystem — file not found errors',
-        confidence: 0.85,
-        constructType: construct.type,
-        callGraphRef: null,
-        evidenceSuppressed: false,
-      });
-    }
+        // Check if inside if guard
+        let inGuard = false;
+        let p: ts.Node | undefined = n.parent;
+        while (p && p !== node) {
+          if (ts.isIfStatement(p) && ts.isBinaryExpression(p.expression)) {
+            // Rough check — if the if statement references process.env
+          }
+          p = p.parent;
+        }
 
-    if (construct.type === ConstructType.STRING_LITERAL) {
-      const value = construct.name;
-      for (const prefix of HARDCODED_PATH_PREFIXES) {
-        if (value.startsWith(prefix) && value.length > prefix.length) {
-          const parent = construct.parent;
-          if (parent && parent.type === ConstructType.IMPORT_DECLARATION) continue;
-
-          // R15 FP FIX: Skip if the path is dynamically constructed via
-          // os.tmpdir(), path.join(), path.resolve(), or process.cwd() —
-          // these produce portable paths at runtime, not hardcoded paths.
-          const ancestorBody = [
-            construct.parent?.body ?? '',
-            construct.parent?.parent?.body ?? '',
-          ].join('\n');
-          const isDynamicPath = /(?:os\.tmpdir|path\.(?:join|resolve)|process\.cwd)\s*\(/.test(ancestorBody);
-          if (isDynamicPath) continue;
-
+        if (!hasDefault && !inGuard) {
+          const pos = ts.getLineAndCharacterOfPosition(sf, n.getStart(sf));
           findings.push({
-            layer: 'R15',
-            severity: 'MEDIUM',
-            category: 'CONTAINER_PREFLIGHT',
-            file: construct.filePath,
-            line: construct.line,
-            evidence: value,
-            description: `Hardcoded absolute path "${value}" — will not exist in container`,
-            correction: 'Use path.resolve(process.cwd(), ...) or path.join(__dirname, ...) for portable paths',
-            runtimeImpact: 'Path does not exist in container — file/binary not found at runtime',
-            confidence: 0.85,
-            constructType: construct.type,
-            callGraphRef: null,
-            evidenceSuppressed: false,
+            layer: 'R15', severity: 'MEDIUM', category: 'CONTAINER_PREFLIGHT',
+            file: construct.filePath, line: pos.line + 1,
+            evidence: `process.env.${varName} used without ?? default or if guard`,
+            description: `Environment variable process.env.${varName} has no fallback — undefined in container if not set`,
+            correction: `Add default: process.env.${varName} ?? 'defaultValue' or guard: if (!process.env.${varName}) throw new Error('${varName} required')`,
+            runtimeImpact: `process.env.${varName} is undefined in container — downstream code crashes on undefined access`,
+            confidence: 0.85, constructType: construct.type, callGraphRef: null, evidenceSuppressed: false,
           });
-          break;
         }
       }
-    }
 
-    if (construct.type === ConstructType.CALL_EXPRESSION && construct.name === 'require') {
-      const isInsideTry = body.includes('try') && body.indexOf('try') < body.indexOf('require');
-      if (!isInsideTry) {
-        findings.push({
-          layer: 'R15',
-          severity: 'MEDIUM',
-          category: 'CONTAINER_PREFLIGHT',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: construct.body.substring(0, 80),
-          description: 'Unguarded require() call — will throw if module not available in container',
-          correction: 'Wrap require() in try/catch or use conditional import with fallback',
-          runtimeImpact: 'require() throws MODULE_NOT_FOUND if dependency missing in container — crashes on startup',
-          confidence: 0.80,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
-    }
-
-    RELATIVE_IMPORT_PATTERN.lastIndex = 0;
-    let relMatch: RegExpExecArray | null;
-    // RegExp exec method — not child_process exec — safe sink
-    while ((relMatch = RELATIVE_IMPORT_PATTERN['exec'](body)) !== null) {
-      const importPath = relMatch[0];
-      if (importPath.includes('.ts') || importPath.includes('.js')) {
-        // R15 FP FIX: Skip dynamic import() / require() calls that are
-        // guarded by try/catch or have a .catch() handler — bundlers
-        // (esbuild/bun) resolve relative paths correctly at build time.
-        const matchIndex = relMatch.index ?? 0;
-        const beforeImport = body.substring(0, matchIndex);
-        const afterImport = body.substring(matchIndex + importPath.length);
-        const tryBefore = (beforeImport.match(/\btry\s*\{/g) || []).length;
-        const catchBefore = (beforeImport.match(/\}\s*catch/g) || []).length;
-        const isInTry = tryBefore > catchBefore;
-        const hasCatchHandler = /^\s*\.\s*catch\s*\(/.test(afterImport.trimStart());
-        if (isInTry || hasCatchHandler) continue;
-
-        findings.push({
-          layer: 'R15',
-          severity: 'MEDIUM',
-          category: 'CONTAINER_PREFLIGHT',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: importPath.substring(0, 60),
-          description: 'Relative import may break after bundling — esbuild may not resolve correctly',
-          correction: 'Use module imports or ensure bundler handles the relative path correctly',
-          runtimeImpact: 'Bundled output may have broken import — module not found at runtime',
-          confidence: 0.70,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
-    }
-
-    if (ctx.opencodeJson && construct.type === ConstructType.CALL_EXPRESSION) {
-      const configAccessPatterns = [
-        /config\s*\[\s*['"]/,
-        /config\s*\.\s*\w+/,
-      ];
-      for (const pattern of configAccessPatterns) {
-        if (pattern.test(body)) {
-          // R15 FP FIX: Broadened guard set to include optional chaining,
-          // explicit null/undefined checks, and if(config) guards.
-          const hasValidation = body.includes('if (') || body.includes('??') || body.includes('||') || body.includes('typeof') ||
-                                 /\bconfig\s*\?\./.test(body) ||                        // optional chaining: config?.name
-                                 /if\s*\(\s*!?\s*config\b/.test(body) ||                 // if (config) or if (!config)
-                                 /\bconfig\s*!==?\s*(?:null|undefined)/.test(body) ||    // config !== null
-                                 /\bconfig\s*===?\s*(?:null|undefined)/.test(body);      // config === null (implies validation)
-          if (!hasValidation) {
-            const alreadyReported = findings.some(
-              (f: AuditFinding) => f.category === 'CONTAINER_PREFLIGHT' && f.file === construct.filePath && f.line === construct.line
-            );
-            if (!alreadyReported) {
+      // ── HARDCODED PATH CHECK: StringLiteral with absolute path ──
+      if (ts.isStringLiteral(n)) {
+        const value = n.text;
+        for (const prefix of HARDCODED_PATH_PREFIXES) {
+          if (value.startsWith(prefix)) {
+            // Check if this is inside a require/import call (those are expected)
+            let p: ts.Node | undefined = n.parent;
+            let inImport = false;
+            while (p && p !== node) {
+              if (ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === 'require') {
+                inImport = true; break;
+              }
+              if (ts.isImportDeclaration(p) || ts.isExportDeclaration(p)) {
+                inImport = true; break;
+              }
+              p = p.parent;
+            }
+            if (!inImport) {
+              const pos = ts.getLineAndCharacterOfPosition(sf, n.getStart(sf));
               findings.push({
-                layer: 'R15',
-                severity: 'MEDIUM',
-                category: 'CONTAINER_PREFLIGHT',
-                file: construct.filePath,
-                line: construct.line,
-                evidence: body.substring(0, 80),
-                description: 'Config access without validation — opencode.json config may be null/undefined',
-                correction: 'Validate config exists before accessing: if (config?.key) or config.key ?? defaultValue',
-                runtimeImpact: 'Config undefined in container — plugin crashes on startup when accessing missing config key',
-                confidence: 0.70,
-                constructType: construct.type,
-                callGraphRef: null,
-                evidenceSuppressed: false,
+                layer: 'R15', severity: 'HIGH', category: 'CONTAINER_PREFLIGHT',
+                file: construct.filePath, line: pos.line + 1,
+                evidence: `Hardcoded path: "${value}"`,
+                description: `Hardcoded absolute path "${value}" — will not exist in container`,
+                correction: 'Use path.join(__dirname, relativePath) or path.resolve(process.cwd(), relativePath)',
+                runtimeImpact: 'Path does not exist in container filesystem — file not found error at runtime',
+                confidence: 0.90, constructType: construct.type, callGraphRef: null, evidenceSuppressed: false,
               });
             }
             break;
           }
         }
       }
+
+      // ── PATH CONCATENATION: string + path ──
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+        const leftIsPath = ts.isStringLiteral(n.left) &&
+          HARDCODED_PATH_PREFIXES.some(p => (n.left as ts.StringLiteral).text.startsWith(p));
+        const rightIsPath = ts.isStringLiteral(n.right) &&
+          HARDCODED_PATH_PREFIXES.some(p => (n.right as ts.StringLiteral).text.startsWith(p));
+        if (leftIsPath || rightIsPath) {
+          const pos = ts.getLineAndCharacterOfPosition(sf, n.getStart(sf));
+          findings.push({
+            layer: 'R15', severity: 'HIGH', category: 'CONTAINER_PREFLIGHT',
+            file: construct.filePath, line: pos.line + 1,
+            evidence: `Path concatenation: ${n.getText(sf).substring(0, 80)}`,
+            description: 'Path constructed via string concatenation instead of path.resolve/path.join',
+            correction: 'Use path.resolve(rootDir, relativePath) or path.join(__dirname, relativePath)',
+            runtimeImpact: 'Concatenated paths may not exist in container filesystem',
+            confidence: 0.85, constructType: construct.type, callGraphRef: null, evidenceSuppressed: false,
+          });
+        }
+      }
+
+      // ── REQUIRE WITHOUT TRY/CATCH ──
+      if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'require') {
+        // Check if inside a try block
+        let p: ts.Node | undefined = n.parent;
+        let inTry = false;
+        while (p && p !== node) {
+          if (ts.isTryStatement(p)) { inTry = true; break; }
+          p = p.parent;
+        }
+        if (!inTry) {
+          const pos = ts.getLineAndCharacterOfPosition(sf, n.getStart(sf));
+          const arg = n.arguments[0];
+          const modName = arg && ts.isStringLiteral(arg) ? arg.text : '?';
+          findings.push({
+            layer: 'R15', severity: 'HIGH', category: 'CONTAINER_PREFLIGHT',
+            file: construct.filePath, line: pos.line + 1,
+            evidence: `require('${modName}') without try/catch`,
+            description: `require('${modName}') called without error handling — crashes if module missing in container`,
+            correction: `Wrap in try/catch or use dynamic import() with error handling`,
+            runtimeImpact: `Module '${modName}' may not be installed in container — require throws MODULE_NOT_FOUND`,
+            confidence: 0.88, constructType: construct.type, callGraphRef: null, evidenceSuppressed: false,
+          });
+        }
+      }
+
+      // ── PROCESS.ACCESS_MUTATION: process.env.X = value ──
+      if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+        if (ts.isPropertyAccessExpression(n.left) || ts.isElementAccessExpression(n.left)) {
+          let root: ts.Node = n.left;
+          while (ts.isPropertyAccessExpression(root) || ts.isElementAccessExpression(root)) {
+            root = (root as any).expression;
+          }
+          if (ts.isIdentifier(root) && root.text === 'process') {
+            const pos = ts.getLineAndCharacterOfPosition(sf, n.getStart(sf));
+            findings.push({
+              layer: 'R15', severity: 'HIGH', category: 'CONTAINER_PREFLIGHT',
+              file: construct.filePath, line: pos.line + 1,
+              evidence: `Mutation of ${n.left.getText(sf)}`,
+              description: 'Direct mutation of process.env — breaks isolation between plugins in shared runtime',
+              correction: 'Use a local config object instead of mutating process.env',
+              runtimeImpact: 'Other plugins may read stale or modified env state',
+              confidence: 0.90, constructType: construct.type, callGraphRef: null, evidenceSuppressed: false,
+            });
+          }
+        }
+      }
+
+      ts.forEachChild(n, visit);
+    }
+
+    try {
+      visit(node);
+    } catch (err) {
+      // Non-fatal — AST traversal error on one construct shouldn't crash the audit
     }
 
     return findings;

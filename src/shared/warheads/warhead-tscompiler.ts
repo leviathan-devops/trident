@@ -1,4 +1,3 @@
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog } from '../../utils.js';
@@ -32,26 +31,6 @@ class TSCompilerAPIWarhead implements Warhead {
     await tridentLog('INFO', 'warhead-tsc', `KB-01: ${c}/7 techniques loaded`);
   }
 
-  register(hooks: HookRegistry): void {
-    hooks.on('tool.execute.before', async (input, _output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        if (typeof toolName === 'string' && toolName === 'trident-code-audit') {
-          this.auditCount++;
-          await tridentLog('INFO', 'warhead-tsc',
-            `Code audit #${this.auditCount} | KB-01 loaded: ${this.kbLoaded}`);
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-tsc', `Hook failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const kbInfo = this.kbLoaded

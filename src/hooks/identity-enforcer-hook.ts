@@ -2,7 +2,7 @@ import { enforceIdentity, setIdentityLoaded, type IdentityViolation } from '../i
 import { tridentLog } from '../utils.js';
 
 /**
- * v4.3.3 Identity Enforcer Hook
+ * Identity Enforcer Hook
  * 
  * Wraps the identity enforcement check for integration into the existing
  * tool.execute.before hook chain.

@@ -1,4 +1,3 @@
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { getEvidenceStore, tridentLog } from '../../utils.js';
@@ -113,85 +112,6 @@ class RuntimeGradeWarhead implements Warhead {
     await tridentLog('INFO', 'warhead-runtime-grade', `KB-00: ${c}/10 techniques loaded`);
   }
 
-  register(hooks: HookRegistry): void {
-    // ── HOOK: P3 Violation Scanner on EVERY tool execute.after ──
-    hooks.on('tool.execute.after', async (input, output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return; // input not an object — skip
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        const outputText = extractOutputText(output);
-        if (!outputText) return;
-
-        this.scanCount++;
-        const violations = scanForEmptyCatches(outputText);
-
-        if (violations.length > 0) {
-          this.p3ViolationCount += violations.length;
-          this.lastScanResults = violations;
-
-          await tridentLog('WARN', 'warhead-p3',
-            `Found ${violations.length} P3 violations (${this.p3ViolationCount} total, ${this.scanCount} scans)`);
-
-          // Write to evidence store
-          try {
-            const store = await getEvidenceStore();
-            const toolName = inputR.tool;
-            await store.append('global', 'CODE_REVIEW', 'R3', 'p3-scan', {
-              tool: typeof toolName === 'string' ? toolName : 'unknown',
-              violations: violations.map((v: P3Violation) => ({ line: v.line, pattern: v.pattern })),
-              totalCount: this.p3ViolationCount,
-              timestamp: Date.now(),
-            });
-          } catch (e: unknown) {
-            await tridentLog('ERROR', 'warhead-p3', `Evidence write failed: ${e instanceof Error ? e.message : String(e)}`);
-            console.error('[WarheadP3] evidence write error:', e); // R4 FIX: actual error logging replaces silent catch
-            return; // Exit handler — evidence write failure does not block scanning
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-p3', `P3 scan failed: ${msg}`);
-        return;
-      }
-    });
-
-    // ── HOOK: P2 Unsafe Cast Check ──
-    hooks.on('tool.execute.before', async (input, _output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return; // input not an object — skip
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        const argsStr = JSON.stringify(inputR.args || {});
-
-        const dangerousPatterns = [
-          /(code|source|transform|output).*as\s+any/i,
-          /as\s+any.*(?:=>|\bassign\b|\bequals\b)/,
-        ];
-        for (const pattern of dangerousPatterns) {
-          if (pattern.test(argsStr)) {
-            this.p2BlockCount++;
-            await tridentLog('WARN', 'warhead-p2',
-              `P2 BLOCK: Unsafe 'as any' in ${typeof toolName === 'string' ? toolName : 'unknown'} args (${this.p2BlockCount} total blocks)`);
-            throw new Error(`[P2 BLOCK] Unsafe 'as any' cast detected in code-generating args. Use type guards instead.`);
-          }
-        }
-
-        if (/\bas\s+any\b/.test(argsStr)) {
-          this.p2ObservationCount++;
-          await tridentLog('INFO', 'warhead-p2',
-            `P2 observation: 'as any' in ${typeof toolName === 'string' ? toolName : 'unknown'} args (${this.p2ObservationCount} total observations)`);
-        }
-      } catch (e: unknown) {
-        if (e instanceof Error && e.message.startsWith('[P2 BLOCK]')) throw e;
-        await tridentLog('ERROR', 'warhead-p2', `P2 scan error: ${e instanceof Error ? e.message : String(e)}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const scanInfo = this.scanCount > 0

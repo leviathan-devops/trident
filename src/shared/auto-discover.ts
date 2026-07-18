@@ -157,8 +157,8 @@ function buildTree(rootDir: string, _startDepth: number, maxDepth: number): stri
       for (let i = dirs.length - 1; i >= 0; i--) {
         queue.unshift({ dir: path.join(item.dir, dirs[i].name), depth: item.depth + 1, name: dirs[i].name });
       }
-    } catch {
-      // Skip unreadable
+    } catch (e) {
+      tridentLog('WARN', 'auto-discover', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e)));
     }
   }
   return result;

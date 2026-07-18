@@ -167,8 +167,8 @@ export const poseidonState = new PoseidonStateClass();
 // Set of build agent identifiers that must never access Poseidon tools
 const LEAF_NODE_AGENTS = [
   'trident_build',
-  'trident-build',
-  'build',
+  'trident_planner',
+  'trident_explore',
 ];
 
 /**

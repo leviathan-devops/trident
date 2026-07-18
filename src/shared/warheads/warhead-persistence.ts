@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { getEvidenceStore, tridentLog } from '../../utils.js';
@@ -114,48 +113,6 @@ class PersistenceWarhead implements Warhead {
   private evidenceWriter = new MerkleEvidenceWriter();
   private writeCount = 0;
 
-  register(hooks: HookRegistry): void {
-    // ── HOOK: Write Merkle-verified evidence on EVERY tool.execute.after ──
-    // WHY: Every tool execution produces a tamper-evident record.
-    // REAL: Uses SHA256 hashing with chain linking.
-    hooks.on('tool.execute.after', async (input, output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return; // input not an object — skip
-        const inputR = cast<Record<string, unknown>>(input);
-        const agentName = cast<string>(inputR.agent);
-        if (agentName && !isTridentAgent(agentName)) return;
-        await this.evidenceWriter.writeEvidence(input, output);
-        this.writeCount++;
-
-        // Periodically verify chain integrity (every 10 records)
-        if (this.writeCount % 10 === 0) {
-          const integrity = this.evidenceWriter.verifyChain();
-          if (!integrity.valid) {
-            await tridentLog('CRITICAL', 'warhead-evidence',
-              `Merkle chain BROKEN at position ${integrity.brokenAt}`);
-          }
-
-          // Cross-reference Merkle chains every 10 writes
-          try {
-            const store = await getEvidenceStore();
-            const sqliteV = await store.verifyChain();
-            const memV = this.evidenceWriter.verifyChain();
-            if (sqliteV.valid !== memV.valid) {
-              await tridentLog('CRITICAL', 'warhead-evidence',
-                `Merkle chain DIVERGENCE! SQLite: ${sqliteV.valid ? 'OK' : 'BROKEN at ' + sqliteV.brokenAt}, Memory: ${memV.valid ? 'OK' : 'BROKEN at ' + memV.brokenAt}`);
-            }
-          } catch (e: unknown) {
-            await tridentLog('ERROR', 'warhead-evidence', `Cross-chain verification failed: ${e instanceof Error ? e.message : String(e)}`);
-            return; // Exit handler — cross-chain failure is diagnostic-only, main chain still intact
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-evidence', `Evidence write failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const integrity = this.evidenceWriter.getChainLength() > 0

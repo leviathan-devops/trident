@@ -10,7 +10,6 @@
  * and synthesis quality.
  */
 
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog } from '../../utils.js';
@@ -67,27 +66,6 @@ class CommonSenseWarhead implements Warhead {
     }
   }
 
-  register(hooks: HookRegistry): void {
-    // Track system.transform events to count synthesis cycles
-    hooks.on('system.transform', async (input, _output) => {
-      try {
-        Object.keys(input); // R14: method call satisfies canThrowInBlock
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-
-        this.synthesisCount++;
-        tridentLog('DEBUG', 'warhead-common-sense',
-          `Synthesis cycle #${this.synthesisCount}: ${this.fileCount} files available`);
-      } catch (e: unknown) {
-        // R16 FIX: non-fatal fallback — hook error logged, synthesis tracking continues
-        const msg = e instanceof Error ? e.message : String(e);
-        tridentLog('ERROR', 'warhead-common-sense', `Hook failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const fileList = this.filesLoaded.length > 0

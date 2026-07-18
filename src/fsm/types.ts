@@ -72,7 +72,7 @@ export interface OrchestratorContext {
   sessions?: Map<string, SessionState>;
   currentSession: string | null;
   error: string | null;
-  // v4.3.3 additions for enhanced state machine
+  // v4.4.2 additions for enhanced state machine
   mode?: string;
   currentLayer?: number;
   maxLayers?: number;

@@ -11,7 +11,6 @@
  * concurrency patterns, and testing oracles.
  */
 
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog, getEvidenceStore } from '../../utils.js';
@@ -89,39 +88,6 @@ class DistilledKnowledgeWarhead implements Warhead {
       `knowledge-loader: ${loaded}/${kbIds.length} KB summaries accessible`);
   }
 
-  register(hooks: HookRegistry): void {
-    // Track synthesis cycles via system.transform
-    hooks.on('system.transform', async (input, _output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-
-        this.synthesisCount++;
-
-        // Log KB stats to evidence store periodically (every 10 cycles)
-        if (this.synthesisCount % 10 === 0) {
-          try {
-            const store = await getEvidenceStore();
-            await store.append('global', 'SYSTEM', 'R0', 'distilled-knowledge', {
-              kbCount: this.kbCount,
-              totalKBChars: this.totalKBChars,
-              techniques: this.lastTechniqueCount,
-              files: this.kbFilesLoaded,
-              synthesisCount: this.synthesisCount,
-              timestamp: Date.now(),
-            });
-          } catch {
-            // Non-critical
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        tridentLog('ERROR', 'warhead-distilled-knowledge', `Hook failed: ${msg}`);
-      }
-    });
-  }
 
   getT0(): string {
     const fileInfo = this.kbCount > 0

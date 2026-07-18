@@ -1,6 +1,5 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { HookRegistry } from '../warhead-registry.js';
 import { Warhead } from '../warhead-interface.js';
 import { isTridentAgent } from '../../identity/agent-identity.js';
 import { tridentLog } from '../../utils.js';
@@ -58,35 +57,6 @@ class ExploreDispatchWarhead implements Warhead {
     }
   }
 
-  register(hooks: HookRegistry): void {
-    // Track trident_explore dispatches
-    hooks.on('tool.execute.before', async (input, _output) => {
-      try {
-        if (typeof input !== 'object' || input === null) return;
-        const inputR = input as Record<string, unknown>;
-        const agentName = inputR.agent as string;
-        if (agentName && !isTridentAgent(agentName)) return;
-        const toolName = inputR.tool;
-        if (toolName === 'task') {
-          const rawArgs = inputR.args;
-          if (typeof rawArgs !== 'object' || rawArgs === null) return;
-          const args = rawArgs as Record<string, unknown>;
-          if (args.subagent_type === 'trident_explore') {
-            this.dispatchCount++;
-            const v1Mentioned = typeof args.description === 'string' && args.description.includes('7-section');
-            const v2Mentioned = typeof args.description === 'string' && args.description.includes('V2');
-            await tridentLog('INFO', 'warhead-explore',
-              `Dispatch #${this.dispatchCount}: ${args.description || 'no description'}` +
-              ` | V1: ${v1Mentioned} | V2: ${v2Mentioned} | protocol: ${this.protocolLoaded}`);
-          }
-        }
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tridentLog('ERROR', 'warhead-explore', `Hook failed: ${msg}`);
-        return;
-      }
-    });
-  }
 
   getT0(): string {
     const protocolStatus = this.protocolLoaded

@@ -1,4 +1,4 @@
-# FIREWALL CONTEXT — Trident Explore v4.3.3
+# FIREWALL CONTEXT — Trident Explore v4.4.2
 
 ## BLOCKED TOOLS
 - write, edit, write_file, patch, create, delete_file — no file modification

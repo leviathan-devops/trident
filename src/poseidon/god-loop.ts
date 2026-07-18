@@ -33,6 +33,7 @@ import { VisibilityLogger } from './visibility-logger.js';
 import { ProblemSolver } from './problem-solver.js';
 import type { ProblemContext } from './problem-solver.js';
 import { tridentLog } from '../utils.js';
+import { buildLayer1Prompt } from '../artifacts/deep-planning-artifact.js';
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
 function cast<T>(value: unknown): T { const r: T = value; return r; }
@@ -119,6 +120,11 @@ export class GodLoopOrchestrator {
   private checkpointMgr: CheckpointManager | null = null;
   private visibilityLog: VisibilityLogger | null = null;
   private problemSolver: ProblemSolver | null = null;
+  private getClient: (() => any) | null = null;
+
+  setClientGetter(getter: () => any): void {
+    this.getClient = getter;
+  }
 
   constructor(targetPath: string = '') {
     this.auditEngine = new AuditEngine();
@@ -469,18 +475,29 @@ export class GodLoopOrchestrator {
       }).join('\n\n');
 
       if (rootCauseKey && sourceContext) { void 0; }
+
+      // DYNAMIC PROMPT: Generate L1 mission briefing for this agent's specific task
+      const agentRequirements = 'Fix ' + rootCauseKey + ' findings (' + findings.length + ' total) in ' + primaryFile + '. ' +
+        'This is Wave ' + (state.wave + 1) + ' of Poseidon Cycle ' + state.cycle + '. Current score: ' + state.score + '/100. ' +
+        'Target: ' + (state.score >= 96 ? 'LOCKED' : 'improve score from ' + state.score + ' toward 96') + '.';
+      const l1Base = buildLayer1Prompt(agentRequirements, '', null);
+
       const agentSpec: WaveAgentSpec = {
         agentType: 'trident_build' as const,
         targetFiles: [primaryFile],
         findings: findings.slice(0, 10),
-        instructions: 'WORKDIR: ' + targetPath + '\n' +
-          'Fix ' + rootCauseKey + ' findings in ' + primaryFile + '.\n' +
-          'Evidence reference: POSEIDON/R0/audit-results in evidence store.\n' +
+        instructions: l1Base + '\n\n' +
+          '## WORK ITEMS (specific findings with source code)\n\n' +
+          'WORKDIR: ' + targetPath + '\n\n' +
           'DO NOT create files in /tmp/. DO NOT spawn sub-agents. DO NOT call trident-poseidon.\n' +
           'DO NOT add comments instead of fixes. DO NOT claim success without running the fix.\n\n' +
           'Findings (read carefully — each has source code with >>> markers):\n' +
           sourceContext + '\n\n' +
-          'After fixing, report: sha256sum ' + primaryFile + ', then verify no new errors introduced.',
+          '## VERIFY\n' +
+          'After each fix:\n' +
+          '1. sha256sum the modified file\n' +
+          '2. Re-run trident-code-audit on the target\n' +
+          '3. Confirm the finding is resolved and score improved',
         expectedHashes: [primaryFile].map((f: string) => this.sha256(fs.readFileSync(path.resolve(targetPath, f), 'utf-8'))),
       };
       return agentSpec;
@@ -863,66 +880,118 @@ export class GodLoopOrchestrator {
 
   // ===========================================================================
   // ===========================================================================
-  // PHASE: PROBLEM_SOLVE — Intelligent diagnosis via ProblemSolver engine
-  // Uses 6 mental frameworks (Five Whys, Fault Tree, Systems Thinking,
-  // Pareto, First Principles, Hypothesis-Driven) to diagnose root cause
-  // and generate evidence-backed action plans.
-  // NOTE: stalledSince is NOT reset — it drives strategy escalation.
+  // PHASE: PROBLEM_SOLVE — LLM-powered diagnosis when god loop stalls
+  // Reads actual source code, sends to LLM for root cause analysis,
+  // generates evidence-backed fix strategy with corrected code.
   // ===========================================================================
 
-  private phaseProblemSolve(state: GodLoopState, targetPath: string): PhaseResult {
-    // Build ProblemContext from current God Loop state
+  private async phaseProblemSolve(state: GodLoopState, targetPath: string): Promise<PhaseResult> {
+    // Gather evidence from current findings
     const findingLayers: string[] = [];
     const findingBreakdown: Record<string, number> = {};
+    const findingDetails: string[] = [];
     for (const f of state.preAuditFindings) {
       const layerName = f.layer || 'UNKNOWN';
       if (findingLayers.indexOf(layerName) === -1) findingLayers.push(layerName);
       const key = layerName + ':' + (f.category || 'UNKNOWN');
       findingBreakdown[key] = (findingBreakdown[key] || 0) + 1;
+      findingDetails.push(`${f.severity} ${f.layer} at ${f.file}:${f.line} — ${f.description || f.category}`);
     }
 
-    const trajectory = this.cycleTracker.getTrajectory();
-    const scoreHistory = trajectory.map((t: { cycle: number; score: number }) => t.score);
+    // Build problem description from god loop state
+    const problemDesc = `God loop stalled at score ${state.score}/100 for ${state.stalledSince} cycles. ` +
+      `${state.preAuditFindings.length} findings remain. ` +
+      `Findings by layer: ${Object.entries(findingBreakdown).map(([k, v]) => `${k} (${v})`).join(', ')}. ` +
+      `Previous wave attempts have not improved the score. ` +
+      `Specific findings:\n${findingDetails.slice(0, 20).join('\n')}`;
 
-    const context: ProblemContext = {
-      symptom: 'Score ' + state.score + '/100 stalled for ' + state.stalledSince + ' cycles with ' + state.preAuditFindings.length + ' findings',
-      score: state.score,
-      highestScore: state.highestScore,
-      cycle: state.cycle,
-      stalledSince: state.stalledSince,
-      targetPath,
-      findingLayers,
-      findingCount: state.preAuditFindings.length,
-      findingBreakdown,
-      scoreHistory,
-    };
+    // Read actual source files from target
+    const sourceExtracts = new Map<string, string>();
+    try {
+      const files = await this.collectSourceFiles(targetPath);
+      for (const f of files.slice(0, 15)) {
+        try {
+          const content = fs.readFileSync(f, 'utf-8');
+          sourceExtracts.set(f, content);
+        } catch (e) { tridentLog('WARN', 'god-loop', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+      }
+    } catch (e) { tridentLog('WARN', 'god-loop', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
 
-    // Run the intelligent ProblemSolver if available; otherwise fall back
-    let solution;
-    if (this.problemSolver) {
-      solution = this.problemSolver.solve(context);
-    } else {
-      // Fallback: legacy semantic diagnosis if ProblemSolver unavailable
-      const patternAnalysis = this.analyzeFindingPatterns(state.preAuditFindings);
-      const stagnation = this.cycleTracker.detectStagnation();
-      const diagnosis = this.generateSemanticDiagnosis(state, patternAnalysis, stagnation, trajectory);
-      solution = { instructions: '[POSEIDON: PROBLEM_SOLVE -> AUDIT]\n' + diagnosis };
+    // Build brief for LLM
+    const brief = this.buildStallDiagnosisBrief(problemDesc, sourceExtracts, findingDetails);
+
+    // Call LLM for root cause analysis
+    let diagnosis = '';
+    try {
+      const client = this.getClient ? this.getClient() : null;
+      if (client) {
+        const sessionResult = await client.session.create({ body: { title: 'PS Stall Diagnosis' } });
+        const sid = sessionResult?.data?.id;
+        if (sid) {
+          const PS_SYSTEM = 'You are an elite diagnostic engineer inside a build automation loop. ' +
+            'The automated build has stalled — fixes are not improving the audit score. ' +
+            'Read the source code, identify WHY previous fixes failed, and produce a new fix strategy. ' +
+            'Every claim MUST cite file:line. Every fix MUST include corrected code. ' +
+            'Focus on ROOT CAUSE — not symptoms. If previous fixes addressed symptoms, say so. ' +
+            'Output a prioritized fix plan with corrected TypeScript code.';
+
+          const response = await client.session.prompt({
+            body: {
+              parts: [{ type: 'text', text: brief }],
+              system: PS_SYSTEM,
+              tools: {},
+            },
+            path: { id: sid },
+          });
+
+          const parts = response?.data?.parts || response?.parts || [];
+          diagnosis = (Array.isArray(parts) ? parts : [])
+            .filter((p: any) => p?.type === 'text' && p?.text?.length > 10)
+            .map((p: any) => p.text).join('\n');
+
+          try { await client.session.delete({ path: { id: sid } }); } catch (e) { tridentLog('WARN', 'god-loop', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+        }
+      }
+    } catch (e) {
+      tridentLog('ERROR', 'god-loop', `LLM diagnosis failed: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // Strategy escalation: stalledSince is retained to escalate urgency.
-    // The counter is only reset when the score actually improves (handled in phaseScore).
+    // Fall back to deterministic solver if LLM unavailable
+    if (!diagnosis || diagnosis.trim().length < 200) {
+      tridentLog('WARN', 'god-loop', 'LLM diagnosis insufficient, falling back to deterministic solver');
+      if (this.problemSolver) {
+        const context: ProblemContext = {
+          symptom: problemDesc,
+          score: state.score,
+          highestScore: state.highestScore,
+          cycle: state.cycle,
+          stalledSince: state.stalledSince,
+          targetPath,
+          findingLayers,
+          findingCount: state.preAuditFindings.length,
+          findingBreakdown,
+          scoreHistory: this.cycleTracker.getTrajectory().map((t: { score: number }) => t.score),
+        };
+        const solution = this.problemSolver.solve(context);
+        diagnosis = solution.instructions;
+      } else {
+        diagnosis = 'Stall diagnosis unavailable — manual intervention required.';
+      }
+    }
+
+    tridentLog('INFO', 'god-loop', `PS diagnosis: ${diagnosis.split('\n').length} lines`);
+
     const escalationNote = state.stalledSince >= STALL_THRESHOLD * 2
       ? 'CRITICAL: Stall has persisted for ' + state.stalledSince + ' cycles. Escalating to architectural fixes.\n'
       : '';
 
     return {
       phase: 'PROBLEM_SOLVE',
-      nextPhase: 'PLAN', // Route to PLAN — use revised approach from problem-solving, not re-audit
+      nextPhase: 'PLAN',
       cycle: state.cycle,
       wave: state.wave,
       score: state.score,
-      instructions: solution.instructions + '\n' +
-        escalationNote +
+      instructions: diagnosis + '\n' + escalationNote +
         'Stall counter retained at ' + state.stalledSince + ' (not reset — drives escalation). Re-planning with revised approach.\n' +
         'Next: Call trident-poseidon action=start to re-plan.',
       stateWritten: true,
@@ -969,6 +1038,62 @@ export class GodLoopOrchestrator {
       patterns.set(rootCause, (patterns.get(rootCause) || 0) + 1);
     }
     return patterns;
+  }
+
+  private async collectSourceFiles(dir: string): Promise<string[]> {
+    const results: string[] = [];
+    try {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (results.length >= 50) break;
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
+          const sub = await this.collectSourceFiles(fullPath);
+          results.push(...sub);
+        } else if (entry.name.endsWith('.ts') || entry.name.endsWith('.js')) {
+          results.push(fullPath);
+        }
+      }
+    } catch (e) { tridentLog('WARN', 'god-loop', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+    return results;
+  }
+
+  private buildStallDiagnosisBrief(problem: string, sourceExtracts: Map<string, string>, findings: string[]): string {
+    const L: string[] = [];
+    L.push('# BUILD STALL DIAGNOSIS');
+    L.push('');
+    L.push('## PROBLEM');
+    L.push(problem);
+    L.push('');
+    if (findings.length > 0) {
+      L.push('## REMAINING AUDIT FINDINGS');
+      L.push('');
+      for (const f of findings.slice(0, 30)) { L.push(`- ${f}`); }
+      L.push('');
+    }
+    if (sourceExtracts.size > 0) {
+      L.push('## SOURCE CODE (read carefully — identify why previous fixes failed)');
+      L.push('');
+      for (const [file, code] of sourceExtracts) {
+        const truncated = code.length > 4000 ? code.substring(0, 4000) + '\n... (truncated)' : code;
+        L.push(`### ${file}`);
+        L.push('```typescript');
+        L.push(truncated);
+        L.push('```');
+        L.push('');
+      }
+    }
+    L.push('## REQUIRED OUTPUT');
+    L.push('');
+    L.push('1. Why did previous fixes fail to improve the score?');
+    L.push('2. What is the ROOT CAUSE that previous fixes missed?');
+    L.push('3. What specific code changes (with corrected code) will fix the root cause?');
+    L.push('4. What is the risk of each change?');
+    L.push('');
+    L.push('Every claim MUST cite file:line. Every fix MUST include corrected TypeScript code.');
+    L.push('Output ONLY the analysis.');
+    return L.join('\n');
   }
 
   private generateSemanticDiagnosis(

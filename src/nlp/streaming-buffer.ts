@@ -8,7 +8,7 @@ const nlp = winkNLP(model);
 
 export const ENTITY_PATTERNS: Record<string, RegExp> = {
   FILE_PATH: /(\/[\w\-\.\/]+|\.\.\/[\w\-\.\/]+|\.\/[\w\-\.\/]+)/g,
-  TOOL_NAME: /\b(trident-code-audit|trident-deep-planning|trident-problem-solving|trident-context-synthesis|trident-poseidon|trident-gate|trident-status|trident-help|write|edit|bash)\b/gi,
+  TOOL_NAME: /\b(trident-code-audit|trident-deep-planning|trident-problem-solving|trident-context-synthesis|trident-gate|trident-status|trident-vision|trident-help|write|edit|bash)\b/gi,
   ERROR_CODE: /\b(500|404|403|400|401|502|503|ENOENT|EACCES|EPERM|EEXIST|ECONNREFUSED|ETIMEOUT)\b/g,
 };
 

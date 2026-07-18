@@ -114,7 +114,7 @@ function pct(part: number, total: number): string {
   return `${Math.round((part / total) * 100)}%`;
 }
 
-function parseRequirementSections(requirements: string): RequirementSection[] {
+export function parseRequirementSections(requirements: string): RequirementSection[] {
   if (!requirements || requirements.length < 50) {
     return [{ title: 'Requirements', content: requirements, type: 'paragraph', subItems: [], hasCode: false, hasDiagram: false }];
   }
@@ -308,7 +308,7 @@ function assemblePlan(
 
   // --- CONDITIONAL: algorithms (Phase 6) ---
   if (phaseOutputs.algorithms.length > 0) {
-    parts.push(buildAlgorithmSpecSection(phaseOutputs.algorithms));
+    parts.push(buildAlgorithmSpecSection(phaseOutputs.algorithms, phaseOutputs.defenses));
   }
 
   // --- CONDITIONAL: engine class design (Phase 5 + Phase 4) ---
@@ -357,6 +357,11 @@ function assemblePlan(
   // --- CONDITIONAL: tests (Phase 7) ---
   if (phaseOutputs.tests.length > 0) {
     parts.push(buildTestSpecificationsSection(phaseOutputs.tests));
+  }
+
+  // --- CONDITIONAL: worked detection example (end-to-end trace) ---
+  if (phaseOutputs.threats.length > 0 && phaseOutputs.defenses.length > 0) {
+    parts.push(buildWorkedDetectionExampleSection(phaseOutputs.threats, phaseOutputs.defenses, phaseOutputs.tests));
   }
 
   // --- ALWAYS present ---
@@ -1487,6 +1492,17 @@ function buildRuleSection(domain: string, defenses: DefenseSpec[]): string {
   for (const d of defenses) {
     out += `### ${d.rule}: ${d.threatPattern}\n\n`;
     out += `**Analysis Order:** ${d.analysisOrder} | **Violation Severity:** ${d.violationSeverity}\n`;
+
+    // Analysis Order explanation (1=regex tip of spear, 2=AST confirmation, etc.)
+    const analysisOrderExplanations: Record<number, string> = {
+      1: 'Regex pre-filter (L0) — fast source scanning, tip of the spear; flags candidates for deeper analysis',
+      2: 'AST structural walk (L1) — confirms regex hits via TypeScript syntax tree traversal; definitive structural proof',
+      3: 'TypeChecker query (L2) — type-level analysis via ts.createProgram; resolves types, checks annotations',
+      4: 'Control flow graph (L3) — path enumeration and reachability analysis; data flow and control flow verification',
+      5: 'Runtime execution (L4) — actual command execution and output capture; the ground truth layer',
+    };
+    out += `**Analysis Order Meaning:** ${analysisOrderExplanations[d.analysisOrder] || 'unknown order'}\n`;
+
     out += `**Bible Source:** ${d.bibleSource}\n\n`;
     out += `**Check Method:** \`${d.checkMethod}\`\n`;
     out += `**Inputs:** ${d.inputs.join(', ') || '(none)'}\n`;
@@ -1668,12 +1684,13 @@ function buildDataModelSection(types: string[]): string {
 // BUILD FUNCTION 12: Algorithm Specifications
 // ============================================================================
 
-function buildAlgorithmSpecSection(algorithms: string[]): string {
+function buildAlgorithmSpecSection(algorithms: string[], defenses: DefenseSpec[]): string {
   let out = '## Algorithm Specifications\n\n';
 
   out += 'Pseudocode for each defense rule — signal extraction, threshold ';
-  out += 'comparison, and decision logic. Each algorithm is deterministic and ';
-  out += 'derived from the defense catalog thresholds.\n\n';
+  out += 'comparison, decision logic, severity assignment, and a worked example. ';
+  out += 'Each algorithm is deterministic and derived from the defense catalog ';
+  out += 'thresholds.\n\n';
 
   out += `**${algorithms.length} algorithm specifications generated.**\n\n`;
 
@@ -1712,11 +1729,103 @@ function buildAlgorithmSpecSection(algorithms: string[]): string {
   out += '| 4 | CFG (L3) | Path count, reachability | Control flow and data flow analysis |\n';
   out += '| 5 | Execution (L4) | Exit code, output match | Runtime verification via command execution |\n\n';
 
+  // ── Per-algorithm detailed breakdown with worked examples ──
   out += '### Algorithm Details\n\n';
-  for (const algo of algorithms) {
+  for (let i = 0; i < algorithms.length; i++) {
+    const algo = algorithms[i];
+    const defense = defenses[i]; // algorithms[i] corresponds to defenses[i] by construction
+
+    // Full pseudocode block
+    out += '#### Pseudocode\n\n';
     out += '```\n';
     out += algo;
     out += '\n```\n\n';
+
+    // Structured breakdown — signal extraction, threshold comparison, decision logic, severity
+    if (defense) {
+      const t = defense.thresholds;
+
+      // 1. Signal Extraction
+      out += '**1. Signal Extraction:**\n';
+      const signalExtractionDescriptions: Record<number, string[]> = {
+        1: [
+          '- **Source:** Raw source text scanned with compiled regex patterns\n',
+          '- **What to look for:** Pattern matches in the AST text that indicate the anti-pattern\n',
+          '- **Extraction method:** `countMatches(regex, source)` and `matchDensity = patternMatches / len(source)`\n',
+        ],
+        2: [
+          '- **Source:** TypeScript AST nodes walked via `ts.forEachChild`\n',
+          '- **What to look for:** Function body statements, return statements, call expressions, nesting depth\n',
+          '- **Extraction method:** `ts.createSourceFile()` → recursive visitor → collect node counts and structural signals\n',
+        ],
+        3: [
+          '- **Source:** TypeScript TypeChecker via `ts.createProgram`\n',
+          '- **What to look for:** Type annotations, `any` usage, resolved return types\n',
+          '- **Extraction method:** `program.getTypeChecker()` → query types at symbol locations\n',
+        ],
+        4: [
+          '- **Source:** Control flow graph built from AST\n',
+          '- **What to look for:** Path count, unreachable blocks, cyclomatic complexity\n',
+          '- **Extraction method:** `buildCFG(sourceFile)` → enumerate paths from entry to exit\n',
+        ],
+        5: [
+          '- **Source:** Runtime command execution and output capture\n',
+          '- **What to look for:** Exit code, output match against expected, side-effect observation\n',
+          '- **Extraction method:** `execute(targetFunction, input)` → compare output to expected\n',
+        ],
+      };
+      const signalLines = signalExtractionDescriptions[defense.analysisOrder] || [
+        `- **Source:** ${defense.checkMethod}\n`,
+        '- **Extraction method:** defense-specific signal collection\n',
+      ];
+      for (const sl of signalLines) {
+        out += sl;
+      }
+      out += '\n';
+
+      // 2. Threshold Comparison — with actual operators and values
+      out += '**2. Threshold Comparison:**\n';
+      out += '| Band | Signal Condition | Operator | Value | Meaning |\n';
+      out += '|------|-----------------|----------|-------|---------|\n';
+      out += `| PASS | ${defense.checkMethod} signal ${formatThreshold(t.passThreshold)} | ${t.passThreshold.operator} | ${t.passThreshold.value} | Meets defense criteria — no finding emitted |\n`;
+      out += `| WARN | ${defense.checkMethod} signal ${formatThreshold(t.warnThreshold)} | ${t.warnThreshold.operator} | ${t.warnThreshold.value} | Borderline — partial pass, review recommended |\n`;
+      out += `| FAIL | ${defense.checkMethod} signal ${formatThreshold(t.failThreshold)} | ${t.failThreshold.operator} | ${t.failThreshold.value} | Violates defense criteria — finding emitted |\n`;
+      out += '\n';
+
+      // 3. Decision Logic
+      out += '**3. Decision Logic:**\n';
+      out += '```text\n';
+      out += `if signal ${formatThreshold(t.passThreshold)}:\n`;
+      out += `    verdict = PASS                    // no finding, record evidence\n`;
+      out += `elif signal ${formatThreshold(t.warnThreshold)}:\n`;
+      out += `    verdict = WARN                    // review notice, partial confidence (${defense.weight}/10)\n`;
+      out += `else:\n`;
+      out += `    verdict = FAIL                    // finding emitted with defeat vector evidence\n`;
+      out += '```\n\n';
+
+      // 4. Severity Assignment
+      out += '**4. Severity Assignment:**\n';
+      out += `- On FAIL verdict → finding severity = **${defense.violationSeverity}**\n`;
+      out += `- Severity is derived from \`defense.violationSeverity\` (static, per-rule)\n`;
+      const severityImpact: Record<string, string> = {
+        CRITICAL: 'blocks the build — must be fixed before proceeding',
+        HIGH: 'requires immediate remediation — build can proceed but with high risk',
+        MEDIUM: 'should be remediated — review and address in next iteration',
+        LOW: 'informational — log and track for future improvement',
+      };
+      out += `- Impact: ${severityImpact[defense.violationSeverity] || 'unknown'}\n\n`;
+
+      // Worked Example
+      out += '**Worked Example:**\n';
+      const weInputs = generateWorkedExampleInput(defense);
+      const weSignal = generateWorkedExampleSignal(defense);
+      const weThresholdCheck = generateWorkedExampleThresholdCheck(defense);
+      out += weInputs;
+      out += weSignal;
+      out += weThresholdCheck;
+      out += `- **Severity:** ${defense.violationSeverity}\n`;
+      out += `- **Output:** finding { rule: "${defense.rule}", severity: "${defense.violationSeverity}", file: "...", line: 42 }\n\n`;
+    }
   }
 
   // Algorithm execution notes
@@ -1726,9 +1835,58 @@ function buildAlgorithmSpecSection(algorithms: string[]): string {
   out += '- Signal extraction uses the analysis order specified in the defense spec\n';
   out += '- Threshold comparison follows the pass/warn/fail bands from the catalog\n';
   out += '- Each algorithm returns a verdict (PASS/WARN/FAIL) and optionally findings\n';
-  out += '- Algorithms execute in pipeline phase order — parallel within a phase, sequential across phases\n\n';
+  out += '- Algorithms execute in pipeline phase order — parallel within a phase, sequential across phases\n';
+  out += '- Worked examples illustrate the exact signal/threshold/severity flow for each rule\n\n';
 
   return out;
+}
+
+// ── Worked Example helpers ──
+
+/** Generate the "Input:" line for a worked example based on the defense's check method. */
+function generateWorkedExampleInput(defense: DefenseSpec): string {
+  const inputsByMethod: Record<string, string> = {
+    'ast-existence-check': 'Input: function with 0 executable statements (empty body or bare `return`)',
+    'ast-signature-compare': 'Input: function named "validate" that calls console.log instead of validating',
+    'callgraph-walk': 'Input: exported function with 0 call sites in the call graph',
+    'ast-fingerprint-compare': 'Input: two functions with identical AST node sequences (copy-paste)',
+    'provenance-chain-verify': 'Input: evidence artifact with no tool identifier or timestamp',
+    'timestamp-window-check': 'Input: evidence artifact with timestamp from outside the session window',
+    'catch-block-analysis': 'Input: try-catch block where catch body has 0 statements',
+    'ast-await-detection': 'Input: async function body with 0 await expressions',
+    'container-test-presence': 'Input: build directory with no ContainerTestResult.json file',
+    'coverage-threshold-check': 'Input: test suite report showing 45% coverage',
+    'negative-test-scan': 'Input: test suite with 0 tests having expectedResult === FAIL',
+    'positive-test-scan': 'Input: test suite with 0 tests having expectedResult === PASS',
+    'test-body-analysis': 'Input: test function body with 0 assert/expect calls',
+  };
+  return `- **${inputsByMethod[defense.checkMethod] || `Input: construct matching the ${defense.threatPattern} pattern`}**\n`;
+}
+
+/** Generate the "Signal:" line for a worked example based on the defense's check method. */
+function generateWorkedExampleSignal(defense: DefenseSpec): string {
+  const signalsByMethod: Record<string, string> = {
+    'ast-existence-check': '- **Signal:** `hasRealStatements` = false, `bodyLength` = 0\n',
+    'ast-signature-compare': '- **Signal:** `declaredBehavior` = "validate", `actualBehavior` = "log"\n',
+    'callgraph-walk': '- **Signal:** `callSiteCount` = 0, `isCalled` = false\n',
+    'ast-fingerprint-compare': '- **Signal:** `similarity` = 1.0 (identical fingerprints)\n',
+    'provenance-chain-verify': '- **Signal:** `machineGenerated` = false, `provenanceChainLength` = 0\n',
+    'timestamp-window-check': '- **Signal:** `ageMinutes` = 1440 (24 hours old)\n',
+    'catch-block-analysis': '- **Signal:** `emptyCatchCount` = 1, `errorPropagated` = false\n',
+    'ast-await-detection': '- **Signal:** `awaitCount` = 0, `hasAwait` = false\n',
+    'container-test-presence': '- **Signal:** `containerTestPresent` = false, `testPassRate` = undefined\n',
+    'coverage-threshold-check': '- **Signal:** `coveragePercent` = 0.45\n',
+    'negative-test-scan': '- **Signal:** `negativeTestCount` = 0\n',
+    'positive-test-scan': '- **Signal:** `positiveTestCount` = 0\n',
+    'test-body-analysis': '- **Signal:** `theatricalTestCount` = 5, `authenticTestCount` = 0\n',
+  };
+  return signalsByMethod[defense.checkMethod] || `- **Signal:** primary signal fails ${formatThreshold(defense.thresholds.failThreshold)}\n`;
+}
+
+/** Generate the "Threshold check:" line showing the comparison that triggers FAIL. */
+function generateWorkedExampleThresholdCheck(defense: DefenseSpec): string {
+  const ft = defense.thresholds.failThreshold;
+  return `- **Threshold check:** signal ${formatThreshold(ft)} → FAIL\n`;
 }
 
 // ============================================================================
@@ -1922,6 +2080,23 @@ function buildTestSpecificationsSection(tests: TestSpec[]): string {
       out += '\n';
     }
 
+    // Expected Output — explicit finding structure
+    out += '**Expected Output:**\n';
+    const expectedSeverity = t.expectedResult === 'FAIL' ? 'CRITICAL' : 'NONE';
+    const expectedRule = t.name.replace(/^(NEG:|POS:|BLIND:)\s*/, '');
+    if (t.expectedResult === 'FAIL') {
+      out += `- Finding: { severity: "${expectedSeverity}", rule: "${expectedRule}" }\n`;
+      if (t.expectedDetail.length > 0) {
+        out += `- Evidence: "${t.expectedDetail[0]}"\n`;
+      }
+      out += `- Verdict: FAIL — the defense check detected the threat in the input\n\n`;
+    } else if (t.expectedResult === 'PASS') {
+      out += `- Finding: (none — no violation detected)\n`;
+      out += `- Verdict: PASS — the legitimate input does not trigger the defense\n\n`;
+    } else {
+      out += `- Verdict: ${t.expectedResult}\n\n`;
+    }
+
     // Test category explanation
     const categoryDescriptions: Record<string, string> = {
       NEGATIVE: 'Negative test — simulates an attack/defeat vector. The check should FAIL (detect the threat). If the check PASSES, the defense is not working.',
@@ -1931,6 +2106,198 @@ function buildTestSpecificationsSection(tests: TestSpec[]): string {
     const catDesc = categoryDescriptions[t.category] || 'Test case for the defense check method.';
     out += `**Category Explanation:** ${catDesc}\n\n`;
   }
+
+  return out;
+}
+
+// ============================================================================
+// BUILD FUNCTION 15a: Worked Detection Example (end-to-end trace)
+// ============================================================================
+
+/**
+ * Traces a single CRITICAL threat through the entire pipeline: from threat
+ * detection → defense selection → algorithm execution → test validation →
+ * expected output. This gives the build agent a concrete narrative of how
+ * the defense system works end-to-end.
+ */
+function buildWorkedDetectionExampleSection(
+  threats: ThreatReport[],
+  defenses: DefenseSpec[],
+  tests: TestSpec[],
+): string {
+  let out = '## Worked Detection Example (End-to-End Trace)\n\n';
+
+  out += 'This section traces a single CRITICAL threat through the entire ';
+  out += 'defense pipeline — from initial detection to the final finding output. ';
+  out += 'It demonstrates how each phase (threat modeler → defense selection → ';
+  out += 'algorithm execution → test validation) connects end-to-end.\n\n';
+
+  // Select the best candidate: CRITICAL first, then highest score
+  const sorted = [...threats].sort((a, b) => {
+    if (a.severity !== b.severity) {
+      const order: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
+      return order[a.severity] - order[b.severity];
+    }
+    return b.score - a.score;
+  });
+  const threat = sorted[0];
+
+  // Find the matching defense
+  const matchingDefense = findMatchingDefense(threat, defenses) || defenses[0];
+  // Find the matching test (NEG: prefix, same defense)
+  const matchingNegTest = tests.find((t) =>
+    t.name.startsWith('NEG:') && t.name.includes(matchingDefense.rule)
+  ) || tests.find((t) => t.name.startsWith('NEG:'));
+
+  out += `### Selected Threat: ${threat.pattern}\n\n`;
+
+  // ── Step 1: How the threat modeler detected it ──
+  out += '**Step 1 — Threat Detection (Phase 2: Threat Modeler)**\n\n';
+  out += `The 6-Question threat modeler identified this threat as **${threat.severity}** (score: ${threat.score}).\n\n`;
+  const questionsInvolved = [...new Set(threat.findings.map((f) => f.question))];
+  const questionDescriptions: Record<string, string> = {
+    Q1: 'Existence — does the construct actually exist with real implementation?',
+    Q2: 'Signature Match — does the function name match its declared behavior?',
+    Q3: 'Call Graph Reachability — is the function actually called from any path?',
+    Q4: 'Execution Effect — does the function produce real side effects?',
+    Q5: 'Evidence Authenticity — is the evidence machine-generated and verifiable?',
+    Q6: 'Structural Uniqueness — is the construct unique or a copy-paste duplicate?',
+  };
+  out += 'Detection was triggered by the following 6-Question analysis:\n\n';
+  for (const q of questionsInvolved) {
+    const qFindings = threat.findings.filter((f) => f.question === q);
+    out += `- **${q}**: ${questionDescriptions[q] || 'threat analysis question'}\n`;
+    out += `  - ${qFindings.length} finding(s) generated\n`;
+    const sample = qFindings[0];
+    if (sample) {
+      if (sample.file && sample.line) {
+        out += `  - Sample: \`${sample.file}:${sample.line}\` — ${sample.description}\n`;
+      } else {
+        out += `  - Sample: ${sample.description}\n`;
+      }
+    }
+  }
+  out += '\n';
+  out += `The threat modeler classified ${threat.findings.length} total findings under ` +
+    `${questionsInvolved.length} question(s), yielding a ${threat.severity} severity at score ${threat.score}.\n\n`;
+
+  // ── Step 2: Which defense rule was selected ──
+  out += '**Step 2 — Defense Selection (Phase 3: Defense Catalog)**\n\n';
+  if (matchingDefense) {
+    out += `The defense catalog matched this threat to the rule **${matchingDefense.rule}**.\n\n`;
+    out += `- **Domain:** ${matchingDefense.domain}\n`;
+    out += `- **Threat Pattern Match:** ${matchingDefense.threatPattern}\n`;
+    out += `- **Check Method:** \`${matchingDefense.checkMethod}\`\n`;
+    out += `- **Analysis Order:** ${matchingDefense.analysisOrder}\n`;
+    const analysisOrderNames: Record<number, string> = {
+      1: 'regex pre-filter (fast source scan, tip of the spear)',
+      2: 'AST structural walk (TypeScript syntax tree confirmation)',
+      3: 'TypeChecker query (type-level analysis)',
+      4: 'control flow graph analysis (path enumeration)',
+      5: 'runtime execution verification (command + output capture)',
+    };
+    out += `- **What this means:** The check runs via ${analysisOrderNames[matchingDefense.analysisOrder] || 'static analysis'}\n`;
+    out += `- **Violation Severity:** ${matchingDefense.violationSeverity}\n`;
+    out += `- **Bible Source:** ${matchingDefense.bibleSource}\n`;
+    out += `- **Thresholds:** pass ${formatThreshold(matchingDefense.thresholds.passThreshold)}, `;
+    out += `warn ${formatThreshold(matchingDefense.thresholds.warnThreshold)}, `;
+    out += `fail ${formatThreshold(matchingDefense.thresholds.failThreshold)}\n\n`;
+    out += `The selection algorithm used \`THREAT_PATTERN_DIRECT_MAP\` and keyword overlap `;
+    out += `to match the threat pattern "${threat.pattern}" to the defense rule.\n\n`;
+  } else {
+    out += 'No matching defense was found in the catalog. This threat falls through to ';
+    out += 'the blind-spot handler for manual remediation.\n\n';
+  }
+
+  // ── Step 3: What algorithm runs to check for it ──
+  out += '**Step 3 — Algorithm Execution (Phase 6: Algorithm Generator)**\n\n';
+  if (matchingDefense) {
+    out += `The algorithm generator produced pseudocode for \`${matchingDefense.checkMethod}\`:\n\n`;
+    out += '```text\n';
+    out += `function check_${matchingDefense.rule.replace(/[^a-zA-Z0-9]+/g, '_').toLowerCase()}(input):\n`;
+    out += `  // ── Signal Extraction ──\n`;
+    out += `  // Extracts signals via ${matchingDefense.analysisOrder === 2 ? 'AST walk' : matchingDefense.analysisOrder === 1 ? 'regex scan' : 'specialized check'}\n`;
+    out += `  signal = extract_${matchingDefense.checkMethod}(input)\n\n`;
+    out += `  // ── Threshold Comparison ──\n`;
+    out += `  if signal ${formatThreshold(matchingDefense.thresholds.passThreshold)}:\n`;
+    out += `    return { result: 'PASS', severity: '${matchingDefense.violationSeverity}' }\n`;
+    out += `  elif signal ${formatThreshold(matchingDefense.thresholds.warnThreshold)}:\n`;
+    out += `    return { result: 'WARN', severity: '${matchingDefense.violationSeverity}' }\n`;
+    out += `  else:\n`;
+    out += `    return { result: 'FAIL', severity: '${matchingDefense.violationSeverity}' }\n`;
+    out += '```\n\n';
+    out += `When the construct matching this threat is fed into the algorithm, the `;
+    out += `signal fails the pass threshold (${formatThreshold(matchingDefense.thresholds.failThreshold)}), `;
+    out += `producing a FAIL verdict.\n\n`;
+  }
+
+  // ── Step 4: What test validates the fix ──
+  out += '**Step 4 — Test Validation (Phase 7: Test Generator)**\n\n';
+  if (matchingNegTest) {
+    out += `The test generator produced a **NEGATIVE test** that simulates the attack vector:\n\n`;
+    out += `- **Test Name:** ${matchingNegTest.name}\n`;
+    out += `- **Defeat Vector:** ${matchingNegTest.defeatVector}\n`;
+    out += `- **Expected Result:** ${matchingNegTest.expectedResult}\n`;
+    if (matchingNegTest.expectedDetail.length > 0) {
+      out += `- **Expected Details:**\n`;
+      for (const d of matchingNegTest.expectedDetail) {
+        out += `  - ${d}\n`;
+      }
+    }
+    out += '\n';
+    out += '**Test Input:**\n';
+    out += '```json\n';
+    out += JSON.stringify(matchingNegTest.input, null, 2);
+    out += '\n```\n\n';
+    out += 'This test feeds the attack vector into the defense check. The check ';
+    out += 'should produce a FAIL verdict (detecting the threat). If it produces ';
+    out += 'PASS, the defense is broken and must be fixed.\n\n';
+  } else {
+    out += 'No specific negative test was generated for this threat-defense pair.\n\n';
+  }
+
+  // ── Step 5: What the expected output looks like ──
+  out += '**Step 5 — Expected Output (Finding Structure)**\n\n';
+  out += 'When this defense fires in production, the finding emitted looks like:\n\n';
+  out += '```json\n';
+  const sampleFinding = threat.findings[0];
+  const findingFile = sampleFinding?.file || 'src/some-file.ts';
+  const findingLine = sampleFinding?.line || 42;
+  const findingDesc = sampleFinding?.description || `${threat.pattern} detected`;
+  out += JSON.stringify({
+    rule: matchingDefense?.rule || 'unknown',
+    severity: matchingDefense?.violationSeverity || threat.severity,
+    verdict: 'FAIL',
+    file: findingFile,
+    line: findingLine,
+    description: findingDesc,
+    threatPattern: threat.pattern,
+    threatScore: threat.score,
+    defeatVector: threat.defeatVectors[0] || 'N/A',
+    defenseDomain: matchingDefense?.domain || 'unknown',
+    checkMethod: matchingDefense?.checkMethod || 'unknown',
+    analysisOrder: matchingDefense?.analysisOrder || 0,
+  }, null, 2);
+  out += '\n```\n\n';
+
+  out += '### End-to-End Flow Summary\n\n';
+  out += '```text\n';
+  out += 'Phase 2: Threat Modeler\n';
+  out += `  └─→ ${threat.pattern} detected (${threat.severity}, score ${threat.score})\n`;
+  out += `      └─→ ${threat.findings.length} findings across ${questionsInvolved.length} questions\n\n`;
+  out += 'Phase 3: Defense Catalog\n';
+  out += `  └─→ Matched to: ${matchingDefense?.rule || '(no match)'}\n`;
+  out += `      └─→ checkMethod: ${matchingDefense?.checkMethod || 'N/A'}, order ${matchingDefense?.analysisOrder || 'N/A'}\n\n`;
+  out += 'Phase 6: Algorithm Generator\n';
+  out += `  └─→ Pseudocode for ${matchingDefense?.checkMethod || 'N/A'} produced\n`;
+  out += `      └─→ FAIL verdict when signal ${matchingDefense ? formatThreshold(matchingDefense.thresholds.failThreshold) : 'N/A'}\n\n`;
+  out += 'Phase 7: Test Generator\n';
+  out += `  └─→ NEG test simulates attack vector\n`;
+  out += `      └─→ Expected result: FAIL (threat detected)\n\n`;
+  out += 'Phase 8: Plan Assembly\n';
+  out += `  └─→ Finding: { severity: "${matchingDefense?.violationSeverity || threat.severity}", `;
+  out += `rule: "${matchingDefense?.rule || 'unknown'}" }\n`;
+  out += '```\n\n';
 
   return out;
 }
