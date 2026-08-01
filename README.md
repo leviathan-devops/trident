@@ -281,142 +281,154 @@ hash-pinned so nothing can silently drift.
 
 ### Diagram B — Poseidon Agent (operator REMOVED — full macro autonomy)
 
-Poseidon is the nested god-mode agent. The operator supplies a spec, goal,
-or detailed target ONCE — then is fully removed from the loop. Poseidon
-autonomously executes the ENTIRE Diagram A macro engineering workflow —
-planning loop → build waves → bug identification → code fixes → rebuild →
-container testing → checkpoint → ship — using every intelligence-engineered
-tool at the primary-agent level, with the God Loop machine driving the
-audit→fix→verify loop forward behind the scenes. "Manual" phases are manual
-for the AGENT, never for the operator.
+The operator supplies a spec, goal, or detailed target ONCE — then is fully
+removed. Poseidon autonomously executes the entire engineering workflow:
+deep-planning seeds the spec, build waves produce the code, the God Loop
+machine drives the audit→fix→verify cycle using every intelligence tool
+dynamically for strategic reasoning, checkpoint saves a full snapshot every
+loop, then a zero-trust quality audit gates whether it ships or loops back.
 
 ```
-   SPEC / GOAL / DETAILED TARGET
-   ─────────────────────────────
-   operator hands over once — then fully removed
+   SPEC / GOAL / DETAILED TARGET — handed over once, operator removed
         │
         ▼
-   POSEIDON ACTIVATED — autonomous from here
-        │
-        ▼
-   ┌──────────────────────────────┐
-   │ PHASE 1 · PLANNING LOOP      │  ← anchors the build
-   └────────────┬─────────────────┘
-        │
-        │  trident-deep-planning → BUILD_SPEC (L1→L2→L3)
-        │  trident-context-synthesis → canon docs / bible
-        │  snapshot hash · target scan
-        │
-        ▼
-   ┌──────────────────────────────┐
-   │ PHASE 2 · BUILD              │  ← waves execute the spec
-   └────────────┬─────────────────┘
-        │
-        │  subagent waves produce the CODE:
-        │  ├─ trident_build   ×N files (one per file,
-        │  │                   SHA256-verified)
-        │  └─ trident_explore scouts (context)
-        │
-        ▼
-   ┌──────────────────────────────┐
-   │ PHASE 3 · BUG IDENTIFICATION │  ← audits the BUILT CODE
-   └────────────┬─────────────────┘
-        │
-        │  trident-code-audit on what the waves built
-        │  → 18-layer AST findings · evidence-gated
-        │
-        ▼
-   ╔══════════════════════════════╗
-   ║ PHASE 4 · FIX LOOP           ║
-   ║ GOD LOOP MACHINE drives      ║
-   ╚════════════┬═════════════════╝
-        │
-        ▼
-   [AUDIT]  → 18-layer AST on current code
-        │
-        ▼
-   [SCORE]  max(0, 100−15C−8H−3M−1L) · stall counter
-        │
-        ▼
-   [DECIDE]  ───── stalled ≥2 ────► [PROBLEM_SOLVE]
-        │                        (trident-problem-solving,
-        │                         six frameworks)
-        ▼
-   [PLAN]  fix strategy per file
-        │  (trident-deep-planning)
-        ▼
-   [DISPATCH]  trident_build ×N files in parallel
-        │  (one per file, never colliding)
-        ▼
-   [COLLECT]  outputs · SHA256 hashes · tsc
-        │
-        ▼
-   [VERIFY]  evidence gate ≥0.96 · theatrical?
-        │
-    ┌───┴────────────┐
-    ▼                ▼
-  trusted         theatrical → [PROBLEM_SOLVE]
-        │
-        ▼
-   [AUDIT_RECHECK]  cycle++  ──────┐
-        │                          │
-        ▼                          │
-   [SCORE] recompute  ◄────────────┘
-        │
-        ▼
-   score ≥96? ──── no ────► back to [DECIDE]
-        │
-        ▼ yes — exit fix loop
-   ┌──────────────────────────────┐
-   │ PHASE 5 · REBUILD            │
-   └────────────┬─────────────────┘
-        │
-        │  bun build → dist/index.js
-        │  → SHA256 dist hash pinned
-        │
-        ▼
-   ┌──────────────────────────────┐
-   │ PHASE 6 · CONTAINER TESTING  │  ← the real verdict
-   └────────────┬─────────────────┘
-        │
-        │  trident-container-test (24 actions):
-        │  setup (testPlan ≥2000 chars, adversarial) →
-        │  deploy → send → read/check → suite/report ·
-        │  switch-model · switch-agent · verify-model
-        │
-        │  FULLY MANUAL = the AGENT runs 5+ adversarial
-        │  angles — operator is NOT involved
-        │
-    ┌───┴────────────┐
-    ▼                ▼
-   passed          failed (action=diagnose)
-    │                │
-    ▼                └───► back into fix loop (PHASE 4)
-   ┌──────────────────────────────┐
-   │ PHASE 7 · CHECKPOINT         │
-   └────────────┬─────────────────┘
-        │
-        │  hash-pinned snapshot:
-        │  dist + src + docs + BUILD_REPORT
-        │
-        ▼
-   ┌──────────────────────────────┐
-   │ PHASE 8 · SHIP               │
-   └──────────────────────────────┘
-        │
-        │  trident-ship-package → SHIP_MANIFEST ·
-        │  DEPLOY.sh · README · BUILD_REPORT
-        │
-        ▼
-   BUILD DELIVERED — operator never re-entered the loop
+   ┌──────────────────────────────────────────────────┐
+   │ PLANNING — trident-deep-planning                  │
+   │                                                   │
+   │  L1 first-principles → the directive               │
+   │     what are we building · constraints · risks    │
+   │  L2 engineering spec → the BUILD_SPEC (anchor)    │
+   │     components · data flow · error handling ·     │
+   │     test strategy · defense rules                 │
+   │  L3 context library → parallel per-domain L2      │
+   │     trident_planner subagents, one brief per      │
+   │     domain with full context                      │
+   └──────────────────────────┬───────────────────────┘
+                              │
+                              ▼
+   ┌──────────────────────────────────────────────────┐
+   │ BUILD — subagent waves execute the spec           │
+   │                                                   │
+   │  wave manifest from L2: one trident_build per     │
+   │  file, never colliding                            │
+   │  each agent reads its spec section, explore       │
+   │  scouts gather patterns/deps, CS T1 bridges       │
+   │  context, self-verifies tsc + SHA256              │
+   │                                                   │
+   │  → CODE PRODUCED, measured against the spec       │
+   └──────────────────────────┬───────────────────────┘
+                              │
+                              ▼
+   ╔══════════════════════════════════════════════════════════╗
+   ║ GOD LOOP MACHINE — autonomous control loop               ║
+   ║                                                          ║
+   ║ Tools used DYNAMICALLY for strategic reasoning,          ║
+   ║ always aligned to the L2 spec:                           ║
+   ║                                                          ║
+   ║   CA  trident-code-audit                                 ║
+   ║   18-layer AST (R0-R17) → confidence-weighted findings   ║
+   ║   evidence-gated: tsc/build suppress or support          ║
+   ║   score = max(0, 100−15C−8H−3M−1L)                      ║
+   ║         │                                                ║
+   ║         ▼ score < 96                                     ║
+   ║   DP  trident-deep-planning                              ║
+   ║   root-cause per finding (trace the call graph)          ║
+   ║   approach: surgical vs refactor · blast radius          ║
+   ║   wave manifest aligned to L2 spec                       ║
+   ║         │                                                ║
+   ║         ▼                                                ║
+   ║   DISPATCH → COLLECT → VERIFY                            ║
+   ║   trident_build waves execute the fix strategy           ║
+   ║   collect: SHA256 · tsc · T1 bridge                      ║
+   ║   verify: evidence gate ≥0.96 · WaveVerifier 5 checks    ║
+   ║   theatrical detection · trust verdicts                  ║
+   ║         │                                                ║
+   ║    ┌────┴────────────────────────────┐                   ║
+   ║    ▼                                 ▼                   ║
+   ║  stall ≥2?                      trusted?                 ║
+   ║    │                                 │                   ║
+   ║    ▼                                 │                   ║
+   ║   ┌───────────────────────────────┐  │                   ║
+   ║   │ PS  trident-problem-solving   │  │                   ║
+   ║   │                               │  │                   ║
+   ║   │  framework selected by        │  │                   ║
+   ║   │  problem type:                │  │                   ║
+   ║   │                               │  │                   ║
+   ║   │   Five Whys · Fault Tree      │  │                   ║
+   ║   │   Systems Thinking · Pareto   │  │                   ║
+   ║   │   First Principles ·          │  │                   ║
+   ║   │   Hypothesis-Driven           │  │                   ║
+   ║   │                               │  │                   ║
+   ║   │  → diagnosis + action plan,   │  │                   ║
+   ║   │    can REDIRECT the loop      │  │                   ║
+   ║   └───────┬───────────────────────┘  │                   ║
+   ║           └──────────────────────────┘                   ║
+   ║                      ▼                                   ║
+   ║               re-audit (CA)                              ║
+   ║               → re-score                                 ║
+   ║               loop until score ≥ 96                      ║
+   ║                      │                                   ║
+   ║                      ▼ score ≥ 96                        ║
+   ║   CT  trident-container-test                             ║
+   ║   24 actions: setup → deploy → send → read →             ║
+   ║   suite/report · switch-model/agent · verify             ║
+   ║   5+ adversarial scenarios (happy path FORBIDDEN)        ║
+   ║   → runtime verdict — not AST opinion                    ║
+   ╚═══════════════════════╤═════════════════════════════════╝
+                           │
+                           ▼
+
+   ┌──────────────────────────────────────────────────┐
+   │ CHECKPOINT — progress saved every loop            │
+   │                                                   │
+   │  CS → T1 injectables (warhead-grade context:      │
+   │     decisions · patterns · failure modes ·        │
+   │     session state)                                │
+   │  SPG → full checkpoint snapshot → checkpoint      │
+   │     folder (SHIP_MANIFEST · BUILD_REPORT ·        │
+   │     DEBUG_LOG) · hash-pinned dist+src+docs        │
+   └──────────────────────────┬───────────────────────┘
+                              │
+                              ▼
+   ┌──────────────────────────────────────────────────┐
+   │ QUALITY AUDIT — the ship gate                     │
+   │                                                   │
+   │  zero-trust audit skill: re-runs ALL claims       │
+   │  from scratch — no inherited trust                │
+   │  + 2 parallel subagents audit the codebase        │
+   │    AGAINST the L2 spec: gaps · spec violations ·  │
+   │    theatrical implementations · missing edges     │
+   │  → independent judgment, not self-certification   │
+   └──────────────────────────┬───────────────────────┘
+                              │
+                   ┌──────────┴──────────┐
+                   ▼                     ▼
+              SHIP GATE              SHIP GATE
+                PASS                   FAIL
+                   │                     │
+                   ▼                     ▼
+            copy checkpoint        back to God Loop
+            → ship package         (progress saved,
+            → DELIVERED             learning accumulates)
 ```
 
-Poseidon's context preservation: the DISPATCH phase fires parallel
-trident_build subagents (one per file) and trident_explore scouts for
-context — the heavy file surgery happens in subagents, so Poseidon's own
-context window stays lean and it only sees SHA256 hashes + summaries.
+Checkpoint comes before the quality gate so progress is saved as a full
+snapshot every loop. If the audit fails, nothing is lost — the God Loop
+restarts with accumulated learning. Only when the ship gate passes is the
+final checkpoint copied to the ship package and delivered.
 
 ---
+
+
+
+
+
+
+
+
+
+
+
 
 
 
