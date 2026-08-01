@@ -1,14 +1,5 @@
 # TRIDENT v4.4.3 — POSEIDON GOD LOOP OVERHAUL
 
-> **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
-
-Trident is a runtime-grade autonomous engineering agent plugin for opencode. It audits codebases via 18-layer AST analysis, generates engineering specs, and autonomously drives builds to 96%+ quality through a 13-phase closed-loop God Loop — the Poseidon orchestrator. Every claim requires mechanical evidence — prose is not proof.
-
-Trident inverts the standard AI coding relationship: most tools write code and claim it works, leaving the human to verify. Trident never trusts its own output — or any agent's. Every assertion must be backed by test exit codes, filesystem state, SHA-256 hashes, AST-verified analysis, and container-tested runtime behavior. This is the Runtime Grade standard: if a claim cannot be verified by machine execution, it is not evidence.
-
-The v4.4.3 overhaul (Phase 1 complete) transformed the God Loop from 1 model-required phase (DISPATCH) to 6: DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, and PROBLEM_SOLVE each require the model to make real engineering judgments with phase-specific actions. There are NO mechanical fallbacks — calling `action=start` at a model-required phase is rejected. Container testing is FULLY MANUAL and primary-agent-owned, enforced by adversarial quality gates: test the expected post-ship behavior in production runtime environments from 5+ different angles.
----
-
 ## What Is Trident?
 
 Trident is a **closed-loop autonomous build orchestration system** that runs as an OpenCode plugin. It takes a project with defects and drives it to runtime-grade quality without a human in the loop — by auditing mechanically, deciding intelligently, fixing via dispatched subagents, verifying with zero trust, and validating in real containers.
