@@ -127,57 +127,118 @@ So Trident inverts the trust model:
 
 ---
 
-- **L1 Direct-to-Disk:** Deep planning L1 writes directly to `outputPath/fileName.md`, returns `L1_CONTENT_WRITTEN` JSON confirmation (path, lines, sha256, preview) — NOT full content. Prevents agent truncation/summarization of generated output.
-- **Adversarial Testing Mandate:** Happy path testing explicitly forbidden. Every test must probe failure paths, edge cases, boundaries. Minimum 3 adversarial scenarios required.
-- **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
-- **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
-- **Read Efficiency Enforcement (.md files):** The `tool.execute.before` hook mechanically forces `limit=1500` when reading `.md` files with `limit < 1000`. Code files (`.ts`, `.js`) are exempt — targeted reads for surgical edits remain allowed. Prevents the #1 waste of turns: reading documentation in 200-line chunks.
-
----
-
 ## Architecture
 
 Trident runs as an OpenCode plugin. One primary agent (trident) orchestrates the
 God Loop; two subagent types do the work under strict mechanical verification.
 
 ```
+                     ┌────────────────────────────────────────────────┐
+                     │                  USER                          │
+                     │  steers chunk-by-chunk builds, or says         │
+                     │  "poseidon activate" to hand off autonomously  │
+                     └──────────────────────┬─────────────────────────┘
+                                            │
+                                            ▼
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              OPENCODE RUNTIME                                │
-│  ┌────────────────────────────────────────────────────────────────────────┐  │
-│  │                         TRIDENT PRIMARY AGENT                           │  │
-│  │  Identity (SCAN+REPLACE) │ 10 Hooks │ 13 Tools │ 3-Layer Firewall      │  │
-│  └───────────────────────────────┬────────────────────────────────────────┘  │
-│                                  │ poseidonState.isActive()                  │
-│  ┌───────────────────────────────▼────────────────────────────────────────┐  │
-│  │                    POSEIDON GOD LOOP — 13 PHASES                        │  │
-│  │                                                                         │  │
-│  │  ┌──────────────────────────────┐        ┌───────────────────────────┐  │  │
-│  │  │  DETERMINISTIC PHASES        │        │  MODEL-BASED PHASES        │  │  │
-│  │  │  (machines don't lie)        │        │  (engineering is judgment) │  │  │
-│  │  │                              │        │                           │  │  │
-│  │  │  INIT ──► AUDIT ──► SCORE    │        │  DECIDE ──► PLAN ──►      │  │  │
-│  │  │    │          │       │      │        │  DISPATCH ──► VERIFY      │  │  │
-│  │  │    │          │       ▼      │        │    │           │          │  │  │
-│  │  │    │          │    DECIDE    │        │    ▼           ▼          │  │  │
-│  │  │    │          │       │      │        │  COLLECT     AUDIT_RECHECK│  │  │
-│  │  │    │          └───────┘      │        │    │           │          │  │  │
-│  │  │    └─────────────────────────┘        └────┼───────────┼──────────┘  │  │
-│  │  │                                           ▼           ▼              │  │
-│  │  │  CONTAINER_TEST (FULLY MANUAL — 5+ adversarial angles)               │  │
-│  │  │       │  evidence gate: no container evidence = REJECTED            │  │
-│  │  │       ▼                                                              │  │
-│  │  │  PASS (score≥96 + container evidence)  /  LOOP (reset with learning)│  │
-│  │  └─────────────────────────────────────────────────────────────────────┘  │
-│  │          ▲ snapshot hash check: external file change → AUDIT_RECHECK     │
-│  └──────────┼───────────────────────────────────────────────────────────────┘
-│             │ task(subagent_type="trident_build") — ONE AGENT PER FILE
-│  ┌──────────▼───────────────────────────────────────────────────────────────┐
-│  │                         TRIDENT_BUILD SUBAGENTS                          │
-│  │  Read source ──► Apply fix strategy ──► Self-verify ──► SHA256 evidence  │
-│  │  CODE-enforced quality gates │ Merkle chain tracking │ theatrical block  │
-│  └───────────────────────────────────────────────────────────────────────────┘
+│                        TRIDENT PRIMARY AGENT                                  │
+│           the agentized toolset — what the user steers directly              │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  IDENTITY                                                          │    │
+│   │  "Trident Agent — T3 Algorithmic Intelligence"                     │    │
+│   │  injected by system.transform (SCAN+REPLACE, triple-layered)       │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  ENFORCEMENT SPINE — every tool call passes through 10 hooks       │    │
+│   │                                                                      │    │
+│   │  tool.before → 3-layer firewall                                    │    │
+│   │    L1: blocked tools (edit/write/bash unless Poseidon)             │    │
+│   │    L2: hive tools (shark/manta — never)                            │    │
+│   │    L3: theatrical NLP + Merkle (fake claims, smoke tests)          │    │
+│   │    + phase-action validation (wrong action at wrong phase = BLOCK) │    │
+│   │                                                                      │    │
+│   │  tool.after  → derailment check, claim tracking,                   │    │
+│   │                 agent output collection for WaveVerifier           │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  TOOL INTELLIGENCE — mechanically engineered capability            │    │
+│   │  each tool is a deterministic intelligence module                  │    │
+│   │                                                                      │    │
+│   │  trident-code-audit        THE EYES      18-layer AST engine       │    │
+│   │  trident-deep-planning     THE PLANNER   L1/L2/L3 engineering specs│    │
+│   │  trident-problem-solving   THE DOCTOR    6 diagnosis frameworks    │    │
+│   │  trident-context-synthesis THE MEMORY    T1/T2 knowledge synthesis │    │
+│   │  trident-container-test    THE VERIFIER  adversarial container runs│    │
+│   │  trident-preflight         THE BOUNCER   validates inputs pre-LLM  │    │
+│   │  trident-ship-package      THE PACKAGER  ship manifest generation  │    │
+│   │  trident-status/gate/help  THE SENSES    awareness + layer gates   │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   MODE: DIRECT — user steers tool-by-tool, chunk-by-chunk.                   │
+│   No God Loop in this mode. Trident is the instrument.                       │
+└──────────────────────────────────┬───────────────────────────────────────────┘
+                                   │ "poseidon activate" — Poseidon wields
+                                   │ Trident's tools as its intelligence
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                          POSEIDON AGENT                                       │
+│     the nested god-mode agent — autonomously drives the build by             │
+│     deciding WHEN and HOW to use Trident's mechanically-engineered tools     │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  GOD LOOP MACHINE — anchors the task (13 phases)                   │    │
+│   │  [full phase flow illustrated below]                               │    │
+│   │                                                                      │    │
+│   │  DETERMINISTIC phases → pure tool calls:                           │    │
+│   │    AUDIT  → calls trident-code-audit (the eyes)                    │    │
+│   │    SCORE  → formula (no tool — pure math)                          │    │
+│   │                                                                      │    │
+│   │  MODEL phases → intelligence context + judgment:                   │    │
+│   │    DECIDE  → context (findings/waves/stall) → choose path          │    │
+│   │    PLAN    → calls trident-deep-planning for strategy              │    │
+│   │    VERIFY  → evidence gate + WaveVerifier + trust verdicts         │    │
+│   │    PROBLEM_SOLVE → calls trident-problem-solving                   │    │
+│   │    CONTAINER_TEST → calls trident-container-test (fully manual)    │    │
+│   │                                                                      │    │
+│   │  phase-intelligence.ts generates each model phase's context —      │    │
+│   │  Poseidon never decides blind                                       │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │  CONTEXT PRESERVATION — the wave dispatch system                   │    │
+│   │                                                                      │    │
+│   │  DISPATCH phase → task(trident_build) — ONE agent per file         │    │
+│   │    subagents do the file surgery → context OFFLOADED from Poseidon │    │
+│   │    Poseidon sees only SHA256 hashes + summaries — stays lean       │    │
+│   │                                                                      │    │
+│   │  batch tool calls by default · snapshot hash watch                 │    │
+│   │  (external edit at any phase → force AUDIT_RECHECK)                │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   TERMINAL: PASS (score ≥ 96 + container evidence) / LOOP (learn + retry)   │
+└──────────────────────────────────┬───────────────────────────────────────────┘
+                                   │ task(subagent_type="trident_build")
+                                   │ ONE AGENT PER FILE — parallel wave dispatch
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                        TRIDENT_BUILD SUBAGENTS                                │
+│  ┌───────────────────────┐  ┌───────────────────────┐  ┌───────────────────┐ │
+│  │ Read source           │  │ Read source           │  │ Read source       │ │
+│  │ Apply fix strategy    │  │ Apply fix strategy    │  │ Apply strategy    │ │
+│  │ Self-verify           │  │ Self-verify           │  │ Self-verify       │ │
+│  │ SHA256 evidence       │  │ SHA256 evidence       │  │ SHA256 evidence   │ │
+│  └───────────┬───────────┘  └───────────┬───────────┘  └─────────┬─────────┘ │
+│              │                          │                        │           │
+│              └──────────────┬───────────┴────────────────────────┘           │
+│                             ▼                                                 │
+│  CODE-enforced quality gates · Merkle chain tracking · theatrical block      │
+│  results → COLLECT phase → WaveVerifier (SHA256, tsc, audit, regression)     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
+
 
 ### The Macro Flow
 
@@ -246,6 +307,17 @@ God Loop; two subagent types do the work under strict mechanical verification.
 | `trident-help` | Reference for all commands and modes |
 
 ---
+
+### Tool Design Details
+
+These are the implementation-level behaviors of the tooling that make the God
+Loop efficient and honest — each one exists to prevent a specific failure mode:
+
+- **L1 Direct-to-Disk:** Deep planning L1 writes directly to `outputPath/fileName.md`, returns `L1_CONTENT_WRITTEN` JSON confirmation (path, lines, sha256, preview) — NOT full content. Prevents agent truncation/summarization of generated output.
+- **Adversarial Testing Mandate:** Happy path testing explicitly forbidden. Every test must probe failure paths, edge cases, boundaries. Minimum 3 adversarial scenarios required.
+- **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
+- **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
+- **Read Efficiency Enforcement (.md files):** The `tool.execute.before` hook mechanically forces `limit=1500` when reading `.md` files with `limit < 1000`. Code files (`.ts`, `.js`) are exempt — targeted reads for surgical edits remain allowed. Prevents the #1 waste of turns: reading documentation in 200-line chunks.
 
 ## Problem-Solving Engine
 
