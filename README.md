@@ -1,37 +1,64 @@
 # TRIDENT v4.4.3 — POSEIDON GOD LOOP OVERHAUL
 
-**Status:** ✅ POSEIDON GOD LOOP PHASE 1 COMPLETE — 6 MODEL-REQUIRED PHASES — NO FALLBACKS — 18-LAYER AST AUDIT ENGINE — CONTAINER TEST FULLY MANUAL
-**Bundle:** 15.18 MB (ESM, bun-built — 330 modules)
-**Runtime:** opencode 1.14.43+
-**Source:** 168 .ts files
-**Dist SHA:** 76ac96ec5cd16b2bd4f14842a57c7b3b547d54c4972172ed8f06819a7a1d0fb5
 > **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
+
 Trident is a runtime-grade autonomous engineering agent plugin for opencode. It audits codebases via 18-layer AST analysis, generates engineering specs, and autonomously drives builds to 96%+ quality through a 13-phase closed-loop God Loop — the Poseidon orchestrator. Every claim requires mechanical evidence — prose is not proof.
+
 Trident inverts the standard AI coding relationship: most tools write code and claim it works, leaving the human to verify. Trident never trusts its own output — or any agent's. Every assertion must be backed by test exit codes, filesystem state, SHA-256 hashes, AST-verified analysis, and container-tested runtime behavior. This is the Runtime Grade standard: if a claim cannot be verified by machine execution, it is not evidence.
+
 The v4.4.3 overhaul (Phase 1 complete) transformed the God Loop from 1 model-required phase (DISPATCH) to 6: DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, and PROBLEM_SOLVE each require the model to make real engineering judgments with phase-specific actions. There are NO mechanical fallbacks — calling `action=start` at a model-required phase is rejected. Container testing is FULLY MANUAL and primary-agent-owned, enforced by adversarial quality gates: test the expected post-ship behavior in production runtime environments from 5+ different angles.
 ---
 
-## Key Features
+## What Is Trident?
 
-- **Identity System Inlined** — All 7 identity .md files are TypeScript string constants. Zero disk-file dependency. Version-free (`TRIDENT_VERSION = ''`). Agent identity is "Trident Agent" — no version strings anywhere in identity or artifact templates.
-- **Pipeline Restoration** — `classifyProject()` and `generatePipelineSpec()` were never imported in v4.4.0/4.4.1. 7 pipeline modules (5,000+ lines) now actually execute.
-- **9 Critical Runtime Crash Fixes** — Including: `ts.getPreEmitDiagnostics()` event loop blocking (synchronous), R13 stack overflow (recursive walk → iterative), R13 TypeScript internal TypeError (checker fallback removed), broken timeout (Promise.race), false success scoring, Poseidon session ID mismatch, CONTAINER_TEST fail-open, DISPATCH instruction truncation, WaveVerifier hash disabled.
-- **Recursive→Iterative Conversions** — `auto-discover.ts` and `code-classifier.ts` converted from recursion to queue-based traversal. Stack overflows eliminated on 157+ file codebases.
-- **Fail-Closed Semantics** — VERIFY gate, CONTAINER_TEST, and Poseidon gates all default to `false`. No more rubber-stamped approvals.
-- **Version Purge** — Zero references to v4.3.3 remain. Zero "Trident Brain" references. Agent identity is simply "Trident Agent."
-- **trident-vision Purge** — Removed from all functional code. Tool count reduced from 10 to 8.
-- **Build System: esbuild → bun** — 330 modules (bun tree-shakes more aggressively). Both `package.json` files use `bun build`.
-- **Poseidon God Loop — 13-phase closed-loop quality enforcement (v4.4.3 Phase 1):** INIT → AUDIT → SCORE → DECIDE → PLAN → DISPATCH → COLLECT → VERIFY → AUDIT_RECHECK → CONTAINER_TEST → PASS/LOOP, with PROBLEM_SOLVE entered from stall/theatrical/dispatch-failure. 6 phases are model-required with NO fallbacks: DECIDE (`action=decide`), PLAN (`action=plan`), DISPATCH (`task()`), VERIFY (`action=verify`), CONTAINER_TEST (fully manual, `action=diagnose` on failure), PROBLEM_SOLVE (`action=solve`). Each model-required phase generates an intelligence context via `phase-intelligence.ts` (findings, source context, previous wave results, consequence analysis) and rejects wrong actions with a PHASE ACTION ERROR.
-- **Container Test — FULLY MANUAL, primary agent owned:** NOT automated. The agent designs 5+ DIFFERENT adversarial scenarios, executes each via `trident-container-test`, and declares PASS only with mechanical evidence. An evidence gate rejects pass declarations without container test execution evidence (`phaseRepeatCount > 0` + evidence store container entries).
-- **Semantic activation system:** PoseidonDetector uses regex first-pass + signal-word scoring second-pass. No single-string activation. The agent CANNOT activate Poseidon Mode — only the user can. (Phase 2 of the v4.4.3 overhaul replaces NLP activation with a `/poseidon` slash command requiring a goal — no blanket activation.)
-- **Poseidon Tool Differentiation:** "Poseidon mode activate" from user ONLY unlocks bash/write/edit permissions. Agent does NOT call trident-poseidon tool. Agent ONLY calls trident-poseidon action=start when user explicitly requests the God Loop or when advancing an already-running God Loop.
-- **Trident_Build subagent:** 8+ file harness with CODE-enforced quality gates, Merkle chain evidence tracking, AST analysis, theatrical detection, and runtime grade enforcement
-- **Auto-lock on completion:** The `trident-poseidon` tool locks itself after execution — human must re-activate
-- **Evidence archival:** Full audit trail per cycle, per session — `.trident/poseidon-audits/{sessionId}/cycle_{N}/`
-- **18-layer audit engine (R0-R16 + preflight + R17):** From build chain integrity through runtime grade bible enforcement
-- **Headless Execution Firewall:** `opencode run` is mechanically blocked in both `tool.execute.before` (bash handler) and `command.execute.before` (command handler). Headless execution bypasses the TUI — no hooks fire, no identity is injected, no evidence is produced. The TUI is the only valid execution path.
-- **Container Skill Enforcement:** Docker/container testing commands blocked via bash unless `container-testing` skill is loaded first. Prevents ad-hoc testing that bypasses quality gates.
-- **R4 Source-File Firewall:** `PARSEABLE_EXTENSIONS` filter prevents non-code files (`.md`, `.json`, `.py`) from entering the AST pipeline. Only `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` analyzed as source.
+Trident is a **closed-loop autonomous build orchestration system** that runs as an OpenCode plugin. It takes a project with defects and drives it to runtime-grade quality without a human in the loop — by auditing mechanically, deciding intelligently, fixing via dispatched subagents, verifying with zero trust, and validating in real containers.
+
+It is built around one operating principle: **the agent never declares success — the machine does.** Trident's 18-layer AST audit engine finds defects deterministically. Its 13-phase Poseidon God Loop decides how to fix them, dispatches build agents to do the work, re-audits to measure progress, and refuses to declare completion until a container test proves the post-ship behavior works as intended.
+
+## What Does It Do?
+
+| Capability | What it actually does |
+|-----------|----------------------|
+| **Audits** | Scans a TypeScript codebase with 18 AST-based analysis layers — catches empty catch blocks, theatrical stubs, dead enforcement functions, unguarded env vars, `as any` casts, floating promises, and 100+ more defect classes. Every finding carries a confidence score and mechanical evidence. |
+| **Plans** | Groups findings by file (one agent per file), reads source context, and requires the model to design a fix strategy per file — root cause, approach, blast radius, depth level. |
+| **Fixes** | Dispatches `trident_build` subagents — each owns exactly one file, applies the strategy, and returns SHA256-verified changes. |
+| **Verifies** | Mechanically checks every agent's claim (did the file actually change? does it compile? did findings actually resolve?) then requires the model to issue per-agent trust verdicts. |
+| **Validates** | The primary agent designs and runs 5+ adversarial container tests against the actual deployed bundle — identity injection, firewall enforcement, tool availability, error propagation, boundary conditions. Nothing passes without mechanical evidence. |
+| **Loops** | Re-audits, rescoring, and re-planning until either the score hits 96/100 with container evidence (PASS) or the approach is exhausted and the loop resets with learned diagnosis (LOOP). |
+
+## How Does It Do It?
+
+**The 13-phase God Loop is the engine.** Each phase is either *deterministic* (mechanical — a formula or an engine runs, no judgment needed) or *model-based* (the LLM must make a real engineering judgment). The flow:
+
+```
+INIT → AUDIT → SCORE → DECIDE → PLAN → DISPATCH → COLLECT → VERIFY
+                    ↑                    ↓                      ↓
+              AUDIT_RECHECK ←←←←←←←←←←←←←←←←←←←← ←                     │
+                    ↓                                                      │
+                 SCORE → DECIDE                                            │
+                                                              PASS (terminal)
+                                                              LOOP (reset→INIT)
+```
+
+- **Deterministic phases** (INIT, AUDIT, SCORE, COLLECT, AUDIT_RECHECK): run engines and formulas. The 18-layer audit engine runs `ts.createProgram` and walks the AST. Scoring is `max(0, 100−15·CRITICAL−8·HIGH−3·MEDIUM−1·LOW)`. No model involvement, no judgment, no ambiguity.
+- **Model-based phases** (DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE): the God Loop generates an intelligence context — findings by file, source snippets, previous wave results, consequence analysis — and REQUIRES the model to respond with a phase-specific action. Wrong actions are rejected (no fallbacks).
+- **Snapshot hash detection:** the God Loop hashes all source at INIT and re-checks every phase. If files changed outside the loop (a manual fix, a direct edit), it re-audits automatically — it is never blind to changes.
+
+## Why Does It Do It This Way?
+
+**Because the default AI workflow is broken.** The standard pattern — model writes code, model claims it works, human verifies — fails because:
+1. **The model is a terrible verifier of its own work.** It will rationalize a stub as a fix and a smoke test as validation.
+2. **Prose is not evidence.** "The tests pass" without test output is a hallucination, not a result.
+3. **Compiling is not working.** Code that builds can still be theatrically wrong — returning hardcoded success, swallowing errors, never enforcing what it claims to enforce.
+
+So Trident inverts the trust model:
+- **Deterministic phases exist because machines don't lie.** An AST walk that finds an empty catch block is ground truth. A score formula is a score formula.
+- **Model-based phases exist because engineering is judgment.** Deciding whether a stalled score means "different approach" or "escalate to deep diagnosis" is a reasoning task — the model is good at it, as long as its inputs are mechanical facts and its outputs are structured decisions.
+- **The 96% + container evidence gate exists because "good enough" isn't runtime grade.** A static audit can't prove the plugin loads in a real environment, that the identity injection survives, that the firewall actually blocks. Only a container test can.
+- **No fallbacks exist because fallbacks become excuses.** If the model could skip DECIDE by calling `action=start`, it would. The rejection is the enforcement.
+
+---
+
 - **L1 Direct-to-Disk:** Deep planning L1 writes directly to `outputPath/fileName.md`, returns `L1_CONTENT_WRITTEN` JSON confirmation (path, lines, sha256, preview) — NOT full content. Prevents agent truncation/summarization of generated output.
 - **Adversarial Testing Mandate:** Happy path testing explicitly forbidden. Every test must probe failure paths, edge cases, boundaries. Minimum 3 adversarial scenarios required.
 - **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
@@ -42,93 +69,77 @@ The v4.4.3 overhaul (Phase 1 complete) transformed the God Loop from 1 model-req
 
 ## Architecture
 
+Trident runs as an OpenCode plugin. One primary agent (trident) orchestrates the
+God Loop; two subagent types do the work under strict mechanical verification.
+
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          POSEIDON MODE v4.4.3                                │
-│                                                                             │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   REGISTRATION LAYER (17+ files)                    │   │
-│  │  trident-tools.ts | tool-allowlist.ts | guardian-hook.ts            │   │
-│  │  orchestrator-machine-v2.ts | orchestrator.ts | trident-hooks.ts    │   │
-│  │  identity/index.ts | agents/definitions.ts | index.ts               │   │
-│  │  phase-intelligence.ts (NEW — Phase 1)                             │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   SEMANTIC ACTIVATION LAYER                          │   │
-│  │  User Message → PoseidonDetector.detect() → regex first-pass        │   │
-│  │    → semantic second-pass (ON/OFF signal word scoring)              │   │
-│  │    → poseidonState.activate/deactivate() — session-scoped Map       │   │
-│  │  (Phase 2: replaced by /poseidon slash command requiring a goal)    │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   GOD ORCHESTRATOR LOOP — 13 PHASES                  │   │
-│  │                                                                     │   │
-│  │  trident-poseidon tool → poseidonState.isActive() check            │   │
-│  │    → GodLoopOrchestrator.runPhase(targetPath) — ONE phase per call  │   │
-│  │      │                                                              │   │
-│  │      ├─ MECHANICAL: INIT → AUDIT → SCORE → COLLECT → AUDIT_RECHECK │   │
-│  │      │  (advance with action=start — deterministic engines)        │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: DECIDE (action=decide)                     │   │
-│  │      │  → intelligence context: findings by file, previous waves,  │   │
-│  │      │    stall analysis → model chooses PLAN/PROBLEM_SOLVE/        │   │
-│  │      │    ACCEPT_RISK with reasoning — NO fallback routing          │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: PLAN (action=plan)                         │   │
-│  │      │  → fix strategy per file: root cause, approach, blast       │   │
-│  │      │    radius, depth level → agent specs built from strategy    │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: DISPATCH (action=start → task())           │   │
-│  │      │  → dispatch trident_build subagents — ONE per file          │   │
-│  │      │  → file-based wave dispatch (no collisions)                 │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: VERIFY (action=verify)                     │   │
-│  │      │  → evidence gate + WaveVerifier mechanical first            │   │
-│  │      │  → model per-agent verdicts: TRUSTED/QUARANTINED/REJECTED   │   │
-│  │      │  → REJECTED → THEATRICAL → AUDIT_RECHECK                    │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: CONTAINER_TEST (FULLY MANUAL)              │   │
-│  │      │  → agent designs 5+ adversarial scenarios                   │   │
-│  │      │  → executes via trident-container-test                      │   │
-│  │      │  → evidence gate rejects no-evidence passes                 │   │
-│  │      │  → on failure: action=diagnose → PLAN/PROBLEM_SOLVE         │   │
-│  │      │                                                              │   │
-│  │      ├─ MODEL-REQUIRED: PROBLEM_SOLVE (action=solve)               │   │
-│  │      │  → model reads source, proposes architectural changes       │   │
-│  │      │  → diagnosis stored to PROBLEM_SOLVING_PLANS/model_diagnosis│   │
-│  │      │                                                              │   │
-│  │      └─ TERMINAL: PASS (score≥96 + container evidence) / LOOP      │   │
-│  │         → autoDeactivate() — tool locks itself                     │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-│                                    │                                         │
-│  ┌─────────────────────────────────────────────────────────────────────┐   │
-│  │                   TRIDENT_BUILD SUBAGENT (8+ files)                  │   │
-│  │  src/subagents/trident-build/                                       │   │
-│  │  ├── index.ts                    Entry + hook factory                │   │
-│  │  ├── identity/                                                      │   │
-│  │  │   ├── agent-identity.ts       isTridentBuildAgent()              │   │
-│  │  │   └── t1-prompt.ts            T1 system prompt                   │   │
-│  │  ├── hooks/                                                         │   │
-│  │  │   ├── index.ts                Hook factory                        │   │
-│  │  │   ├── guardian-hook.ts        CODE-enforced enforcement          │   │
-│  │  │   ├── gate-hook.ts            Evidence + tracking                │   │
-│  │  │   └── system-transform.ts     Identity injection                  │   │
-│  │  ├── harness/                                                        │   │
-│  │  │   ├── semantic-engine.ts      AST analysis (5 checks)            │   │
-│  │  │   ├── theatrical-block.ts     20+ patterns (3 severity levels)   │   │
-│  │  │   ├── runtime-grade.ts        P1-P10 + E10 + L5.x enforcement    │   │
-│  │  │   ├── evidence-pipeline.ts    Merkle chain tracking              │   │
-│  │  │   └── enforcement-error.ts    EnforcementError class             │   │
-│  │  ├── shared/                                                         │   │
-│  │  │   ├── state-store.ts          Map<sessionId, State>              │   │
-│  │  │   └── agent-state.ts          Session-scoped tracking            │   │
-│  │  └── tools/                                                          │   │
-│  │       └── build-status.ts        Status reporting                   │   │
-│  └─────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                              OPENCODE RUNTIME                                │
+│  ┌────────────────────────────────────────────────────────────────────────┐  │
+│  │                         TRIDENT PRIMARY AGENT                           │  │
+│  │  Identity (SCAN+REPLACE) │ 10 Hooks │ 13 Tools │ 3-Layer Firewall      │  │
+│  └───────────────────────────────┬────────────────────────────────────────┘  │
+│                                  │ poseidonState.isActive()                  │
+│  ┌───────────────────────────────▼────────────────────────────────────────┐  │
+│  │                    POSEIDON GOD LOOP — 13 PHASES                        │  │
+│  │                                                                         │  │
+│  │  ┌──────────────────────────────┐        ┌───────────────────────────┐  │  │
+│  │  │  DETERMINISTIC PHASES        │        │  MODEL-BASED PHASES        │  │  │
+│  │  │  (machines don't lie)        │        │  (engineering is judgment) │  │  │
+│  │  │                              │        │                           │  │  │
+│  │  │  INIT ──► AUDIT ──► SCORE    │        │  DECIDE ──► PLAN ──►      │  │  │
+│  │  │    │          │       │      │        │  DISPATCH ──► VERIFY      │  │  │
+│  │  │    │          │       ▼      │        │    │           │          │  │  │
+│  │  │    │          │    DECIDE    │        │    ▼           ▼          │  │  │
+│  │  │    │          │       │      │        │  COLLECT     AUDIT_RECHECK│  │  │
+│  │  │    │          └───────┘      │        │    │           │          │  │  │
+│  │  │    └─────────────────────────┘        └────┼───────────┼──────────┘  │  │
+│  │  │                                           ▼           ▼              │  │
+│  │  │  CONTAINER_TEST (FULLY MANUAL — 5+ adversarial angles)               │  │
+│  │  │       │  evidence gate: no container evidence = REJECTED            │  │
+│  │  │       ▼                                                              │  │
+│  │  │  PASS (score≥96 + container evidence)  /  LOOP (reset with learning)│  │
+│  │  └─────────────────────────────────────────────────────────────────────┘  │
+│  │          ▲ snapshot hash check: external file change → AUDIT_RECHECK     │
+│  └──────────┼───────────────────────────────────────────────────────────────┘
+│             │ task(subagent_type="trident_build") — ONE AGENT PER FILE
+│  ┌──────────▼───────────────────────────────────────────────────────────────┐
+│  │                         TRIDENT_BUILD SUBAGENTS                          │
+│  │  Read source ──► Apply fix strategy ──► Self-verify ──► SHA256 evidence  │
+│  │  CODE-enforced quality gates │ Merkle chain tracking │ theatrical block  │
+│  └───────────────────────────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### The Macro Flow
+
+1. **Activation** — user enables Poseidon Mode (natural language; Phase 2 moves to a `/poseidon` slash command). This unlocks bash/write/edit on the primary agent.
+2. **Audit** — the God Loop runs the 18-layer AST engine deterministically. Findings + score come back with zero model involvement.
+3. **Decide** — the model receives the intelligence context (findings by file, previous wave results, stall analysis) and chooses: PLAN a new wave, escalate to PROBLEM_SOLVE, or ACCEPT_RISK. `action=start` is rejected here — no fallback.
+4. **Plan** — the model designs a per-file fix strategy (root cause, approach, blast radius, depth). Agent specs are built from the strategy.
+5. **Dispatch** — trident_build subagents are dispatched — one per file, never colliding. Each reads source, applies the strategy, self-verifies, and returns SHA256 hashes.
+6. **Collect + Verify** — outputs are collected; the evidence gate (≥0.96 pass rate) and WaveVerifier (SHA256, tsc, audit, regression, freshness) run mechanically. Then the model issues per-agent trust verdicts (TRUSTED / QUARANTINED / REJECTED).
+7. **Re-audit + Score** — deterministic re-run; cycle increments. If progress stalls for 2 cycles, the model is routed to PROBLEM_SOLVE.
+8. **Container Test** — FULLY MANUAL. The primary agent designs and runs 5+ adversarial scenarios against the deployed bundle. The evidence gate rejects pass declarations with no container execution evidence.
+9. **PASS / LOOP** — PASS requires score ≥96 AND container evidence. LOOP resets to INIT with accumulated diagnosis for the next round.
+
+### Deterministic vs Model-Based (the core filter)
+
+| Dimension | Deterministic phases | Model-based phases |
+|-----------|---------------------|--------------------|
+| Phases | INIT, AUDIT, SCORE, COLLECT, AUDIT_RECHECK | DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE |
+| What runs | Engines + formulas (AST walk, score math, evidence gate, snapshot hash) | The LLM, given a mechanical context and a structured action contract |
+| Why | Machines don't lie — an AST walk finding an empty catch is ground truth | Engineering is judgment — approach selection, root-cause analysis, trust assessment |
+| Failure mode | None (deterministic) | The model can be wrong — caught by the next deterministic phase (re-audit rescoring) |
+| Enforcement | `action=start` advances them | Phase-specific actions (`decide`, `plan`, `verify`, `solve`, `diagnose`); wrong action = PHASE ACTION ERROR, no fallback |
+
+### Subagent Architecture
+
+| Agent | Role | Scope | Enforcement |
+|-------|------|-------|-------------|
+| **trident** (primary) | Orchestrates the God Loop — audits, decides, plans, verifies, container-tests | Everything | 3-layer firewall, phase-action enforcement, identity, evidence chain |
+| **trident_build** (subagent) | Executes fix strategies — reads source, applies the strategy verbatim, self-verifies, returns SHA256 | ONE file per agent (file-based wave dispatch — no collisions) | CODE-enforced quality gates, Merkle chain evidence, theatrical detection, runtime-grade enforcement (P1-P10) |
+| **trident_explore** (subagent) | Read-only context ingestion for parallel information gathering | Read-only | Bypasses write blocking; cannot call trident-poseidon (leaf node) |
 
 ---
 
