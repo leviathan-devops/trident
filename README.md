@@ -279,73 +279,136 @@ hash-pinned so nothing can silently drift.
 
 
 
-### Diagram B — Poseidon Agent (autonomous God Loop workflow)
+### Diagram B — Poseidon Agent (operator REMOVED — full macro autonomy)
 
-Poseidon is the nested god-mode agent. It takes the SAME Trident tools and
-wields them autonomously through the God Loop — deciding when to call each
-piece of intelligence, dispatching subagents to preserve its context window,
-and refusing to declare completion without container evidence.
+Poseidon is the nested god-mode agent. The operator supplies a spec, goal,
+or detailed target ONCE — then is fully removed from the loop. Poseidon
+autonomously executes the ENTIRE Diagram A macro engineering workflow —
+planning loop → build waves → bug identification → code fixes → rebuild →
+container testing → checkpoint → ship — using every intelligence-engineered
+tool at the primary-agent level, with the God Loop machine driving the
+audit→fix→verify loop forward behind the scenes. "Manual" phases are manual
+for the AGENT, never for the operator.
 
 ```
-POSEIDON ACTIVATED
+   SPEC / GOAL / DETAILED TARGET
+   ─────────────────────────────
+   operator hands over once — then fully removed
         │
         ▼
-   [INIT]  scan .ts files · snapshot hash · canon docs
+   POSEIDON ACTIVATED — autonomous from here
         │
         ▼
-   [AUDIT]  → trident-code-audit (the eyes)
-        │  18-layer AST engine → findings → evidence store
-        ▼
-   [SCORE]  formula: max(0, 100−15C−8H−3M−1L) · stall counter
+   ┌──────────────────────────────┐
+   │ PHASE 1 · PLANNING LOOP      │  ← anchors the build
+   └────────────┬─────────────────┘
+        │
+        │  trident-deep-planning → BUILD_SPEC (L1→L2→L3)
+        │  trident-context-synthesis → canon docs / bible
+        │  snapshot hash · target scan
         │
         ▼
-   [DECIDE]  intelligence context (findings, waves, stall)
+   ┌──────────────────────────────┐
+   │ PHASE 2 · BUILD              │  ← waves execute the spec
+   └────────────┬─────────────────┘
         │
-    ┌───┴───────────┬─────────────────┬───────────────┐
-    ▼               ▼                 ▼
- score≥96      stalled ≥2         else → PLAN
- (hard limit)   (judgment)            │
-    │               │                 ▼
-    │               │        [PLAN]  → trident-deep-planning
-    │               │        wave manifest (one agent per file)
-    │               ▼                 │
-    │      [PROBLEM_SOLVE]            ▼
-    │      → trident-problem-solving  [DISPATCH]  parallel task() per file
-    │      read source, root cause        │
-    │               │                     ▼
-    │               ▼               [trident_build] ×N files
-    │        [LOOP] ←────────────   [trident_explore] for context
-    │               │                     │
-    │               ▼                     ▼
-    │        → INIT (round++)       [COLLECT]  read outputs · T1 bridge
-    │                                       │
-    │                                       ▼
-    │                               [VERIFY]  evidence gate ≥0.96
-    │                               WaveVerifier 5 checks
-    │                                       │
-    │                          ┌────────────┴───────────┐
-    │                          ▼                        ▼
-    │                    theatrical?               trusted?
-    │                          │                        │
-    │              [PROBLEM_SOLVE]              [AUDIT_RECHECK]  cycle++
-    │                          │                        │
-    │                          ▼                        ▼
-    │                    [LOOP]                   [SCORE] (recompute)
-    │                          │                        │
-    │                          ▼                        │
-    │                   → INIT (round++)        ────────┘  → back to DECIDE
-    │
-    ▼
-   [CONTAINER_TEST]  FULLY MANUAL — 5+ adversarial angles
-   primary agent uses trident-container-test
+        │  subagent waves produce the CODE:
+        │  ├─ trident_build   ×N files (one per file,
+        │  │                   SHA256-verified)
+        │  └─ trident_explore scouts (context)
+        │
+        ▼
+   ┌──────────────────────────────┐
+   │ PHASE 3 · BUG IDENTIFICATION │  ← audits the BUILT CODE
+   └────────────┬─────────────────┘
+        │
+        │  trident-code-audit on what the waves built
+        │  → 18-layer AST findings · evidence-gated
+        │
+        ▼
+   ╔══════════════════════════════╗
+   ║ PHASE 4 · FIX LOOP           ║
+   ║ GOD LOOP MACHINE drives      ║
+   ╚════════════┬═════════════════╝
+        │
+        ▼
+   [AUDIT]  → 18-layer AST on current code
+        │
+        ▼
+   [SCORE]  max(0, 100−15C−8H−3M−1L) · stall counter
+        │
+        ▼
+   [DECIDE]  ───── stalled ≥2 ────► [PROBLEM_SOLVE]
+        │                        (trident-problem-solving,
+        │                         six frameworks)
+        ▼
+   [PLAN]  fix strategy per file
+        │  (trident-deep-planning)
+        ▼
+   [DISPATCH]  trident_build ×N files in parallel
+        │  (one per file, never colliding)
+        ▼
+   [COLLECT]  outputs · SHA256 hashes · tsc
+        │
+        ▼
+   [VERIFY]  evidence gate ≥0.96 · theatrical?
+        │
+    ┌───┴────────────┐
+    ▼                ▼
+  trusted         theatrical → [PROBLEM_SOLVE]
+        │
+        ▼
+   [AUDIT_RECHECK]  cycle++  ──────┐
+        │                          │
+        ▼                          │
+   [SCORE] recompute  ◄────────────┘
+        │
+        ▼
+   score ≥96? ──── no ────► back to [DECIDE]
+        │
+        ▼ yes — exit fix loop
+   ┌──────────────────────────────┐
+   │ PHASE 5 · REBUILD            │
+   └────────────┬─────────────────┘
+        │
+        │  bun build → dist/index.js
+        │  → SHA256 dist hash pinned
+        │
+        ▼
+   ┌──────────────────────────────┐
+   │ PHASE 6 · CONTAINER TESTING  │  ← the real verdict
+   └────────────┬─────────────────┘
+        │
+        │  trident-container-test (24 actions):
+        │  setup (testPlan ≥2000 chars, adversarial) →
+        │  deploy → send → read/check → suite/report ·
+        │  switch-model · switch-agent · verify-model
+        │
+        │  FULLY MANUAL = the AGENT runs 5+ adversarial
+        │  angles — operator is NOT involved
         │
     ┌───┴────────────┐
     ▼                ▼
    passed          failed (action=diagnose)
     │                │
-    ▼                ├──────────────► [PLAN] or [PROBLEM_SOLVE]
-   [PASS]           └──────────────► back into loop
-   score≥96 + evidence
+    ▼                └───► back into fix loop (PHASE 4)
+   ┌──────────────────────────────┐
+   │ PHASE 7 · CHECKPOINT         │
+   └────────────┬─────────────────┘
+        │
+        │  hash-pinned snapshot:
+        │  dist + src + docs + BUILD_REPORT
+        │
+        ▼
+   ┌──────────────────────────────┐
+   │ PHASE 8 · SHIP               │
+   └──────────────────────────────┘
+        │
+        │  trident-ship-package → SHIP_MANIFEST ·
+        │  DEPLOY.sh · README · BUILD_REPORT
+        │
+        ▼
+   BUILD DELIVERED — operator never re-entered the loop
 ```
 
 Poseidon's context preservation: the DISPATCH phase fires parallel
@@ -353,37 +416,9 @@ trident_build subagents (one per file) and trident_explore scouts for
 context — the heavy file surgery happens in subagents, so Poseidon's own
 context window stays lean and it only sees SHA256 hashes + summaries.
 
-### The Macro Flow
-
-1. **Activation** — user enables Poseidon Mode (natural language; Phase 2 moves to a `/poseidon` slash command). This unlocks bash/write/edit on the primary agent.
-2. **Audit** — the God Loop runs the 18-layer AST engine deterministically. Findings + score come back with zero model involvement.
-3. **Decide** — the model receives the intelligence context (findings by file, previous wave results, stall analysis) and chooses: PLAN a new wave, escalate to PROBLEM_SOLVE, or ACCEPT_RISK. `action=start` is rejected here — no fallback.
-4. **Plan** — the model designs a per-file fix strategy (root cause, approach, blast radius, depth). Agent specs are built from the strategy.
-5. **Dispatch** — trident_build subagents are dispatched — one per file, never colliding. Each reads source, applies the strategy, self-verifies, and returns SHA256 hashes.
-6. **Collect + Verify** — outputs are collected; the evidence gate (≥0.96 pass rate) and WaveVerifier (SHA256, tsc, audit, regression, freshness) run mechanically. Then the model issues per-agent trust verdicts (TRUSTED / QUARANTINED / REJECTED).
-7. **Re-audit + Score** — deterministic re-run; cycle increments. If progress stalls for 2 cycles, the model is routed to PROBLEM_SOLVE.
-8. **Container Test** — FULLY MANUAL. The primary agent designs and runs 5+ adversarial scenarios against the deployed bundle. The evidence gate rejects pass declarations with no container execution evidence.
-9. **PASS / LOOP** — PASS requires score ≥96 AND container evidence. LOOP resets to INIT with accumulated diagnosis for the next round.
-
-### Deterministic vs Model-Based (the core filter)
-
-| Dimension | Deterministic phases | Model-based phases |
-|-----------|---------------------|--------------------|
-| Phases | INIT, AUDIT, SCORE, COLLECT, AUDIT_RECHECK | DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE |
-| What runs | Engines + formulas (AST walk, score math, evidence gate, snapshot hash) | The LLM, given a mechanical context and a structured action contract |
-| Why | Machines don't lie — an AST walk finding an empty catch is ground truth | Engineering is judgment — approach selection, root-cause analysis, trust assessment |
-| Failure mode | None (deterministic) | The model can be wrong — caught by the next deterministic phase (re-audit rescoring) |
-| Enforcement | `action=start` advances them | Phase-specific actions (`decide`, `plan`, `verify`, `solve`, `diagnose`); wrong action = PHASE ACTION ERROR, no fallback |
-
-### Subagent Architecture
-
-| Agent | Role | Scope | Enforcement |
-|-------|------|-------|-------------|
-| **trident** (primary) | Orchestrates the God Loop — audits, decides, plans, verifies, container-tests | Everything | 3-layer firewall, phase-action enforcement, identity, evidence chain |
-| **trident_build** (subagent) | Executes fix strategies — reads source, applies the strategy verbatim, self-verifies, returns SHA256 | ONE file per agent (file-based wave dispatch — no collisions) | CODE-enforced quality gates, Merkle chain evidence, theatrical detection, runtime-grade enforcement (P1-P10) |
-| **trident_explore** (subagent) | Read-only context ingestion for parallel information gathering | Read-only | Bypasses write blocking; cannot call trident-poseidon (leaf node) |
-
 ---
+
+
 
 ## Agents (3)
 
