@@ -22,14 +22,91 @@ It is built around one operating principle: **the agent never declares success �
 **The 13-phase God Loop is the engine.** Each phase is either *deterministic* (mechanical — a formula or an engine runs, no judgment needed) or *model-based* (the LLM must make a real engineering judgment). The flow:
 
 ```
-INIT → AUDIT → SCORE → DECIDE → PLAN → DISPATCH → COLLECT → VERIFY
-                    ↑                    ↓                      ↓
-              AUDIT_RECHECK ←←←←←←←←←←←←←←←←←←←← ←                     │
-                    ↓                                                      │
-                 SCORE → DECIDE                                            │
-                                                              PASS (terminal)
-                                                              LOOP (reset→INIT)
+                        POSEIDON GOD LOOP — THE FULL 13-PHASE MACHINE
+                        (D = deterministic engine  ·  M = model judgment)
+
+   ┌───────────────────────────────┐
+   │  INIT                         │ D   scan .ts files · snapshot hash
+   │  snapshot + canon docs        │
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  AUDIT                        │ D   18-layer AST engine
+   │  findings → evidence store    │     zero model involvement
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  SCORE                        │ D   formula: max(0, 100−15C−8H−3M−1L)
+   │  + stall counter + CycleTracker│    + regression tracking
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  DECIDE                       │ M   action=decide
+   │  PLAN │ PROBLEM_SOLVE │       │     context: findings, prev waves,
+   │  ACCEPT_RISK                  │     stall analysis
+   └───────┬───────────┬───────────┘
+           │           │
+           ▼           └──────────────► PROBLEM_SOLVE (stalled ≥ 2)
+   ┌───────────────────────────────┐
+   │  PLAN                         │ M   action=plan
+   │  fix strategy per file        │     root cause · approach ·
+   │  (root cause, blast radius)   │     blast radius · depth
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  DISPATCH                     │ M   action=start → task()
+   │  one trident_build per file   │     file-based waves, no collisions
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  COLLECT                      │ D   read wave agent outputs
+   │  + T1 compaction bridge       │     ≥3 failed dispatches
+   └───────────────┬───────────────┘     └──► PROBLEM_SOLVE
+                   ▼
+   ┌───────────────────────────────┐
+   │  VERIFY                       │ M   action=verify
+   │  evidence gate (≥0.96) first  │     then per-agent verdicts:
+   │  + WaveVerifier 5 checks      │     TRUSTED · QUARANTINED · REJECTED
+   └───────┬───────────┬───────────┘
+           │           │
+      ┌────▼─────┐   THEATRICAL ────► PROBLEM_SOLVE
+      │  TRUSTED │
+      └────┬─────┘
+           ▼
+   ┌───────────────────────────────┐
+   │  AUDIT_RECHECK                │ D   re-audit · refresh hash
+   │  cycle++                      │     snapshot-change entry too
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  SCORE (recompute)            │ D   new score → back to DECIDE
+   └───────────────┬───────────────┘     ▲
+                   ▼                     │  loop continues until
+   ┌───────────────────────────────┐     │  score ≥ 96
+   │  CONTAINER_TEST               │ M   FULLY MANUAL
+   │  5+ adversarial scenarios     │     5+ angles · evidence gate
+   └───────┬───────────┬───────────┘
+           │           │
+    passed ▼           │ failed (action=diagnose)
+   ┌───────────────────────────────┐  └────► PLAN or PROBLEM_SOLVE
+   │  PASS  (terminal)             │
+   │  score≥96 + container evidence│
+   └───────────────────────────────┘
+
+   ┌───────────────────────────────┐
+   │  PROBLEM_SOLVE                │ M   action=solve
+   │  read source · root cause ·   │     entry: stall · theatrical ·
+   │  proposal · nextPhase         │     dispatch-fail · test-fail
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  LOOP (terminal→reset)        │   round++ → back to INIT with
+   └───────────────────────────────┘   accumulated diagnosis
+
+   SNAPSHOT-HASH WATCH: any external file change at any phase
+   → force AUDIT_RECHECK (the loop is never blind to edits)
 ```
+
 
 - **Deterministic phases** (INIT, AUDIT, SCORE, COLLECT, AUDIT_RECHECK): run engines and formulas. The 18-layer audit engine runs `ts.createProgram` and walks the AST. Scoring is `max(0, 100−15·CRITICAL−8·HIGH−3·MEDIUM−1·LOW)`. No model involvement, no judgment, no ambiguity.
 - **Model-based phases** (DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE): the God Loop generates an intelligence context — findings by file, source snippets, previous wave results, consequence analysis — and REQUIRES the model to respond with a phase-specific action. Wrong actions are rejected (no fallbacks).
@@ -419,17 +496,96 @@ external file modifications and triggers an unscheduled AUDIT_RECHECK — the Go
 Loop is never blind to changes, regardless of who made them.
 
 ```
-INIT → AUDIT → SCORE → DECIDE → PLAN → DISPATCH → COLLECT → VERIFY
-                    ↑                    ↓                      ↓
-              AUDIT_RECHECK ←←←←←←←←←←←←←←←←←←←← ←                     │
-                    ↓                                                      │
-                 SCORE → DECIDE                                            │
-                                                              PASS (terminal)
-                                                              LOOP (reset→INIT)
+                        POSEIDON GOD LOOP — THE FULL 13-PHASE MACHINE
+                        (D = deterministic engine  ·  M = model judgment)
 
-         PROBLEM_SOLVE entered from DECIDE (stall), VERIFY (theatrical),
-         COLLECT (dispatch failure), CONTAINER_TEST (undiagnosed failure)
+   ┌───────────────────────────────┐
+   │  INIT                         │ D   scan .ts files · snapshot hash
+   │  snapshot + canon docs        │
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  AUDIT                        │ D   18-layer AST engine
+   │  findings → evidence store    │     zero model involvement
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  SCORE                        │ D   formula: max(0, 100−15C−8H−3M−1L)
+   │  + stall counter + CycleTracker│    + regression tracking
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  DECIDE                       │ M   action=decide
+   │  PLAN │ PROBLEM_SOLVE │       │     context: findings, prev waves,
+   │  ACCEPT_RISK                  │     stall analysis
+   └───────┬───────────┬───────────┘
+           │           │
+           ▼           └──────────────► PROBLEM_SOLVE (stalled ≥ 2)
+   ┌───────────────────────────────┐
+   │  PLAN                         │ M   action=plan
+   │  fix strategy per file        │     root cause · approach ·
+   │  (root cause, blast radius)   │     blast radius · depth
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  DISPATCH                     │ M   action=start → task()
+   │  one trident_build per file   │     file-based waves, no collisions
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  COLLECT                      │ D   read wave agent outputs
+   │  + T1 compaction bridge       │     ≥3 failed dispatches
+   └───────────────┬───────────────┘     └──► PROBLEM_SOLVE
+                   ▼
+   ┌───────────────────────────────┐
+   │  VERIFY                       │ M   action=verify
+   │  evidence gate (≥0.96) first  │     then per-agent verdicts:
+   │  + WaveVerifier 5 checks      │     TRUSTED · QUARANTINED · REJECTED
+   └───────┬───────────┬───────────┘
+           │           │
+      ┌────▼─────┐   THEATRICAL ────► PROBLEM_SOLVE
+      │  TRUSTED │
+      └────┬─────┘
+           ▼
+   ┌───────────────────────────────┐
+   │  AUDIT_RECHECK                │ D   re-audit · refresh hash
+   │  cycle++                      │     snapshot-change entry too
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  SCORE (recompute)            │ D   new score → back to DECIDE
+   └───────────────┬───────────────┘     ▲
+                   ▼                     │  loop continues until
+   ┌───────────────────────────────┐     │  score ≥ 96
+   │  CONTAINER_TEST               │ M   FULLY MANUAL
+   │  5+ adversarial scenarios     │     5+ angles · evidence gate
+   └───────┬───────────┬───────────┘
+           │           │
+    passed ▼           │ failed (action=diagnose)
+   ┌───────────────────────────────┐  └────► PLAN or PROBLEM_SOLVE
+   │  PASS  (terminal)             │
+   │  score≥96 + container evidence│
+   └───────────────────────────────┘
+
+   ┌───────────────────────────────┐
+   │  PROBLEM_SOLVE                │ M   action=solve
+   │  read source · root cause ·   │     entry: stall · theatrical ·
+   │  proposal · nextPhase         │     dispatch-fail · test-fail
+   └───────────────┬───────────────┘
+                   ▼
+   ┌───────────────────────────────┐
+   │  LOOP (terminal→reset)        │   round++ → back to INIT with
+   └───────────────────────────────┘   accumulated diagnosis
+
+   SNAPSHOT-HASH WATCH: any external file change at any phase
+   → force AUDIT_RECHECK (the loop is never blind to edits)
 ```
+
+PROBLEM_SOLVE is entered from four failure points: DECIDE when the score
+stalls ≥2 cycles, VERIFY when agents are detected as theatrical, COLLECT when
+dispatch fails ≥3 times, and CONTAINER_TEST when a test failure is diagnosed.
+It exits to LOOP, which resets to INIT with the diagnosis carried forward as
+learning for the next round.
 
 ### Phase Classification
 
