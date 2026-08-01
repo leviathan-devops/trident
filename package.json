@@ -1,6 +1,6 @@
 {
   "name": "trident-v4.4",
-  "version": "v4.4.1",
+  "version": "v4.4.3",
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
