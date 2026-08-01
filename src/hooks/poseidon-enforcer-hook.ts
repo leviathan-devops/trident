@@ -84,7 +84,12 @@ export function checkPoseidonDerailment(
     }
   }
   if (!phase) {
-    return null; // No phase detectable — can't enforce
+    // Cannot determine God Loop phase — enforcement skipped
+    // This is a known gap: if state.json is unreadable or Poseidon was activated
+    // but God Loop hasn't started yet, we can't enforce phase-tool mapping.
+    // Log warning so it's visible in diagnostics.
+    console.warn('[PoseidonEnforcer] Cannot detect God Loop phase — phase enforcement skipped for tool:', toolName);
+    return null;
   }
 
   const expectedTools = PHASE_TOOL_MAP[phase];

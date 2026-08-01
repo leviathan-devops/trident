@@ -46,12 +46,17 @@ export const R15_CONTAINER_PREFLIGHT: LayerRule = {
           // Check if inside conditional: if (!process.env.X)
           (ts.isPrefixUnaryExpression(parent) && parent.operator === ts.SyntaxKind.ExclamationToken);
 
-        // Check if inside if guard
+        // Check if inside if guard referencing process.env
         let inGuard = false;
         let p: ts.Node | undefined = n.parent;
         while (p && p !== node) {
           if (ts.isIfStatement(p) && ts.isBinaryExpression(p.expression)) {
-            // Rough check — if the if statement references process.env
+            // Check if the if condition references process.env
+            const condText = p.expression.getText(sf);
+            if (condText.includes('process.env')) {
+              inGuard = true;
+              break;
+            }
           }
           p = p.parent;
         }

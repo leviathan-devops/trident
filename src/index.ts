@@ -11,6 +11,7 @@ import { registerWarheadHooks } from './shared/trident-warhead-synthesizer.js';
 import { TRIDENT_BUILD_T1 } from './subagents/trident-build/identity/t1-prompt.js';
 import { createTridentBuildHooks } from './subagents/trident-build/hooks/index.js';
 import { createBuildStatusTool } from './subagents/trident-build/tools/build-status.js';
+import { poseidonState } from './poseidon/poseidon-state.js';
 
 // ============================================================================
 // CONSOLE SPILLOVER PREVENTION — redirect ALL console output to tridentLog
@@ -161,6 +162,9 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
   // R16 FIX: No type cast needed — TS accepts object matching Record<string, unknown>
   chainBeforeHook(hooks, buildHooks);
   chainAfterHook(hooks, buildHooks);
+
+  // Load Poseidon state from disk for session persistence across plugin reloads
+  try { poseidonState.loadFromDisk(); } catch (e) { tridentLog('WARN', 'plugin', `Poseidon state load failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`); }
 
   const tools = createTridentTools(input.client);
 

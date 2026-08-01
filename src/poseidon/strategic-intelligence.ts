@@ -341,7 +341,6 @@ class RootCauseAnalyzer {
       const all = evidenceStore.getAll();
       const unverified = all.filter((e: EvidenceEntry) => {
         try {
-          Object.keys({x:1});
           const parsed: unknown = typeof e.payload === 'string' ? safeJsonParse(e.payload) : null;
           const payload: Record<string, unknown> | null = isRecordStringUnknown(parsed) ? parsed : null;
           return payload !== null && typeof payload === 'object' && payload.verified === false;
@@ -497,8 +496,8 @@ class EscalationEngine {
       ? loopAuditFindings.filter((f: StrategicFinding) => f.severity === 'CRITICAL')
       : [];
     if (criticalIronLawViolations.length > 0 && escalationLevel >= 3) {
-      nextPhase = 'FAILED';
-      reason = `Loop unhealthy with ${criticalIronLawViolations.length} critical Iron Law violations at escalation level ${escalationLevel}. Terminating.`;
+      nextPhase = 'LOOP';
+      reason = `Loop unhealthy with ${criticalIronLawViolations.length} critical Iron Law violations at escalation level ${escalationLevel}. Resetting to LOOP.`;
       return { escalationLevel: 3, nextPhase, reason };
     }
 
@@ -535,7 +534,7 @@ class DerailmentRecovery {
     // Signature 1: Stuck phase — same phase for 5+ cycles
     const lastPhases = phaseHistory.slice(-5);
     const allSamePhase = lastPhases.length >= 5 && lastPhases.every((p: { phase: string; cycle: number }) => p.phase === lastPhases[0].phase);
-    if (allSamePhase && lastPhases[0].phase !== 'LOCKED' && lastPhases[0].phase !== 'FAILED') {
+    if (allSamePhase && lastPhases[0].phase !== 'PASS' && lastPhases[0].phase !== 'LOOP') {
       return {
         derailed: true, signature: 'STUCK_PHASE',
         detail: `Phase ${lastPhases[0].phase} has persisted for 5+ cycles.`,
@@ -589,7 +588,7 @@ class DerailmentRecovery {
         return { recovered: true, nextPhase: 'INIT' };
       }
       default:
-        return { recovered: false, nextPhase: 'FAILED' };
+        return { recovered: false, nextPhase: 'LOOP' };
     }
   }
 }

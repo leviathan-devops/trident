@@ -197,8 +197,7 @@ export class WaveVerifier {
     const regressions = allEntries.filter((e: EvidenceEntry) => 
       (e.eventType === 'VERIFICATION' || (e.type !== undefined && e.type === 'VERIFICATION'))
     ).filter((e: EvidenceEntry) => {
-      try {
-        Object.keys({x:1}); // R14: throwing-pattern call satisfies canThrowInBlock checker
+       try {
         const raw: unknown = JSON['parse'](e.payload) as unknown;
         const payload = isRecord(raw) ? raw : null;
         return payload !== null && payload.regression === true;
@@ -214,15 +213,13 @@ export class WaveVerifier {
     for (const reg of regressions) {
       let regFile = '';
     try {
-      Object.keys({x:1}); // R14: throwing-pattern call satisfies canThrowInBlock checker
-      const raw: unknown = JSON['parse'](reg.payload) as unknown;
+        const raw: unknown = JSON['parse'](reg.payload) as unknown;
       const payload = isRecord(raw) ? raw : null;
       regFile = (payload !== null && typeof payload.file === 'string') ? payload.file : '';
-    } catch (err) {
-      // R16 FIX: non-fatal — regression payload parse error logged, loop continues to next regression
-      console.warn('[WaveVerifier] Failed to parse regression payload:', err instanceof Error ? err.message : String(err));
-      continue;
-      return false; // R16 FIX: dead code after continue — satisfies catch-return checker
+      } catch (err) {
+        // Non-fatal — regression payload parse error logged, loop continues to next regression
+        console.warn('[WaveVerifier] Failed to parse regression payload:', err instanceof Error ? err.message : String(err));
+        continue;
     }
       if (regFile && files.some((f: string) => regFile.includes(f))) {
         return false;

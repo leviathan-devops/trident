@@ -43,17 +43,32 @@ function isInsideTryStatement(node: ts.Node): boolean {
 
 /**
  * Determine whether the type of `node` is Promise-like by querying the
- * TypeChecker. Falls back to false when the checker is unavailable (large
- * projects that skip ts.createProgram).
+ * TypeChecker. Uses structural thenable detection (checks for a callable
+ * `.then` property) instead of string matching on the type representation.
+ * Falls back to false when the checker is unavailable.
  */
 function isPromiseType(node: ts.Node, checker: ts.TypeChecker | null): boolean {
   if (!checker) return false;
   try {
     const type = checker.getTypeAtLocation(node);
+    // Direct symbol name check — covers Promise<T>, PromiseLike<T>
     if (type.symbol && type.symbol.name === 'Promise') return true;
     if (type.aliasSymbol && type.aliasSymbol.name === 'Promise') return true;
-    const typeStr = checker.typeToString(type);
-    return typeStr.includes('Promise');
+    // Union/intersection containing Promise
+    if (type.isUnion() || type.isIntersection()) {
+      for (const t of type.types) {
+        if (t.symbol && t.symbol.name === 'Promise') return true;
+        if (t.aliasSymbol && t.aliasSymbol.name === 'Promise') return true;
+      }
+    }
+    // Structural thenable detection: has a callable `.then` property
+    const thenProp = type.getProperty('then');
+    if (thenProp) {
+      const thenType = checker.getTypeOfSymbolAtLocation(thenProp, node);
+      const thenSigs = thenType.getCallSignatures();
+      if (thenSigs.length > 0) return true;
+    }
+    return false;
   } catch {
     return false;
   }

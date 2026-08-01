@@ -16,11 +16,17 @@ export function createSessionHook(): Hooks['event'] {
     const sessionId = event.sessionId || '';
     // FIXED: Add fallback chain — opencode may pass agent via different paths
     const agent = event.agent || (input as { agent?: string })?.agent || (input as { session?: { agent?: string } })?.session?.agent || '';
+    // Events with NO agent info must NOT touch state — session.updated/diff/message
+    // events fire constantly without agent data, and writing undefined with an empty
+    // sessionId lands on the shared 'default' key, nulling the trident identity that
+    // hooks without sessionID (messages.transform) depend on.
+    if (!agent) return;
     if (!isTridentAgent(agent)) {
-      setCurrentAgent(undefined, sessionId);
+      // Only clear the SPECIFIC session — never the shared 'default' fallback key.
+      if (sessionId && sessionId !== 'default') setCurrentAgent(undefined, sessionId);
       return;
     }
-    setCurrentAgent(agent, sessionId);
+    setCurrentAgent(agent, sessionId || 'default');
     if (event.type === 'session.created') {
       handleSessionCreated();
     } else if (event.type === 'session.ended') {
@@ -33,6 +39,9 @@ function handleSessionCreated(): void {
 }
 
 function handleSessionEnded(sessionId?: string): void {
-  clearCurrentAgent(sessionId);
-  orchestrator.resetSession(sessionId);
+  // Only clear the SPECIFIC session — never the shared 'default' fallback key.
+  if (sessionId && sessionId !== 'default') {
+    clearCurrentAgent(sessionId);
+    orchestrator.resetSession(sessionId);
+  }
 }

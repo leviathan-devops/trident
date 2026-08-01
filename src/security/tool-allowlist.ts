@@ -9,6 +9,7 @@ const ALLOWED_TOOLS = new Set([
   'trident-deep-planning',
   'trident-problem-solving',
   'trident-context-synthesis',
+  'trident-ship-package',
   'trident-poseidon',
   'build-status',
   // trident-vision REMOVED — replaced by zai-vision_* and visual-cortex_* MCP tools

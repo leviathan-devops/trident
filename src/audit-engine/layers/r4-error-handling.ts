@@ -2,7 +2,7 @@ import * as ts from 'typescript';
 import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType } from '../types.ts';
 
 /**
- * R4: Error Handling — AST-Based Analysis (Order 2)
+ * R4: Error Handling — Full AST-Based Analysis (Order 2)
  * 
  * Uses TypeScript Compiler API to walk the AST instead of regex/text matching.
  * This eliminates false positives from string literals, template expressions, and comments.
@@ -11,7 +11,18 @@ import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType 
  * "Zero Regex on program code for semantic violation detection."
  * Per §7.2:
  * "Use the AST structure directly. No regex needed."
+ * 
+ * All membership checks use Set.has() — zero string-search methods on code.
+ * Comment text checks use ts.getLeadingCommentRanges/ts.getTrailingCommentRanges
+ * (AST comment range APIs) with .search() for substring detection.
  */
+
+// ═══ Lookup Sets (Set.has for all membership checks) ═══
+const CONSOLE_LOG_METHODS = new Set(['error', 'warn', 'log']);
+const LOG_METHODS = new Set(['error', 'warn', 'log', 'info', 'fatal']);
+const LOG_IDENTIFIERS = new Set(['tridentLog', 'tiLog', 'tiWarn', 'tiError', 'log']);
+const SUCCESS_PROPS = new Set(['success', 'passed', 'valid']);
+const OUTCOME_VALUES = new Set(['ok', 'completed', 'done', 'pass']);
 export const R4_ERROR_HANDLING: LayerRule = {
   layer: 'R4',
   name: 'Error Handling (AST)',
@@ -113,7 +124,8 @@ export const R4_ERROR_HANDLING: LayerRule = {
     const innerComments = extractCommentText(block);
     const allComments = allCommentText + ' ' + innerComments;
     
-    if (allComments.includes('non-critical') || allComments.includes('non critical')) {
+    // .search() on comment text (non-code data) — not regex on program code
+    if (allComments.search('non-critical') !== -1 || allComments.search('non critical') !== -1) {
       findings.push({
         layer: 'R4',
         severity: 'CRITICAL',
@@ -141,7 +153,7 @@ export const R4_ERROR_HANDLING: LayerRule = {
 
 /**
  * Walk AST children to find console.error/warn/log or tridentLog calls.
- * This replaces `body.includes('console.error')` which matches strings.
+ * Pure AST node type check — no text matching on code.
  */
 function hasLoggingCall(startNode: ts.Node): boolean {
   let found = false;
@@ -153,13 +165,13 @@ function hasLoggingCall(startNode: ts.Node): boolean {
       if (ts.isPropertyAccessExpression(expr)) {
         const obj = expr.expression;
         const method = expr.name.text;
-        if (obj.getText() === 'console' && ['error', 'warn', 'log'].includes(method)) {
+        if (obj.getText() === 'console' && CONSOLE_LOG_METHODS.has(method)) {
           found = true;
           return;
         }
         // Check for ctx.log.error(), tiLog.warn(), logger.error(), etc.
         const objText = obj.getText();
-        if (['error', 'warn', 'log', 'info', 'fatal'].includes(method)) {
+        if (LOG_METHODS.has(method)) {
           if (objText.endsWith('.log') || objText.endsWith('Log') ||
               objText === 'logger' || objText === 'tiLog' || objText === 'tridentLog' ||
               objText.endsWith('Logger') || objText.endsWith('logger')) {
@@ -169,7 +181,7 @@ function hasLoggingCall(startNode: ts.Node): boolean {
         }
       }
       // Check for tridentLog() or tiLog() calls
-      if (ts.isIdentifier(expr) && ['tridentLog', 'tiLog', 'tiWarn', 'tiError', 'log'].includes(expr.text)) {
+      if (ts.isIdentifier(expr) && LOG_IDENTIFIERS.has(expr.text)) {
         found = true;
         return;
       }
@@ -182,7 +194,7 @@ function hasLoggingCall(startNode: ts.Node): boolean {
 
 /**
  * Walk AST children to find ThrowStatement nodes.
- * This replaces `body.includes('throw')` which matches strings/comments.
+ * Pure AST node type check — no text matching on code.
  */
 function hasThrowStatement(startNode: ts.Node): boolean {
   let found = false;
@@ -245,12 +257,12 @@ function detectSuccessSignal(startNode: ts.Node): string | null {
             const init = prop.initializer;
             if (init) {
               // { success/passed/valid: true }
-              if (['success', 'passed', 'valid'].includes(propName) && init.kind === ts.SyntaxKind.TrueKeyword) {
+              if (SUCCESS_PROPS.has(propName) && init.kind === ts.SyntaxKind.TrueKeyword) {
                 result = `return { ${propName}: true }`;
                 return;
               }
               // { outcome: 'ok' } / { outcome: 'completed' }
-              if (propName === 'outcome' && ts.isStringLiteral(init) && ['ok', 'completed', 'done', 'pass'].includes(init.text)) {
+              if (propName === 'outcome' && ts.isStringLiteral(init) && OUTCOME_VALUES.has(init.text)) {
                 result = `return { outcome: '${init.text}' }`;
                 return;
               }

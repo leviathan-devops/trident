@@ -12,7 +12,7 @@ export const TRIDENT_CONFIG = {
   version: '4.4.2',
   debug: Boolean(process.env.TRIDENT_DEBUG ?? ''),
   logPath: process.env.TRIDENT_LOG_PATH || '',
-  artifactsBase: process.env.TRIDENT_ARTIFACTS_BASE || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'Shared Workspace Context', 'Trident Agent', 'GENERATED_ARTIFACTS'),
+  artifactsBase: process.env.TRIDENT_ARTIFACTS_BASE || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'Shared Workspace Context', 'Trident_Agent', 'GENERATED_ARTIFACTS'),
 
   // Poseidon Mode settings
   poseidonMaxCycles: 50,

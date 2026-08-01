@@ -54,7 +54,7 @@ export function prioritizeFixes(result: AuditResult): FixPhase[] {
     },
     {
       phase: 7, name: 'Self-Audit', description: 'Re-audit to verify score improved',
-      layers: [], afterFixCommands: ['Re-run Trident audit'],
+      layers: [], afterFixCommands: ['Re-run Trident v4.3 audit'],
       blocksPhases: [], scoreGroup: 0,
     },
   ];

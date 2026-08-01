@@ -2,174 +2,198 @@ import { tool } from '@opencode-ai/plugin';
 import { z } from 'zod';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { poseidonState, isLeafNode } from '../poseidon/poseidon-state.js';
+import { poseidonState, isLeafNode, getGodLoopPhase } from '../poseidon/poseidon-state.js';
 import { tridentLog } from '../utils.js';
 import { godLoopOrchestrator } from '../poseidon/god-loop.js';
+import { validatePhaseAction } from '../poseidon/phase-intelligence.js';
 
-// R16 FIX: Module-level type assertion utility — single assertion point per file
 function cast<T>(value: unknown): T { const r: T = value; return r; }
 
 export const tridentPoseidonTool = tool({
-  description: 'POSEIDON MODE: God Orchestrator for quality-enforced build execution. Dispatches work to Trident_Build subagent, audits output, loops until 96%+ runtime grade. AUTO-LOCKS on completion. ALL POSEIDON OUTPUT MUST BE DISPLAYED TO THE USER — THE USER MUST SEE EVERY CYCLE PLAN, SCORE, AND NEXT STEP.',
+  description: 'POSEIDON MODE: God Orchestrator for quality-enforced build execution. ' +
+    'v4.4.3 Overhaul: 6 model-required phases (DECIDE, PLAN, DISPATCH, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE). ' +
+    'Each phase requires its specific action. action=start is REJECTED at model-required phases. ' +
+    'Mechanical phases (INIT, AUDIT, SCORE, COLLECT, AUDIT_RECHECK) advance with action=start. ' +
+    'ALL POSEIDON OUTPUT MUST BE DISPLAYED TO THE USER.',
 
   args: {
     targetPath: z.string().describe('Absolute path to the project root to build/audit'),
-    action: z.enum(['start', 'status', 'abort', 'verify', 'phase', 'deactivate', 'revoke'])
+    action: z.enum(['start', 'status', 'abort', 'decide', 'plan', 'verify', 'diagnose', 'solve', 'phase', 'deactivate', 'revoke'])
       .default('start')
-      .describe('start=advance God Loop one phase, status=show current state, abort=cancel running loop, phase=run 10-phase machine, verify=alias for start, deactivate=exit Poseidon Mode, revoke=full reset'),
-    maxCycles: z.number().min(1).max(200).default(50)
-      .describe('Maximum loop iterations (safeguard against infinite loops)'),
+      .describe('start=advance mechanical phase, decide=submit DECIDE decision, plan=submit PLAN strategies, ' +
+        'verify=submit VERIFY verdicts, diagnose=submit CONTAINER_TEST failure diagnosis, ' +
+        'solve=submit PROBLEM_SOLVE solution, status=show state, abort=cancel, ' +
+        'phase=alias for start, deactivate/revoke=user-chat only'),
+    maxCycles: z.number().min(1).max(200).default(50),
+    // Payload for model-required phases
+    decision: z.string().optional().describe('For action=decide: PLAN | PROBLEM_SOLVE | ACCEPT_RISK'),
+    reasoning: z.string().optional().describe('For action=decide/solve: your reasoning chain'),
+    payload: z.string().optional().describe('JSON payload for action=plan/verify/diagnose (fileStrategies, agentVerdicts, diagnosis)'),
   },
 
-  execute: async (args: { targetPath: string; action: 'start' | 'status' | 'abort' | 'verify' | 'phase' | 'deactivate' | 'revoke'; maxCycles: number }, ctx?: unknown) => {
+  execute: async (args: {
+    targetPath: string;
+    action: 'start' | 'status' | 'abort' | 'decide' | 'plan' | 'verify' | 'diagnose' | 'solve' | 'phase' | 'deactivate' | 'revoke';
+    maxCycles: number;
+    decision?: string;
+    reasoning?: string;
+    payload?: string;
+  }, ctx?: unknown) => {
     const rawCtx = cast<Record<string, unknown>>(ctx);
-    const sessionId = (typeof rawCtx?.sessionId === 'string' ? rawCtx.sessionId : '') || (typeof rawCtx?.sessionID === 'string' ? rawCtx.sessionID : '') || 'default';
-    const agentName = (typeof rawCtx?.agent === 'string' ? rawCtx.agent : '') || (typeof rawCtx?.agentName === 'string' ? rawCtx.agentName : '') || '';
+    const sessionId = (typeof rawCtx?.sessionId === 'string' ? rawCtx.sessionId : '') ||
+      (typeof rawCtx?.sessionID === 'string' ? rawCtx.sessionID : '') || 'default';
+    const agentName = (typeof rawCtx?.agent === 'string' ? rawCtx.agent : '') ||
+      (typeof rawCtx?.agentName === 'string' ? rawCtx.agentName : '') || '';
 
-    // LEAF NODE SECURITY: Build agents CANNOT call trident-poseidon
+    // LEAF NODE SECURITY
     if (isLeafNode(agentName)) {
-      return '## POSEIDON MODE: ACCESS DENIED\n\n' +
-        'Build agents (leaf nodes) cannot call trident-poseidon.\n' +
-        'This is a safety guardrail to prevent nested Poseidon execution.\n' +
-        '\n---\n**[POSEIDON DISPLAY] The user MUST see this full output.**';
+      return '## POSEIDON MODE: ACCESS DENIED\n\nBuild agents cannot call trident-poseidon.\n\n---\n**[POSEIDON DISPLAY]**';
     }
 
-    // LOCK CHECK: Poseidon Mode must be active for start/verify/phase actions.
-    // Status/abort/deactivate/revoke are always allowed.
-    // Session ID fix: check BOTH the tool's session AND 'default' because the chat hook
-    // may store activation under a different session ID than the tool context provides.
-    if (args.action === 'start' || args.action === 'verify' || args.action === 'phase') {
-      const isActive = poseidonState.isActive(sessionId) || poseidonState.isActive('default');
-      if (!isActive) {
-        return '## POSEIDON MODE: LOCKED\n\n' +
-          'Poseidon Mode is not active. The user must explicitly activate it by ' +
-          'saying something like "Poseidon Mode Activate" or "enable poseidon mode" ' +
-          'in the chat.\n\n' +
-          'Detected session: ' + sessionId + '\n' +
-          '\n\n---\n**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**';
+    const displayFooter = '\n\n---\n**[POSEIDON DISPLAY] The user MUST see this full output.**';
+
+    // Non-advancing actions (no Poseidon activation required)
+    if (args.action === 'status') {
+      const status = godLoopOrchestrator.getStatus(args.targetPath);
+      const metrics = poseidonState.getMetrics(sessionId);
+      return '## POSEIDON MODE — STATUS\n\n' +
+        '### God Loop State\n' +
+        '- Phase: ' + status.phase + '\n' +
+        '- Cycle: ' + status.cycle + '\n' +
+        '- Score: ' + status.score + '/100\n' +
+        '- Wave: ' + status.wave + '\n' +
+        '- Stalled: ' + status.stalledSince + ' cycles\n\n' +
+        '### Session State\n' +
+        '- Active: ' + (metrics?.active || false) + '\n' +
+        '- Highest Score: ' + (metrics?.highestScore || 0) + '/100\n' +
+        displayFooter;
+    }
+
+    if (args.action === 'abort') {
+      poseidonState.setAbortFlag(sessionId, true);
+      return '## POSEIDON GOD LOOP: ABORTED\n\nState saved for recovery.' + displayFooter;
+    }
+
+    if (args.action === 'deactivate' || args.action === 'revoke') {
+      return '## POSEIDON MODE: STATE UNCHANGED\n\n' +
+        'Mode changes only via user chat ("poseidon deactivate").' + displayFooter;
+    }
+
+    // ── PHASE-ADVANCING ACTIONS ──
+    // All require Poseidon Mode active
+    const isActive = poseidonState.isActive(sessionId) || poseidonState.isActive('default');
+    if (!isActive) {
+      return '## POSEIDON MODE: LOCKED\n\nPoseidon Mode is not active.' + displayFooter;
+    }
+
+    // Map 'phase' to 'start' for backward compat
+    const effectiveAction = args.action === 'phase' ? 'start' : args.action;
+
+    // ── PHASE VALIDATION (v4.4.3 Overhaul: no fallbacks) ──
+    const currentPhase = getGodLoopPhase(args.targetPath);
+    if (currentPhase) {
+      const validation = validatePhaseAction(currentPhase, effectiveAction);
+      if (!validation.valid) {
+        tridentLog('WARN', 'trident-poseidon',
+          'Phase action rejected: phase=' + currentPhase + ' action=' + effectiveAction);
+        return '## ' + validation.error + displayFooter;
       }
     }
 
-    const displayFooter = '\n\n---\n**[POSEIDON DISPLAY] The user MUST see this full output. Present ALL of it in chat. Do NOT hide or summarize.**';
+    // ── HANDLE MODEL-REQUIRED ACTIONS (store payload, then advance) ──
+    if (effectiveAction === 'decide') {
+      const payload = {
+        decision: args.decision || 'PLAN',
+        reasoning: args.reasoning || '',
+      };
+      godLoopOrchestrator.setPhasePayload(args.targetPath, payload);
+      tridentLog('INFO', 'trident-poseidon', 'DECIDE payload stored: ' + payload.decision);
+    }
 
-    try {
-      // STATUS action — read God Loop state from disk
-      if (args.action === 'status') {
-        const status = godLoopOrchestrator.getStatus(args.targetPath);
-        const metrics = poseidonState.getMetrics(sessionId);
-        return '## POSEIDON MODE — STATUS\n\n' +
-          '### God Loop State\n' +
-          '- Phase: ' + status.phase + '\n' +
-          '- Cycle: ' + status.cycle + '\n' +
-          '- Score: ' + status.score + '/100\n' +
-          '- Wave: ' + status.wave + '\n' +
-          '- Stalled: ' + status.stalledSince + ' cycles\n\n' +
-          '### Session State\n' +
-          '- Active: ' + (metrics?.active || false) + '\n' +
-          '- Highest Score: ' + (metrics?.highestScore || 0) + '/100\n' +
-          '- Target: ' + (metrics?.targetPath || args.targetPath) + '\n' +
-          displayFooter;
-      }
+    if (effectiveAction === 'plan') {
+      let parsed: unknown = null;
+      try { parsed = args.payload ? JSON.parse(args.payload) : { fileStrategies: [] }; }
+      catch { parsed = { fileStrategies: [], raw: args.payload }; }
+      godLoopOrchestrator.setPhasePayload(args.targetPath, parsed);
+      tridentLog('INFO', 'trident-poseidon', 'PLAN payload stored');
+    }
 
-      // ABORT action
-      if (args.action === 'abort') {
-        poseidonState.setAbortFlag(sessionId, true);
-        poseidonState.autoDeactivate(sessionId);
-        return '## POSEIDON MODE: ABORTED\n\nGod Loop has been aborted. State saved for recovery.' + displayFooter;
-      }
+    if (effectiveAction === 'verify') {
+      let parsed: unknown = null;
+      try { parsed = args.payload ? JSON.parse(args.payload) : { agentVerdicts: [] }; }
+      catch { parsed = { agentVerdicts: [], raw: args.payload }; }
+      godLoopOrchestrator.setPhasePayload(args.targetPath, parsed);
+      tridentLog('INFO', 'trident-poseidon', 'VERIFY payload stored');
+    }
 
-      // DEACTIVATE action — clean exit from Poseidon Mode
-      if (args.action === 'deactivate') {
-        poseidonState.deactivate(sessionId);
-        return '## POSEIDON MODE: DEACTIVATED\n\n' +
-          'Poseidon Mode has been deactivated. bash/write/edit tools are now re-blocked. ' +
-          'God Loop state preserved on disk for future resumption.' + displayFooter;
-      }
+    if (effectiveAction === 'diagnose') {
+      let parsed: unknown = null;
+      try { parsed = args.payload ? JSON.parse(args.payload) : { diagnosis: [] }; }
+      catch { parsed = { diagnosis: [], raw: args.payload }; }
+      godLoopOrchestrator.setPhasePayload(args.targetPath, parsed);
+      tridentLog('INFO', 'trident-poseidon', 'DIAGNOSE payload stored');
+    }
 
-      // REVOKE action — full reset of all Poseidon state
-      if (args.action === 'revoke') {
-        poseidonState.clear(sessionId);
-        return '## POSEIDON MODE: REVOKED\n\n' +
-          'All Poseidon state has been cleared. Fresh start required.' + displayFooter;
-      }
+    if (effectiveAction === 'solve') {
+      const payload = {
+        rootCause: args.reasoning || '',
+        proposal: args.payload || '',
+        nextPhase: 'LOOP',
+      };
+      godLoopOrchestrator.setPhasePayload(args.targetPath, payload);
+      tridentLog('INFO', 'trident-poseidon', 'SOLVE payload stored');
+    }
 
-      // START / VERIFY / PHASE — all advance the God Loop one phase
-      // The 10-phase state machine runs ONE phase per call.
-      // Each phase returns FORCEFUL instructions telling the model what to do next.
-      poseidonState.setTargetPath(sessionId, args.targetPath);
+    // ── ADVANCE THE GOD LOOP ──
+    poseidonState.setTargetPath(sessionId, args.targetPath);
+    tridentLog('INFO', 'trident-poseidon',
+      'Phase advance: ' + args.targetPath + ' action=' + effectiveAction);
 
-      tridentLog('INFO', 'trident-poseidon', 'Poseidon Mode phase advance for: ' + args.targetPath + ' (action=' + args.action + ')');
+    const result = await godLoopOrchestrator.runPhase(args.targetPath, sessionId);
 
-      const result = await godLoopOrchestrator.runPhase(args.targetPath, sessionId);
+    poseidonState.setScore(sessionId, result.score);
+    poseidonState.incrementCycles(sessionId);
 
-      // Update session metrics
-      poseidonState.setScore(sessionId, result.score);
-      poseidonState.incrementCycles(sessionId);
+    const stateDir = path.join(args.targetPath, '.trident', 'god-loop');
+    const shortLine = '🔄 POSEIDON CYCLE ' + result.cycle + ' | Score: ' + result.score +
+      '/100 | Wave: ' + result.wave + ' | Phase: ' + result.phase + ' → ' + result.nextPhase;
 
-      // ── BUILD VISIBLE OUTPUT ──
-      // The tool returns a SHORT summary that is ALWAYS visible in the TUI.
-      // Full instructions are written to disk for the model to read separately.
-      // This prevents long outputs from being collapsed/truncated by the TUI.
+    // Terminal states
+    if (result.nextPhase === 'PASS' || result.nextPhase === 'LOOP') {
+      return shortLine + '\n\n' + result.instructions.substring(0, 800) + displayFooter;
+    }
 
-      const stateDir = path.join(args.targetPath, '.trident', 'god-loop');
-      const shortLine = '🔄 POSEIDON CYCLE ' + result.cycle + ' | Score: ' + result.score + '/100 | Wave: ' + result.wave + ' | Phase: ' + result.phase + ' → ' + result.nextPhase;
-
-      // Check for terminal states
-      if (result.nextPhase === 'LOCKED' || result.nextPhase === 'FAILED') {
-        poseidonState.autoDeactivate(sessionId);
-        // Terminal states are short enough to show inline
-        return shortLine + '\n\n' + result.instructions.substring(0, 500) + '\n\nPoseidon Mode has been deactivated.';
-      }
-
-      // DISPATCH phase — full specs written to disk, short instruction returned
-      if (result.requiresModelAction) {
-        // Write full dispatch instructions to disk
-        const dispatchPath = path.join(stateDir, 'wave-' + result.wave + '-dispatch.md');
-        try {
-          fs.mkdirSync(stateDir, { recursive: true });
-          fs.writeFileSync(dispatchPath, result.instructions, 'utf-8');
-        } catch (e) {
-          tridentLog('WARN', 'trident-poseidon', 'Failed to write dispatch plan: ' + (e instanceof Error ? e.message : String(e)));
-        }
-
-        // Count agents from the wave manifest in state
-        var agentCount = (result.instructions.match(/Agent \d+:/g) || []).length;
-        if (agentCount === 0) agentCount = 5; // fallback
-
-        // Return SHORT visible instruction
-        return shortLine + '\n\n' +
-          '⚡ DISPATCH REQUIRED: ' + agentCount + ' build agents ready.\n' +
-          'Full dispatch plan: ' + dispatchPath + '\n' +
-          'Read the plan file, then dispatch ALL ' + agentCount + ' agents using subagent_type="trident_build".\n' +
-          'After ALL agents return, call trident-poseidon action=start to COLLECT results.\n' +
-          'DO NOT WAIT. DO NOT ASK. DISPATCH NOW.';
-      }
-
-      // All other phases — check if output is short enough for inline display
-      if (result.instructions.length <= 1500) {
-        // Short enough to show inline
-        return shortLine + '\n\n' + result.instructions + '\n\n→ Call trident-poseidon action=start to advance.';
-      }
-
-      // Long output — write to disk, return summary
-      const detailPath = path.join(stateDir, 'phase-' + result.phase + '-details.md');
+    // DISPATCH — write full plan to disk, return short instruction
+    if (result.requiresModelAction && result.phase === 'DISPATCH') {
+      const dispatchPath = path.join(stateDir, 'wave-' + result.wave + '-dispatch.md');
       try {
-        fs.writeFileSync(detailPath, result.instructions, 'utf-8');
+        fs.mkdirSync(stateDir, { recursive: true });
+        fs.writeFileSync(dispatchPath, result.instructions, 'utf-8');
       } catch (e) {
-        tridentLog('WARN', 'trident-poseidon', 'Failed to write phase details: ' + (e instanceof Error ? e.message : String(e)));
+        tridentLog('WARN', 'trident-poseidon', 'Dispatch write failed: ' + (e instanceof Error ? e.message : String(e)));
       }
-
-      return shortLine + '\n\n' +
-        'Phase details: ' + detailPath + '\n' +
-        '→ Call trident-poseidon action=start to advance to ' + result.nextPhase + '.';
-
-    } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      tridentLog('ERROR', 'trident-poseidon', '[POSEIDON-ERR] ' + errMsg);
-      return '## POSEIDON MODE — ERROR\n\n' +
-        'Phase execution failed: ' + errMsg + '\n\n' +
-        'The God Loop state has been saved. Use `trident-poseidon action=status` to inspect.\n' +
-        'Use `trident-poseidon action=abort` to reset.' + displayFooter;
+      return shortLine + '\n\n⚡ DISPATCH REQUIRED. Full plan: ' + dispatchPath +
+        '\nDispatch ALL agents, then call trident-poseidon action=start.' + displayFooter;
     }
+
+    // Model-required phases (DECIDE, PLAN, VERIFY, CONTAINER_TEST, PROBLEM_SOLVE)
+    // Show full context inline — it's the intelligence the model needs
+    if (result.requiresModelAction) {
+      return shortLine + '\n\n' + result.instructions + displayFooter;
+    }
+
+    // Mechanical phases — short inline
+    if (result.instructions.length <= 1500) {
+      return shortLine + '\n\n' + result.instructions +
+        '\n\n→ Call trident-poseidon action=start to advance.' + displayFooter;
+    }
+
+    // Long output — write to disk
+    const detailPath = path.join(stateDir, 'phase-' + result.phase + '-details.md');
+    try { fs.writeFileSync(detailPath, result.instructions, 'utf-8'); }
+    catch (e) { tridentLog('WARN', 'trident-poseidon', 'Details write failed'); }
+
+    return shortLine + '\n\nPhase details: ' + detailPath +
+      '\n→ Call trident-poseidon action=start to advance to ' + result.nextPhase + '.' + displayFooter;
   },
 });

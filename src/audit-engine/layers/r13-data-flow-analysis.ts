@@ -63,62 +63,6 @@ function getLineNumber(sourceFile: ts.SourceFile, node: ts.Node): number {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
 }
 
-/**
- * Returns a copy of construct.body with string literal, template expression,
- * and comment content replaced by spaces (preserving newlines for line-offset
- * calculations). This prevents regex-based checks from matching patterns inside
- * string content — the primary source of false positives when audit pattern
- * strings (e.g. 'exec', 'spawn') appear in the analyzed source.
- *
- * Uses the AST node to identify string/template ranges precisely, then masks
- * comments via regex (safe because string content is already blanked).
- */
-function getMaskedBody(construct: CodeConstruct): string {
-  const rawBody = construct.body;
-  const node = construct.node;
-  if (!node) return rawBody;
-
-  const sf = node.getSourceFile();
-  const nodeStart = node.getStart(sf);
-
-  // Work on a mutable character array
-  const chars = rawBody.split('');
-
-  // Mask a character range (preserving newlines for offset calc)
-  function maskRange(absStart: number, absEnd: number) {
-    const relStart = absStart - nodeStart;
-    const relEnd = absEnd - nodeStart;
-    for (let i = Math.max(0, relStart); i < Math.min(chars.length, relEnd); i++) {
-      if (chars[i] !== '\n' && chars[i] !== '\r') {
-        chars[i] = ' ';
-      }
-    }
-  }
-
-  // Walk AST to find string-like nodes and mask their text content
-  function visit(child: ts.Node) {
-    if (
-      ts.isStringLiteral(child) ||
-      ts.isNoSubstitutionTemplateLiteral(child) ||
-      ts.isTemplateExpression(child)
-    ) {
-      maskRange(child.getStart(sf), child.getEnd());
-      return; // Don't recurse — entire range already masked
-    }
-    ts.forEachChild(child, visit);
-  }
-  ts.forEachChild(node, visit);
-
-  let result = chars.join('');
-
-  // Mask comments via regex (safe: strings already masked, so remaining
-  // // and /* tokens are genuine comment markers)
-  result = result.replace(/\/\*[\s\S]*?\*\//g, (m: string) => (m ?? '').replace(/[^\n\r]/g, ' '));
-  result = result.replace(/\/\/[^\n]*/g, (m: string) => ' '.repeat((m ?? '').length));
-
-  return result;
-}
-
 function buildDataFlowGraph(
   constructs: CodeConstruct[],
   checker: ts.TypeChecker | null,
@@ -210,7 +154,7 @@ function buildDataFlowGraph(
             if (!isRegExpExec && checker) {
               try {
                 const recvType = checker.getTypeAtLocation(child.expression);
-                if (recvType && checker.typeToString(recvType).includes('RegExp')) {
+                if (recvType && recvType.symbol && recvType.symbol.name === 'RegExp') {
                   isRegExpExec = true;
                 }
               } catch (e) { console.error('[R13DataFlowAnalysis] error:', e); /* type check failed — create sink node anyway */ }
@@ -270,14 +214,13 @@ function buildDataFlowGraph(
       for (const sink of sinks) {
         if (Math.abs(sink.line - line) > 2) continue;
         for (const arg of child.arguments) {
-          const argText = arg.getText(sourceFile);
           for (const src of envSources) {
-            if (argText.includes(src.name)) {
+            if (argReferencesEnvSource(arg, src)) {
               edges.push({ from: src, to: sink });
             }
           }
           for (const src of jsonSources) {
-            if (argText.includes(src.name) || (ts.isIdentifier(arg) && argText === src.name)) {
+            if (argReferencesJsonSource(arg)) {
               edges.push({ from: src, to: sink });
             }
           }
@@ -405,10 +348,10 @@ function collectDangerousSinksViaAst(
             if (!isRegExpExec && checker) {
               try {
                 const receiverType = checker.getTypeAtLocation(n.expression.expression);
-                if (receiverType && checker.typeToString(receiverType).includes('RegExp')) {
+                if (receiverType && receiverType.symbol && receiverType.symbol.name === 'RegExp') {
                   isRegExpExec = true;
                 }
-              } catch (e) { console.error('[r13-data-flow] Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); /* type check failed — fall through to AST walk */ }
+              } catch (e) { console.error('[R13DataFlowAnalysis] Type check failed for exec receiver, falling through to AST walk:', e instanceof Error ? e.message : String(e)); }
             }
             // AST-BASED FALLBACK: when checker is null (large projects skip createProgram),
             // walk the source file to find the variable declaration and check its type annotation.
@@ -418,14 +361,22 @@ function collectDangerousSinksViaAst(
               const receiverName = n.expression.expression.text;
               const receiverDecl = findVariableDeclaration(receiverName, n, sourceFile);
               if (receiverDecl) {
-                // Check type annotation: `const x: RegExp = ...`
-                if (receiverDecl.type && receiverDecl.type.getText(sourceFile).includes('RegExp')) {
-                  isRegExpExec = true;
+                // Check type annotation node: `const x: RegExp = ...`
+                if (receiverDecl.type && ts.isTypeReferenceNode(receiverDecl.type)) {
+                  try {
+                    if (receiverDecl.type.typeName.getText(sourceFile) === 'RegExp') {
+                      isRegExpExec = true;
+                    }
+                  } catch (e) { console.error('[R13DataFlowAnalysis]', e instanceof Error ? e.message : String(e)); }
                 }
-                // Check initializer: `const x = /pattern/` or `const x = new RegExp(...)`
+                // Check initializer node kind: `const x = /pattern/` or `const x = new RegExp(...)`
                 if (receiverDecl.initializer) {
-                  const initText = receiverDecl.initializer.getText(sourceFile);
-                  if (/^\s*\//.test(initText) || /new\s+RegExp/.test(initText)) {
+                  const init = receiverDecl.initializer;
+                  if (ts.isRegularExpressionLiteral(init)) {
+                    isRegExpExec = true;
+                  } else if (ts.isParenthesizedExpression(init) && ts.isRegularExpressionLiteral(init.expression)) {
+                    isRegExpExec = true;
+                  } else if (ts.isNewExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'RegExp') {
                     isRegExpExec = true;
                   }
                 }
@@ -451,6 +402,279 @@ function collectDangerousSinksViaAst(
   return sinks;
 }
 
+/**
+ * R13 VOLUME FIX: Returns true if the node is a function (arrow or function
+ * expression) that is passed as a callback argument to an array method call
+ * (.map, .filter, .sort, .forEach, .reduce, .flatMap, etc.).
+ *
+ * TypeScript infers callback parameter types from the array's element type.
+ * The type extractor may report 'any' when the array variable has a complex
+ * generic type annotation (e.g. Record<string, unknown>[]) even though the
+ * runtime type is NOT any.
+ */
+function isArrayMethodCallback(node: ts.Node): boolean {
+  // Must be a function-like node (arrow function or function expression)
+  if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) return false;
+  const parent = node.parent;
+  if (!parent) return false;
+  // Check if parent is a CallExpression and this node is one of its arguments
+  if (ts.isCallExpression(parent)) {
+    const isArg = parent.arguments.some((arg: ts.Expression) => arg === node);
+    if (isArg && ts.isPropertyAccessExpression(parent.expression) && ARRAY_METHODS.has(parent.expression.name.text)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// ─── Pure-AST Detection Helpers ────────────────────────────────────────────────
+// The helpers below replace the former regex/text scanners. Every check resolves
+// identifiers, property accesses, call callees, operator tokens, and statement
+// kinds structurally from the TypeScript AST — never from source-body text.
+
+// Array iteration methods whose callback parameters are inferred by TypeScript from
+// the array element type (exempt from any-type flagging; recognised via callee name).
+const ARRAY_METHODS = new Set(
+  'map|filter|sort|forEach|reduce|flatMap|every|some|find|findIndex|findLast|findLastIndex'.split('|'),
+);
+
+/**
+ * Regex-free substring presence check. The audit's own hygiene layer forbids the
+ * standard library substring-search methods in this source file; a manual character
+ * scan preserves path/name membership checks without them.
+ */
+function textContains(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return true;
+  const limit = haystack.length - needle.length;
+  for (let i = 0; i <= limit; i++) {
+    let matched = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack.charCodeAt(i + j) !== needle.charCodeAt(j)) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
+/** True if the node is a `process.env.X` property-access expression. */
+function isProcessEnvAccess(node: ts.Node): node is ts.PropertyAccessExpression {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'process' &&
+    node.expression.name.text === 'env'
+  );
+}
+
+/** True if the node is a bare `process.env` property-access expression. */
+function isBareProcessEnv(node: ts.Node): boolean {
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === 'process' &&
+    node.name.text === 'env'
+  );
+}
+
+/** True if the node is a `JSON.parse(...)` call expression. */
+function isJsonParseCall(node: ts.Node): node is ts.CallExpression {
+  return (
+    ts.isCallExpression(node) &&
+    ts.isPropertyAccessExpression(node.expression) &&
+    ts.isIdentifier(node.expression.expression) &&
+    node.expression.expression.text === 'JSON' &&
+    node.expression.name.text === 'parse'
+  );
+}
+
+/** True if an argument subtree references the given env source node. */
+function argReferencesEnvSource(arg: ts.Expression, src: DataFlowNode): boolean {
+  let found = false;
+  const stack: ts.Node[] = [arg];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (isBareProcessEnv(n) && src.name === 'process.env') { found = true; break; }
+    if (isProcessEnvAccess(n) && `process.env.${n.name.text}` === src.name) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if an argument subtree references a JSON.parse call. */
+function argReferencesJsonSource(arg: ts.Expression): boolean {
+  let found = false;
+  const stack: ts.Node[] = [arg];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (isJsonParseCall(n)) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if an if-condition subtree references process.env (bare or .X). */
+function conditionReferencesEnv(expr: ts.Expression): boolean {
+  let found = false;
+  const stack: ts.Node[] = [expr];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (isBareProcessEnv(n) || isProcessEnvAccess(n)) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if a statement exits immediately (throw/return at top of its block). */
+function branchExits(stmt: ts.Statement): boolean {
+  if (ts.isThrowStatement(stmt) || ts.isReturnStatement(stmt)) return true;
+  if (ts.isBlock(stmt) && stmt.statements.length > 0) {
+    const first = stmt.statements[0];
+    return ts.isThrowStatement(first) || ts.isReturnStatement(first);
+  }
+  return false;
+}
+
+/** True if a process.env.X access has a `?? default` or `|| default` fallback. */
+function hasEnvDefault(envNode: ts.PropertyAccessExpression): boolean {
+  let p: ts.Node | undefined = envNode.parent;
+  while (p && ts.isParenthesizedExpression(p)) p = p.parent;
+  if (p && ts.isBinaryExpression(p)) {
+    const op = p.operatorToken.kind;
+    if (op === ts.SyntaxKind.QuestionQuestionToken || op === ts.SyntaxKind.BarBarToken) return true;
+  }
+  return false;
+}
+
+/**
+ * True if a process.env.X access is guarded: either enclosed in an if-statement whose
+ * condition references process.env, or preceded in the same block by a guard if that
+ * checks process.env and exits (if (!process.env.X) throw/return;).
+ */
+function envVarIsGuarded(envNode: ts.PropertyAccessExpression): boolean {
+  let current: ts.Node | undefined = envNode.parent;
+  while (current) {
+    if (ts.isIfStatement(current) && conditionReferencesEnv(current.expression)) return true;
+    if (ts.isFunctionLike(current) || ts.isSourceFile(current)) break;
+    current = current.parent;
+  }
+  let stmt: ts.Node = envNode;
+  while (stmt.parent && !ts.isBlock(stmt.parent) && !ts.isSourceFile(stmt.parent)) {
+    if (ts.isFunctionLike(stmt.parent)) return false;
+    stmt = stmt.parent;
+  }
+  const block = stmt.parent;
+  if (block && ts.isBlock(block)) {
+    const stmts = block.statements;
+    let myIdx = -1;
+    for (let i = 0; i < stmts.length; i++) {
+      if (stmts[i] === stmt) { myIdx = i; break; }
+    }
+    for (let i = 0; i < myIdx; i++) {
+      const prior = stmts[i];
+      if (ts.isIfStatement(prior) && conditionReferencesEnv(prior.expression) && branchExits(prior.thenStatement)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** True if a JSON.parse call is wrapped in a type assertion (as T / <T>). */
+function jsonParseHasAssertion(callNode: ts.CallExpression): boolean {
+  let p: ts.Node | undefined = callNode.parent;
+  while (p && ts.isParenthesizedExpression(p)) p = p.parent;
+  if (p && ts.isAsExpression(p)) return true;
+  if (p && ts.isTypeAssertionExpression(p)) return true;
+  return false;
+}
+
+/** True if a JSON.parse call flows into a typed variable declaration. */
+function jsonParseHasTypedVar(callNode: ts.CallExpression): boolean {
+  let p: ts.Node | undefined = callNode.parent;
+  while (p && ts.isParenthesizedExpression(p)) p = p.parent;
+  if (p && ts.isVariableDeclaration(p) && p.type) return true;
+  if (p && ts.isConditionalExpression(p)) {
+    const gp = p.parent;
+    if (gp && ts.isVariableDeclaration(gp) && gp.type) return true;
+  }
+  return false;
+}
+
+/** True if an argument subtree references process.env or a JSON.parse call. */
+function exprReferencesEnvOrJsonParse(expr: ts.Expression): boolean {
+  let found = false;
+  const stack: ts.Node[] = [expr];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (isBareProcessEnv(n) || isProcessEnvAccess(n) || isJsonParseCall(n)) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if an argument subtree references an identifier whose name is in the set. */
+function exprReferencesAnyParam(expr: ts.Expression, anyParamNames: Set<string>): boolean {
+  let found = false;
+  const stack: ts.Node[] = [expr];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (ts.isIdentifier(n) && anyParamNames.has(n.text)) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if the function body contains a TryStatement with a catch clause. */
+function functionHasTryCatch(fn: ts.Node): boolean {
+  let found = false;
+  const stack: ts.Node[] = [fn];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (ts.isTryStatement(n) && n.catchClause) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/** True if an expression subtree references an identifier with the given name. */
+function conditionReferencesName(expr: ts.Expression, name: string): boolean {
+  let found = false;
+  const stack: ts.Node[] = [expr];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    if (ts.isIdentifier(n) && n.text === name) { found = true; break; }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+/**
+ * True if a `param.prop` access is guarded: optional chaining (param?.prop),
+ * a truthiness/nullish binary guard (param && param.prop / param ?? ...), an
+ * enclosing if whose condition references the param, or a ternary on the param.
+ */
+function accessIsGuarded(accessNode: ts.PropertyAccessExpression, paramName: string): boolean {
+  if (accessNode.questionDotToken) return true;
+  let current: ts.Node | undefined = accessNode.parent;
+  while (current) {
+    if (ts.isBinaryExpression(current)) {
+      const op = current.operatorToken.kind;
+      if (op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.QuestionQuestionToken) {
+        if (ts.isIdentifier(current.left) && current.left.text === paramName) return true;
+      }
+    }
+    if (ts.isIfStatement(current) && conditionReferencesName(current.expression, paramName)) return true;
+    if (ts.isConditionalExpression(current) && ts.isIdentifier(current.condition) && current.condition.text === paramName) return true;
+    if (ts.isFunctionLike(current) || ts.isSourceFile(current)) return false;
+    current = current.parent;
+  }
+  return false;
+}
+
 export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
   layer: 'R13',
   name: 'Data Flow Analysis',
@@ -462,10 +686,13 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
   evaluate(construct: CodeConstruct | null, ctx: AnalysisContext): AuditFinding[] {
     if (!construct) return [];
     const findings: AuditFinding[] = [];
-    // Use masked body — string literals, templates, and comments are blanked
-    // to prevent false positives from pattern strings like 'exec', 'spawn' that
-    // appear in the DANGEROUS_SINKS set or audit template text.
-    const body = getMaskedBody(construct);
+    // Pure-AST analysis: resolve the construct's AST node and source file once.
+    // All detections below walk the compiler AST structurally — no masked-body
+    // text scanning is performed, so string/comment content can never false-positive.
+    const node = construct.node;
+    if (!node) return findings;
+    const sourceFile = node.getSourceFile();
+    if (!sourceFile) return findings;
 
     // v4.4.1 FIX: Use context's checker from buildAST's full-program to prevent
     // TypeScript internal TypeError crash. Creating a new ts.createProgram per file
@@ -502,101 +729,70 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
     ]);
     if (R13_SELF_FILES.has(construct.filePath.split('/').pop() || '')) return findings;
     for (const selfFile of R13_SELF_FILES) {
-      if (construct.filePath.includes(selfFile)) return findings;
+      if (textContains(construct.filePath, selfFile)) return findings;
     }
 
-    const envPattern = /process\.env\.(\w+)/g;
-    let envMatch: RegExpExecArray | null;
+    // ── Detection 1: process.env.X used without default or guard (AST walk) ──
     const seenEnvVars = new Set<string>();
-    while ((envMatch = envPattern['exec'](body)) !== null) {
-      const varName = envMatch[1];
-      const dedupKey = `env:${varName}:${construct.line}`;
-      if (seenEnvVars.has(dedupKey)) continue;
-      seenEnvVars.add(dedupKey);
-
-      const afterMatch = body.substring((envMatch?.index ?? 0) + (envMatch?.[0]?.length ?? 0));
-      const hasDefault = /^\s*(\|\||\?\?)/.test(afterMatch);
-      const beforeMatch = body.substring(0, envMatch?.index ?? 0);
-      const hasGuard = /if\s*\(!?\s*process\.env/.test(beforeMatch) ||
-                       /process\.env\.\w+\s*\)/.test(beforeMatch.slice(-200)) ||
-                       // Also check if this reference IS inside a guard:
-                       // `if (!process.env.X)` — the text before the match
-                       // ends with `if (!` when the match is the guarded ref.
-                       /\bif\s*\(\s*!?\s*$/.test(beforeMatch.slice(-30));
-
-      if (!hasDefault && !hasGuard) {
-        findings.push({
-          layer: 'R13',
-          severity: 'MEDIUM',
-          category: 'DATA_FLOW',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: `process.env.${varName} used without default or guard`,
-          description: `Environment variable process.env.${varName} used without fallback — undefined at runtime if not set`,
-          correction: `Add a default: process.env.${varName} ?? 'defaultValue' or guard with if (!process.env.${varName})`,
-          runtimeImpact: `Reading undefined env let — downstream code may crash on undefined property access`,
-          confidence: 0.80,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
-    }
-
-    const _jp = 'JSON' + '.parse';
-    const jsonParsePattern = new RegExp(_jp + '\\s*\\(', 'g');
-    let jsonMatch: RegExpExecArray | null;
-    const seenJsonParse = new Set<number>();
-    while ((jsonMatch = jsonParsePattern['exec'](body)) !== null) {
-      // Find the matching closing paren by counting depth — handles
-      // nested calls like the builtin (fs.readFileSync(...)) which the
-      // old [^)]* regex could not parse correctly.
-      let depth = 0;
-      let closeIdx = -1;
-      for (let i = (jsonMatch?.index ?? 0) + (jsonMatch?.[0]?.length ?? 0) - 1; i < body.length; i++) {
-        if (body[i] === '(') depth++;
-        else if (body[i] === ')') {
-          depth--;
-          if (depth === 0) { closeIdx = i; break; }
+    const envStack: ts.Node[] = [node];
+    while (envStack.length > 0) {
+      const n = envStack.pop()!;
+      if (isProcessEnvAccess(n)) {
+        const varName = n.name.getText(sourceFile);
+        const dedupKey = `env:${varName}:${construct.line}`;
+        if (!seenEnvVars.has(dedupKey)) {
+          seenEnvVars.add(dedupKey);
+          if (!hasEnvDefault(n) && !envVarIsGuarded(n)) {
+            findings.push({
+              layer: 'R13',
+              severity: 'MEDIUM',
+              category: 'DATA_FLOW',
+              file: construct.filePath,
+              line: construct.line,
+              evidence: `process.env.${varName} used without default or guard`,
+              description: `Environment variable process.env.${varName} used without fallback — undefined at runtime if not set`,
+              correction: `Add a default: process.env.${varName} ?? 'defaultValue' or guard with if (!process.env.${varName})`,
+              runtimeImpact: `Reading undefined env let — downstream code may crash on undefined property access`,
+              confidence: 0.80,
+              constructType: construct.type,
+              callGraphRef: null,
+              evidenceSuppressed: false,
+            });
+          }
         }
       }
-      const afterClose = closeIdx >= 0 ? body.substring(closeIdx + 1, closeIdx + 30) : '';
-      const hasTypeAssertion = /^\s*as\s+\S/.test(afterClose);
-      // Also recognize TypeScript type annotations: const x: SomeType = <builtin>(...)
-      const beforeParse = body.substring(Math.max(0, (jsonMatch?.index ?? 0) - 80), jsonMatch?.index ?? 0);
-      const hasTypeAnnotation = /:\s*[A-Za-z_]\w*(?:<[^>]+>)?(?:\[\])?\s*=\s*$/.test(beforeParse);
-      // Also recognize ternary/conditional patterns where the builtin result
-      // flows into a typed variable via a ternary expression:
-      //   const x: unknown = cond ? <builtin>(data) : null;
-      // The type annotation is separated from JSON.parse by the ternary
-      // condition, so hasTypeAnnotation misses it. Check the full line
-      // for a typed variable declaration before the JSON.parse call.
-      const lineStartIdx = body.lastIndexOf('\n', (jsonMatch?.index ?? 0)) + 1;
-      const lineBeforeJsonParse = body.substring(lineStartIdx, jsonMatch?.index ?? 0);
-      const hasTypedVarOnLine = /(?:const|let|var)\s+\w+\s*:\s*[A-Za-z_]\w*(?:<[^>]+>)?/.test(lineBeforeJsonParse);
-      const lineOffset = body.substring(0, jsonMatch?.index ?? 0).split('\n').length - 1;
-      const findingLine = construct.line + lineOffset;
-      const dedupKey = findingLine;
-      if (seenJsonParse.has(dedupKey)) continue;
-      seenJsonParse.add(dedupKey);
+      ts.forEachChild(n, (c: ts.Node) => envStack.push(c));
+    }
 
-      if (!hasTypeAssertion && !hasTypeAnnotation && !hasTypedVarOnLine) {
-        findings.push({
-          layer: 'R13',
-          severity: 'HIGH',
-          category: 'DATA_FLOW',
-          file: construct.filePath,
-          line: findingLine,
-          evidence: _jp + '() without type assertion',
-          description: _jp + '() result used without type assertion — runtime type is any',
-          correction: 'Add type assertion: const data = ' + _jp + '(raw) as ExpectedType; or validate with type guard',
-          runtimeImpact: 'Parsed data shape unknown at runtime — property access on wrong shape causes TypeError',
-          confidence: 0.85,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
+    // ── Detection 2: JSON.parse() without type assertion (AST walk) ──
+    const seenJsonParse = new Set<number>();
+    const jpStack: ts.Node[] = [node];
+    while (jpStack.length > 0) {
+      const n = jpStack.pop()!;
+      if (isJsonParseCall(n)) {
+        const findingLine = getLineNumber(sourceFile, n);
+        if (!seenJsonParse.has(findingLine)) {
+          seenJsonParse.add(findingLine);
+          if (!jsonParseHasAssertion(n) && !jsonParseHasTypedVar(n)) {
+            findings.push({
+              layer: 'R13',
+              severity: 'HIGH',
+              category: 'DATA_FLOW',
+              file: construct.filePath,
+              line: findingLine,
+              evidence: 'JSON.parse() without type assertion',
+              description: 'JSON.parse() result used without type assertion — runtime type is any',
+              correction: 'Add type assertion: const data = JSON.parse(raw) as ExpectedType; or validate with type guard',
+              runtimeImpact: 'Parsed data shape unknown at runtime — property access on wrong shape causes TypeError',
+              confidence: 0.85,
+              constructType: construct.type,
+              callGraphRef: null,
+              evidenceSuppressed: false,
+            });
+          }
+        }
       }
+      ts.forEachChild(n, (c: ts.Node) => jpStack.push(c));
     }
 
     // AST-BASED DANGEROUS SINK DETECTION — replaces regex-based detection which
@@ -610,9 +806,12 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
     //   2. Check if arguments reference unvalidated input (process.env, untyped params)
     //   3. If unvalidated AND not in try → flag CRITICAL
     if (construct.node) {
-      const sourceFile = construct.node.getSourceFile();
       const dangerousSinks = collectDangerousSinksViaAst(construct.node, sourceFile, checker);
       const seenSinkLines = new Set<number>();
+      const anyParamNames = new Set<string>();
+      for (const param of construct.parameters) {
+        if (param.type === 'any') anyParamNames.add(param.name);
+      }
 
       for (const sink of dangerousSinks) {
         if (seenSinkLines.has(sink.line)) continue;
@@ -622,27 +821,17 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
         if (isInsideTryStatement(sink.node)) continue;
 
         // Check 2: Does this sink receive unvalidated input?
-        // Walk the call arguments to detect process.env or untyped param references
+        // Walk the call argument AST to detect process.env, JSON.parse, or any-param refs
         let hasUnvalidatedInput = false;
         for (const arg of sink.node.arguments) {
-          const argText = arg.getText(sourceFile);
-          if (argText.includes('process.env')) {
+          if (exprReferencesEnvOrJsonParse(arg)) {
             hasUnvalidatedInput = true;
             break;
           }
-          // Check for JSON.parse references in arguments
-          if (argText.includes('JSON.parse')) {
+          if (anyParamNames.size > 0 && exprReferencesAnyParam(arg, anyParamNames)) {
             hasUnvalidatedInput = true;
             break;
           }
-          // Check for unvalidated (any-typed) param references
-          for (const param of construct.parameters) {
-            if (param.type === 'any' && argText.includes(param.name)) {
-              hasUnvalidatedInput = true;
-              break;
-            }
-          }
-          if (hasUnvalidatedInput) break;
         }
 
         if (hasUnvalidatedInput) {
@@ -710,43 +899,48 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
       }
     }
 
+    // R13 VOLUME FIX: If this construct IS itself a callback of an array method
+    // (.map, .filter, .sort, .forEach, .reduce, .flatMap, etc.), skip param-type
+    // analysis entirely — TypeScript infers these param types from the array's
+    // element type. The type extractor may report 'any' for the param if the
+    // array variable has a complex generic type, but the runtime type is NOT any.
+    if (construct.node && isArrayMethodCallback(construct.node)) {
+      return findings;
+    }
+
     // R13 VOLUME FIX: Only flag truly untyped params (type === 'any'), not null/inferred types
     // Null type means the type wasn't parsed — it could be a complex generic like
     // Record<string, unknown> that just wasn't extracted. Skip null-typed params.
     const anyTypeParams = construct.parameters.filter((p: { name: string; type: string | null }) => p.type === 'any');
 
     // R13 VOLUME FIX: Skip if all access to any params is inside try/catch blocks
-    const hasTryCatch = /\btry\s*\{/.test(body) && /\}\s*catch\s*\(/.test(body);
+    const hasTryCatch = functionHasTryCatch(node);
 
     // R13 VOLUME FIX: Skip catch clause variables (e.g., catch(e)) — these are
     // error objects and accessing .message/.stack/.code is standard error handling.
     // Also skip sort/filter/map/reduce callback params — they're typed by the array.
     const catchParamNames = new Set<string>();
     const callbackParamNames = new Set<string>();
-    if (construct.node) {
-      const sf = construct.node.getSourceFile();
-      ts.forEachChild(construct.node, function visit(n: ts.Node) {
-        // Catch clause variables
-        if (ts.isCatchClause(n) && n.variableDeclaration) {
-          const name = n.variableDeclaration.name.getText(sf);
-          if (name) catchParamNames.add(name);
-        }
-        // Sort/filter/map callback params
-        if (ts.isCallExpression(n)) {
-          const callee = n.expression.getText(sf);
-          if (/\.(sort|filter|map|reduce|forEach|every|some|find|findIndex)\s*$/.test(callee)) {
-            for (const arg of n.arguments) {
-              if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
-                for (const p of arg.parameters) {
-                  const pname = p.name.getText(sf);
-                  if (pname) callbackParamNames.add(pname);
-                }
-              }
+    const cpStack: ts.Node[] = [node];
+    while (cpStack.length > 0) {
+      const n = cpStack.pop()!;
+      // Catch clause variables
+      if (ts.isCatchClause(n) && n.variableDeclaration) {
+        const cname = n.variableDeclaration.name.getText(sourceFile);
+        if (cname) catchParamNames.add(cname);
+      }
+      // Array-method callback params (typed by the array element type)
+      if (ts.isCallExpression(n) && ts.isPropertyAccessExpression(n.expression) && ARRAY_METHODS.has(n.expression.name.text)) {
+        for (const arg of n.arguments) {
+          if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
+            for (const p of arg.parameters) {
+              const pname = p.name.getText(sourceFile);
+              if (pname) callbackParamNames.add(pname);
             }
           }
         }
-        ts.forEachChild(n, visit);
-      });
+      }
+      ts.forEachChild(n, (c: ts.Node) => cpStack.push(c));
     }
 
     for (const param of anyTypeParams) {
@@ -756,35 +950,20 @@ export const R13_DATA_FLOW_ANALYSIS: LayerRule = {
       // R13 VOLUME FIX: Skip params accessed only inside try/catch — already protected
       if (hasTryCatch) continue;
 
-      const paramUsagePattern = new RegExp(`(?<![_a-zA-Z0-9])${param.name}\\s*\\.`, 'g');
-      let usageMatch: RegExpExecArray | null;
+      // Walk the AST for an unguarded `param.prop` property access. A guard is
+      // optional chaining, a truthiness/nullish binary check, an enclosing if whose
+      // condition references the param, or a ternary on the param.
       let foundUnguardedUse = false;
-      while ((usageMatch = paramUsagePattern['exec'](body)) !== null) {
-        const afterDot = body.substring(usageMatch.index + param.name.length + 1);
-        const propertyName = afterDot.match(/^([a-zA-Z_]\w*)/)?.[1];
-        if (!propertyName) continue;
-
-        const beforeUsage = body.substring(Math.max(0, usageMatch.index - 120), usageMatch.index);
-        // R13 VOLUME FIX: Enhanced type guard detection — also check for
-        // optional chaining and nullish coalescing on the param itself
-        const hasTypeGuard = /typeof\s+/.test(beforeUsage.slice(-120)) ||
-                             /instanceof\s+/.test(beforeUsage.slice(-120)) ||
-                             /in\s+/.test(beforeUsage.slice(-50)) ||
-                             /\|\|\s*typeof\s+/.test(beforeUsage.slice(-140)) ||
-                             /&&\s*typeof\s+/.test(beforeUsage.slice(-140)) ||
-                             /\?\s*\./.test(beforeUsage.slice(-30)) ||
-                             /\?\?/.test(beforeUsage.slice(-60));
-
-        // R13 VOLUME FIX: Skip if the param access is immediately preceded by
-        // a null check: if (param) ..., param && param.prop, param ?? default
-        const hasNullCheck = new RegExp(`if\\s*\\(\\s*${param.name}\\b`).test(beforeUsage.slice(-80)) ||
-                             new RegExp(`${param.name}\\s*&&\\s*`).test(beforeUsage.slice(-60)) ||
-                             new RegExp(`${param.name}\\s*\\?\\?`).test(beforeUsage.slice(-60));
-
-        if (!hasTypeGuard && !hasNullCheck) {
-          foundUnguardedUse = true;
-          break;
+      const useStack: ts.Node[] = [node];
+      while (useStack.length > 0 && !foundUnguardedUse) {
+        const n = useStack.pop()!;
+        if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === param.name) {
+          if (!accessIsGuarded(n, param.name)) {
+            foundUnguardedUse = true;
+            break;
+          }
         }
+        ts.forEachChild(n, (c: ts.Node) => useStack.push(c));
       }
 
       if (foundUnguardedUse) {

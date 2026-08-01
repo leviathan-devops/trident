@@ -2,7 +2,7 @@
 // Each tool provides a brief + options, this function handles the LLM calls,
 // quality checks, and revision loop.
 
-import { generateSpecViaLLM } from './l2-llm-generator.ts';
+import { generateSpecViaLLM } from './llm-generator.ts';
 import { runDeepeningChecks, runCrossSectionAudit, formatDeepeningFeedback, formatAuditFeedback } from './l2-quality-audit.ts';
 import type { CrossSectionAuditResult } from './l2-quality-audit.ts';
 import type { AnalysisResult } from './analysis-engine.ts';

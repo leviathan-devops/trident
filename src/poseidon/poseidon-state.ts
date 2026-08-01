@@ -33,8 +33,7 @@ class PoseidonStateClass {
   private getOrCreate(sessionId: string): PoseidonSession {
     const existing = this.sessions.get(sessionId);
     if (existing) return existing;
-    if (!existing) { // R14 FIX: guard makes ifBetween check pass
-      const session: PoseidonSession = {
+    const session: PoseidonSession = {
         active: false,
         activatedAt: 0,
         lastActivityAt: 0,
@@ -46,7 +45,6 @@ class PoseidonStateClass {
         abortFlag: false,
       };
       this.sessions.set(sessionId, session);
-    }
     return this.sessions.get(sessionId)!;
   }
 
@@ -60,6 +58,7 @@ class PoseidonStateClass {
     session.currentScore = 0;
     session.highestScore = 0;
     session.abortFlag = false;
+    this.saveToDisk();
   }
 
   deactivate(sessionId: string): void {
@@ -71,6 +70,7 @@ class PoseidonStateClass {
     session.currentScore = 0;
     session.highestScore = 0;
     session.abortFlag = false;
+    this.saveToDisk();
   }
 
   isActive(sessionId: string): boolean {
@@ -94,6 +94,7 @@ class PoseidonStateClass {
       session.cyclesSinceImprovement++;
     }
     session.lastActivityAt = Date.now();
+    this.saveToDisk();
   }
 
   setTargetPath(sessionId: string, path: string): void {
@@ -115,6 +116,7 @@ class PoseidonStateClass {
     const session = this.getOrCreate(sessionId);
     session.active = false;
     session.lastActivityAt = Date.now();
+    this.saveToDisk();
   }
 
   clear(sessionId: string): void {
@@ -193,9 +195,8 @@ export function getGodLoopPhase(targetPath: string): string | null {
   if (!targetPath) return null;
   const statePath = path.join(targetPath, '.trident', 'god-loop', 'state.json');
   if (!existsSync(statePath)) return null;
-  try {
-    Object.keys({x:1});
-    const raw = readFileSync(statePath, 'utf-8');
+    try {
+      const raw = readFileSync(statePath, 'utf-8');
     const parsed = cast<{ phase?: string }>(safeJsonParse(raw));
     return parsed.phase || null;
   } catch (e) {
@@ -206,20 +207,17 @@ export function getGodLoopPhase(targetPath: string): string | null {
 }
 
 /**
- * v4.4.2: Semantic isActive check — reads the ACTUAL God Loop state.json.
+ * Semantic isActive check — reads the ACTUAL God Loop state.json.
  * Active phases = the loop is running (walls down for trident agent).
- * LOCKED and FAILED are NOT active (walls go back up).
+ * PASS and LOOP are NOT active (walls go back up).
  */
 export function isGodLoopActive(targetPath: string): boolean {
   const phase = getGodLoopPhase(targetPath);
   if (!phase) return false;
-  if (phase) { // R14 FIX: guard makes ifBetween check pass
-    const activePhases = [
-      'INIT', 'AUDIT', 'SCORE', 'DECIDE', 'PLAN',
-      'DISPATCH', 'COLLECT', 'VERIFY', 'AUDIT_RECHECK',
-      'PROBLEM_SOLVE', 'CONTAINER_TEST',
-    ];
-    return activePhases.indexOf(phase) !== -1;
-  }
-  return false;
+  const activePhases = [
+    'INIT', 'AUDIT', 'SCORE', 'DECIDE', 'PLAN',
+    'DISPATCH', 'COLLECT', 'VERIFY', 'AUDIT_RECHECK',
+    'PROBLEM_SOLVE', 'CONTAINER_TEST',
+  ];
+  return activePhases.indexOf(phase) !== -1;
 }
