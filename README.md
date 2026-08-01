@@ -132,60 +132,130 @@ So Trident inverts the trust model:
 Trident runs as an OpenCode plugin. One primary agent (trident) orchestrates the
 God Loop; two subagent types do the work under strict mechanical verification.
 
-### Diagram A — Trident Primary Agent (direct-mode workflow)
+### Diagram A — Trident Primary Agent (real build workflow)
 
-The Trident primary agent is what the user steers directly for chunk-by-chunk
-builds. It is an agentized toolset — every tool is a mechanically engineered
-intelligence module, and the enforcement spine guarantees none of them can be
-used theatrically.
+This is how Trident is ACTUALLY used to build, reconstructed from the
+BUILD_REPORT evidence of every checkpoint session (v4.4.2 + v4.4.3).
+The operator steers; Trident supplies the planner, the subagent wave
+dispatcher, the eyes, and the runtime verdict. The build loop is
+plan → build → audit → fix → rebuild → container test → checkpoint
+→ ship.
 
 ```
-TRIDENT PRIMARY AGENT — DIRECT WORKFLOW (user steers, chunk by chunk)
+THE REAL TRIDENT BUILD WORKFLOW — MACRO ENGINEERING LOOP
 
-   USER REQUEST
+   SESSION START
         │
         ▼
-   ┌────────────────────────────┐
-   │ 1. RECEIVE + IDENTIFY      │  identity injected, request parsed
-   └────────────┬───────────────┘
-                │
-                ▼
-   ┌────────────────────────────┐
-   │ 2. ROUTE                   │  which tool? audit? plan? fix? research?
-   └────────────┬───────────────┘
-                │
-        ┌───────┴────────┐
-        ▼                ▼
-   research task    engineering task
-        │                │
-        ▼                ▼
-   [trident_explore]  [trident-code-audit] / [trident-deep-planning] / ...
-   read-only scout    tool executes (passes 3-layer firewall)
-        │                │
-        └───────┬────────┘
-                ▼
-   ┌────────────────────────────┐
-   │ 3. ENFORCEMENT GATE        │  tool.before: L1/L2/L3 + phase validation
-   │    tool.after: derailment, │
-   │    claim tracking          │
-   └────────────┬───────────────┘
-                │
-                ▼
-   ┌────────────────────────────┐
-   │ 4. RESULT → USER           │  present findings/spec/plan
-   └────────────────────────────┘
-                │
-                ▼
-   USER STEERS NEXT CHUNK  ──────┐
-   (loop back to 1)              │
-   ◄─────────────────────────────┘
+   ┌──────────────────────────────┐
+   │ STEP 1 · PLANNING LOOP       │  ← anchors the entire build
+   └────────────┬─────────────────┘
+        │  PRIMARY: CONTEXT CREATION — detailed planning
+        │  workflow that writes the canon docs / bible /
+        │  specs the build is executed against:
+        │  BUILD_STATE · DECISION_CHAIN · OVERHAUL_SPEC ·
+        │  COMPACTION_SURVIVAL · canon context docs
+        │  SECONDARY: CONTEXT RECOVERY — only on loops or
+        │  post-compaction: explore subagents (5×) ·
+        │  hive_context · session-log recovery · checkpoint read
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 2 · BUILD               │  ← subagent waves execute
+   └────────────┬─────────────────┘
+        │  dispatch waves per the spec:
+        │  ├─ trident_build    ×N files (one agent per file,
+        │  │                    never colliding, SHA256-verified)
+        │  ├─ trident_explore  read-only scouts (context)
+        │  └─ trident_planner  parallel L2 spec generation
+        │  3-layer firewall watches every call:
+        │  L1 tool block · L2 hive block · L3 theatrical NLP+Merkle
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 3 · BUG IDENTIFICATION  │
+   └────────────┬─────────────────┘
+        │  trident-code-audit → 18-layer AST (R0-R17)
+        │  findings: layer · severity · file:line ·
+        │  confidence · mechanical evidence gate
+        ▼
+   [TRIAGE] ──── root-cause analysis ────┐
+        │                                │
+   ┌────┴───────────┐                    │
+   ▼                ▼                    │
+  direct fix       needs strategy        │
+  (surgical,       │                     │
+   operator)       ▼                     │
+        │    trident-deep-planning       │
+        │    → BUILD_SPEC (L1→L2→L3)     │
+        │    gates: INSUFFICIENT CONTEXT │
+        │    rejects thin input          │
+        │           │                    │
+        └────┬───────┘                    │
+             ▼                           │
+   ┌──────────────────────────────┐      │
+   │ STEP 4 · CODE FIXES          │      │
+   └────────────┬─────────────────┘      │
+        │  fixes applied (operator edits
+        │  or trident_build wave re-dispatch)
+        │  evidence chain appended per change
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 5 · REBUILD             │
+   └────────────┬─────────────────┘
+        │  bun build → dist/index.js (333-405 modules)
+        │  → SHA256 dist hash pinned to checkpoint
+        ▼
+   [VERIFY] ── 3 independent vectors
+        │
+   ┌────┴────────────┬───────────────┐
+   ▼                 ▼               ▼
+ bundle grep      host functional  container runtime
+ (string markers  (SPG, gates,     trident-container-test
+  in dist)         ship pkg)
+                                      │
+        ┌─────────────────────────────┘
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 6 · CONTAINER TESTING   │  ← the real verdict
+   └────────────┬─────────────────┘
+        │  setup → deploy dist → tmux stream
+        │  scenarios:
+        │  ├─ identity · tool-first · firewall
+        │  ├─ poseidon lifecycle · clean audit · god loop
+        │  └─ adversarial: malformed path · phantom result
+        ▼
+   ┌─────┴──────────┐
+   ▼                ▼
+  PASS            FAIL → diagnose → back to
+  (8/8 toy ·       fix loop (STEP 4)
+   17/18 SPG ·
+   94/100 Kraken)
+        │
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 7 · CHECKPOINT          │
+   └────────────┬─────────────────┘
+        │  hash-pinned snapshot: dist + src + docs +
+        │  BUILD_REPORT + DEBUG_LOG
+        ▼
+   ┌──────────────────────────────┐
+   │ STEP 8 · SHIP                │
+   └──────────────────────────────┘
+        │  SHIP_MANIFEST · BUILD_REPORT · README · push
+        ▼
+   SESSION END → next session resumes at STEP 1
 ```
 
-The loop is: request → route → tool → enforcement gate → result → next
-request. In direct mode there is no God Loop — the user is the driver and
-Trident is the instrument.
+The loop is: plan (create the anchoring docs, or recover them on
+loops) → build with subagent waves → audit → fix → rebuild → container
+test → checkpoint → ship. Every step is evidence-gated: the planning
+loop produces the bible/specs that anchor the build, subagent outputs
+are SHA256-verified, findings carry mechanical evidence, container
+tests are the only accepted proof of "pass", and checkpoints are
+hash-pinned so nothing can silently drift.
 
 ---
+
+
 
 ### Diagram B — Poseidon Agent (autonomous God Loop workflow)
 
