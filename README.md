@@ -172,7 +172,6 @@ THE REAL TRIDENT BUILD WORKFLOW — MACRO ENGINEERING LOOP
         │  │                    file, never colliding,
         │  │                    SHA256-verified)
         │  ├─ trident_explore  read-only scouts (context)
-        │  └─ trident_planner  parallel L2 spec generation
         │
         │  3-layer firewall watches every call:
         │  L1 tool block · L2 hive block · L3 theatrical
