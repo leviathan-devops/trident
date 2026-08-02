@@ -37,7 +37,7 @@ It is built around one operating principle: **the agent never declares success �
                    ▼
    ┌───────────────────────────────┐
    │  SCORE                        │ D   formula: max(0, 100−15C−8H−3M−1L)
-   │  + stall counter + CycleTracker│    + regression tracking
+   │ + stall counter + CycleTracker│    + regression tracking
    └───────────────┬───────────────┘
                    ▼
    ┌───────────────────────────────┐
@@ -199,7 +199,7 @@ THE REAL TRIDENT BUILD WORKFLOW — MACRO ENGINEERING LOOP
         │    → BUILD_SPEC (L1→L2→L3)
         │    gates: INSUFFICIENT CONTEXT
         │    rejects thin input
-        │           │
+        │            │
         └────┬───────┘
              ▼
    ┌──────────────────────────────┐
@@ -295,7 +295,7 @@ loop, then a zero-trust quality audit gates whether it ships or loops back.
    ┌──────────────────────────────────────────────────┐
    │ PLANNING — trident-deep-planning                  │
    │                                                   │
-   │  L1 first-principles → the directive               │
+   │  L1 first-principles → the directive              │
    │     what are we building · constraints · risks    │
    │  L2 engineering spec → the BUILD_SPEC (anchor)    │
    │     components · data flow · error handling ·     │
@@ -328,7 +328,7 @@ loop, then a zero-trust quality audit gates whether it ships or loops back.
    ║   CA  trident-code-audit                                 ║
    ║   18-layer AST (R0-R17) → confidence-weighted findings   ║
    ║   evidence-gated: tsc/build suppress or support          ║
-   ║   score = max(0, 100−15C−8H−3M−1L)                      ║
+   ║   score = max(0, 100−15C−8H−3M−1L)                       ║
    ║         │                                                ║
    ║         ▼ score < 96                                     ║
    ║   DP  trident-deep-planning                              ║
