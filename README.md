@@ -279,7 +279,7 @@ hash-pinned so nothing can silently drift.
 
 
 
-### Diagram B — Poseidon Agent (operator REMOVED — full macro autonomy)
+### Diagram B — Poseidon Agent (Operator REMOVED — Fully Autonomous Self-Managed Engineering Loop)
 
 The operator supplies a spec, goal, or detailed target ONCE — then is fully
 removed. Poseidon autonomously executes the entire engineering workflow:
