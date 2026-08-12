@@ -1,9 +1,19 @@
-# ══════════════════════════════════════════════════════════════════════════
-# THE MOST RECENT ADDITION — THE WAVE-MANAGER ASYNC WIRE-IN (2026-08-12)
-# THE TOP OF THE REPO — THE LATEST FORWARD ITERATION ON TOP OF 4.4.2
-# ══════════════════════════════════════════════════════════════════════════
+# TRIDENT v4.4.2 — Code Audit & Build Orchestration Engine
 
-## THE WAVE-MANAGER ASYNC — THE BACKGROUND-FIRST ORCHESTRATION SYSTEM
+**Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER ASYNC
+**Bundle:** ~16.13 MB (ESM, bun-built — 436 modules)
+**Runtime:** opencode 1.14.51+
+**Source:** 161 .ts files
+
+> **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
+
+Trident is a runtime-grade engineering agent plugin for opencode. It audits codebases via 18-layer AST analysis, generates engineering specs, and autonomously drives builds to 96%+ quality through a closed-loop God Loop. Every claim requires mechanical evidence — prose is not proof.
+
+Trident inverts the standard AI coding relationship: most tools write code and claim it works, leaving the human to verify. Trident never trusts its own output — or any agent's. Every assertion must be backed by test exit codes, filesystem state, SHA-256 hashes, and AST-verified analysis. This is the Runtime Grade standard: if a claim cannot be verified by machine execution, it is not evidence.
+
+---
+
+## The Wave-Manager Async Wire-In (2026-08-12)
 
 The most recent development on the 4.4.2 line: the wave manager is now **background-first**. The dispatch ALWAYS emits `background: true` — the batch form's task calls return immediately with task_ids, the orchestrator is NEVER hostage to a wave, and the session spends its budget in the deep-flow state instead of waiting on waves.
 
@@ -157,24 +167,6 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 - **Deploy:** through the sanctioned deploy channel — never direct config writes.
 
 ---
-
-# ══════════════════════════════════════════════════════════════════════════
-# THE FULL 4.4.2 RECORD (the 2-month forward iteration from 4.4.1)
-# EVERY TOOL'S ENHANCEMENTS — THE COMPLETE SYSTEM BELOW
-# ══════════════════════════════════════════════════════════════════════════
-
-# TRIDENT v4.4.2 — Code Audit & Build Orchestration Engine
-
-**Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER ASYNC
-**Bundle:** ~16.13 MB (ESM, bun-built — 436 modules)
-**Runtime:** opencode 1.14.51+
-**Source:** 161 .ts files
-
-> **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
-
-Trident is a runtime-grade engineering agent plugin for opencode. It audits codebases via 18-layer AST analysis, generates engineering specs, and autonomously drives builds to 96%+ quality through a closed-loop God Loop. Every claim requires mechanical evidence — prose is not proof.
-
-Trident inverts the standard AI coding relationship: most tools write code and claim it works, leaving the human to verify. Trident never trusts its own output — or any agent's. Every assertion must be backed by test exit codes, filesystem state, SHA-256 hashes, and AST-verified analysis. This is the Runtime Grade standard: if a claim cannot be verified by machine execution, it is not evidence.
 
 ---
 
