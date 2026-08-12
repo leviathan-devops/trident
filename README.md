@@ -13,96 +13,6 @@ Trident inverts the standard AI coding relationship: most tools write code and c
 
 ---
 
-## The New Architecture — The Shadow Pipeline + The Wave Manager, Explained
-
-The modern Trident core is a **prompt-generation engine** (the shadow pipeline) feeding a **subagent-orchestration system** (the wave manager). This is the machinery behind every wave — what actually happens when the orchestrator generates a wave.
-
-### The Shadow Pipeline (the prompt-generation engine)
-
-When the orchestrator calls `trident-wave-manager action=generate`, the shadow pipeline produces the agent's prompt file through a 13-stage machine (`src/tools/shadow/shadow-runner.ts` — the ONE-PLACE composition):
-
-```
-THE SHADOW PIPELINE — 13 STAGES (the prompt is WOVEN, never written by hand)
-
- 1. THE TETHER        the sessionKey / projectId / parentSessionId / pid
- 2. THE SIDECAR       register → touch → handleSessionSwitch
- 3. THE MEMORY        shadow-memory.open({project}, {sessionKey})
- 4. THE REATTACH GATE 3 checks — FAIL = the ERROR string, never a log line
- 5. VALIDATE          the CTX_FLOORS + the path existence (the shared validators)
- 6. BUILDCONTEXT      the session stream + the memory chain + the inference (Stage 4)
- 7. BUILDBRIEF        the 84-slot weave + THE SUPREMACY CONTRACT
-                      + the [SHADOW INFERENCE] section (Stage 3)
- 8. THE PI EXECUTION LOOP  (Stage 5 — the agentic loop):
-      prompt → stream (DeepSeek V4 Flash max) → the SCOPED TOOL-CALLS
-      (read_file / grep / stat on the filepaths — the read-before-write,
-      MECHANICALLY) → the results fed back → continue until the acceptance /
-      the target / the rounds cap (6) — the best content ALWAYS written
-      (the partial-save). The round-1 retry on the transient timeout class.
- 9. SILENTVERIFY      the markers / structure / verbatim-doctrine / freshness /
-                      [SHADOW INFERENCE]-presence; the repair on the unmet floors
-10. APPENDPROMPT      the sqlite row + the JSON mirror
-11. SYNCPROMPT        SKIP unless a remote exists
-12. THE MANIFEST      the STRING return — the per-agent { name, path, lines,
-                      sha256, validated, ready, subagentType, error?, notes? }
-13. THE COPY-PASTE    the tool.after hook delivers the per-agent prompt files
-```
-
-The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, the reading order, the known context (the measured state), the doctrine quotes, the measurements table, the per-task expansions, the verification commands, the return format — woven from the orchestrator's context args + the shadow brain's inference, then mechanically verified (the markers, the structure, the floors) before it reaches the wave manager.
-
-### The Shadow Brain (the transport)
-
-`src/tools/shadow/shadow-brain.ts` is the LLM transport behind the pipeline:
-
-- **The model is FROZEN:** DeepSeek V4 Flash ONLY (`SHADOW_MODEL = 'deepseek-v4-flash'`), `reasoning_options.effort = 'max'` — no other model, no fallback model (D-SH-2).
-- **The streaming transport:** SSE (`stream: true`) — the first chunk lands in ~1s, the total body streams at ~30KB/s.
-- **The stall guards:** the **45s idle detector** (`SHADOW_FETCH_STALL_MS`, re-armed per SSE event — the TRUE "provider is dead" signal) + the **600s total safety net** (`SHADOW_TIMEOUT_MS` — was 180s, which killed healthy streams; the 2026-08-12 fix).
-- **The two-transport fallback:** the opencode-go provider (primary) → the official DeepSeek API (api.deepseek.com/v1 + the DEEPSEEK_API_KEY secret) after the retry — a failsafe, verified once, forgotten; the opencode-go provider is the only path in practice.
-
-### The Wave Manager (the orchestrator's generation + dispatch)
-
-`src/tools/wave-dispatch.ts` is the **generator-only** dispatch path — it NEVER spawns:
-
-```
-THE WAVE MANAGER — the generate flow
-
- the agents[] spec → normalizeAgents → validateAgentSpec (the CTX floors)
- → the SHADOW PIPELINE per agent (bounded concurrency 3) → the prompt files
- → the wave manifest (the per-agent SHA-256 — the [WAVE VERBATIM] anchor)
- → the per-agent manifest records (the [WAVE BATCH] passing shape)
- → the atomic wave registry (the batch gate's window)
- → the tracker (registerWave — the agent states)
- → THE BATCH FORM: { tool: 'batch', parameters: { tools: [ { tool: 'task',
-   parameters: { description, prompt, subagent_type, promptFile, background: true } } ] } }
- → the flow-safe check-in
-```
-
-### The Firewalls
-
-- **[WAVE VERBATIM]** — a compressed/condensed prompt is BLOCKED: the dispatched promptFile's content must match the manifest's SHA-256 exactly.
-- **[WAVE BATCH]** — a single dispatch of a multi-agent wave is BLOCKED: the batch's ONE message is the only sanctioned channel, enforced by the atomic registry's call-count window.
-- **The promptFile channel** — the task call carries `promptFile` (inside the trident-tmp folder) + a placeholder; the loader injects the file's byte-exact content BEFORE the firewalls validate — the orchestrator's hands never touch the prompt text.
-
-### The Batch Process
-
-The **message is the unit of execution**: ALL the wave's task calls go out as the parts of ONE message, and the runtime's tool loop executes them in one concurrent pass. The batch form's `tools` array maps 1:1 to the message's tool parts. NEVER one task call at a time, NEVER hand-picking a subset — the batch is the message.
-
-### The Full Flow (how it all fits)
-
-```
-the orchestrator → trident-wave-manager (generate)
-  → the SHADOW PIPELINE weaves the DPL1 prompt (13 stages, 5-8 min, synchronous)
-  → the wave manager returns the BATCH FORM (background:true) + the flow-safe check-in
-  → the orchestrator DISPATCHES the batch as ONE message
-  → the task calls return IMMEDIATELY with task_ids (the background dispatch)
-  → the orchestrator CAPTURES the task_ids + CONTINUES its own work
-  → the agents run in the background, streaming their work to the session DB
-  → check-ins: task_status (the state) + trident-wave-status sessionId (the part stream)
-  → the cron's isBackgroundTerminal marks completion → the wave auto-completes
-  → the COLLECT directive: audit the results, apply to the build, advance
-```
-
----
-
 ## The Wave-Manager Async — The Subagent Orchestration System
 
 The wave manager is Trident's subagent-dispatch orchestration system: it generates prompt files for parallel agents (the shadow pipeline), returns a batch form whose task calls are always dispatched in the background (`background: true` — the calls return immediately with task_ids), and gives the orchestrator a three-channel control surface — completion/state, in-flight vision, and steering. The orchestrator dispatches the batch as ONE message, captures the task_ids, checks in every 5-10 minutes, and continues its own work — never hostage to a wave.
@@ -257,6 +167,96 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 - **Deploy:** through the sanctioned deploy channel — never direct config writes.
 
 ---
+
+---
+
+## The Wave Manager Internals — The Shadow Pipeline, The Firewalls, The Batch
+
+The modern Trident core is a **prompt-generation engine** (the shadow pipeline) feeding a **subagent-orchestration system** (the wave manager). This is the machinery behind every wave — what actually happens when the orchestrator generates a wave.
+
+### The Shadow Pipeline (the prompt-generation engine)
+
+When the orchestrator calls `trident-wave-manager action=generate`, the shadow pipeline produces the agent's prompt file through a 13-stage machine (`src/tools/shadow/shadow-runner.ts` — the ONE-PLACE composition):
+
+```
+THE SHADOW PIPELINE — 13 STAGES (the prompt is WOVEN, never written by hand)
+
+ 1. THE TETHER        the sessionKey / projectId / parentSessionId / pid
+ 2. THE SIDECAR       register → touch → handleSessionSwitch
+ 3. THE MEMORY        shadow-memory.open({project}, {sessionKey})
+ 4. THE REATTACH GATE 3 checks — FAIL = the ERROR string, never a log line
+ 5. VALIDATE          the CTX_FLOORS + the path existence (the shared validators)
+ 6. BUILDCONTEXT      the session stream + the memory chain + the inference (Stage 4)
+ 7. BUILDBRIEF        the 84-slot weave + THE SUPREMACY CONTRACT
+                      + the [SHADOW INFERENCE] section (Stage 3)
+ 8. THE PI EXECUTION LOOP  (Stage 5 — the agentic loop):
+      prompt → stream (DeepSeek V4 Flash max) → the SCOPED TOOL-CALLS
+      (read_file / grep / stat on the filepaths — the read-before-write,
+      MECHANICALLY) → the results fed back → continue until the acceptance /
+      the target / the rounds cap (6) — the best content ALWAYS written
+      (the partial-save). The round-1 retry on the transient timeout class.
+ 9. SILENTVERIFY      the markers / structure / verbatim-doctrine / freshness /
+                      [SHADOW INFERENCE]-presence; the repair on the unmet floors
+10. APPENDPROMPT      the sqlite row + the JSON mirror
+11. SYNCPROMPT        SKIP unless a remote exists
+12. THE MANIFEST      the STRING return — the per-agent { name, path, lines,
+                      sha256, validated, ready, subagentType, error?, notes? }
+13. THE COPY-PASTE    the tool.after hook delivers the per-agent prompt files
+```
+
+The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, the reading order, the known context (the measured state), the doctrine quotes, the measurements table, the per-task expansions, the verification commands, the return format — woven from the orchestrator's context args + the shadow brain's inference, then mechanically verified (the markers, the structure, the floors) before it reaches the wave manager.
+
+### The Shadow Brain (the transport)
+
+`src/tools/shadow/shadow-brain.ts` is the LLM transport behind the pipeline:
+
+- **The model is FROZEN:** DeepSeek V4 Flash ONLY (`SHADOW_MODEL = 'deepseek-v4-flash'`), `reasoning_options.effort = 'max'` — no other model, no fallback model (D-SH-2).
+- **The streaming transport:** SSE (`stream: true`) — the first chunk lands in ~1s, the total body streams at ~30KB/s.
+- **The stall guards:** the **45s idle detector** (`SHADOW_FETCH_STALL_MS`, re-armed per SSE event — the TRUE "provider is dead" signal) + the **600s total safety net** (`SHADOW_TIMEOUT_MS` — was 180s, which killed healthy streams; the 2026-08-12 fix).
+- **The two-transport fallback:** the opencode-go provider (primary) → the official DeepSeek API (api.deepseek.com/v1 + the DEEPSEEK_API_KEY secret) after the retry — a failsafe, verified once, forgotten; the opencode-go provider is the only path in practice.
+
+### The Wave Manager (the orchestrator's generation + dispatch)
+
+`src/tools/wave-dispatch.ts` is the **generator-only** dispatch path — it NEVER spawns:
+
+```
+THE WAVE MANAGER — the generate flow
+
+ the agents[] spec → normalizeAgents → validateAgentSpec (the CTX floors)
+ → the SHADOW PIPELINE per agent (bounded concurrency 3) → the prompt files
+ → the wave manifest (the per-agent SHA-256 — the [WAVE VERBATIM] anchor)
+ → the per-agent manifest records (the [WAVE BATCH] passing shape)
+ → the atomic wave registry (the batch gate's window)
+ → the tracker (registerWave — the agent states)
+ → THE BATCH FORM: { tool: 'batch', parameters: { tools: [ { tool: 'task',
+   parameters: { description, prompt, subagent_type, promptFile, background: true } } ] } }
+ → the flow-safe check-in
+```
+
+### The Firewalls
+
+- **[WAVE VERBATIM]** — a compressed/condensed prompt is BLOCKED: the dispatched promptFile's content must match the manifest's SHA-256 exactly.
+- **[WAVE BATCH]** — a single dispatch of a multi-agent wave is BLOCKED: the batch's ONE message is the only sanctioned channel, enforced by the atomic registry's call-count window.
+- **The promptFile channel** — the task call carries `promptFile` (inside the trident-tmp folder) + a placeholder; the loader injects the file's byte-exact content BEFORE the firewalls validate — the orchestrator's hands never touch the prompt text.
+
+### The Batch Process
+
+The **message is the unit of execution**: ALL the wave's task calls go out as the parts of ONE message, and the runtime's tool loop executes them in one concurrent pass. The batch form's `tools` array maps 1:1 to the message's tool parts. NEVER one task call at a time, NEVER hand-picking a subset — the batch is the message.
+
+### The Full Flow (how it all fits)
+
+```
+the orchestrator → trident-wave-manager (generate)
+  → the SHADOW PIPELINE weaves the DPL1 prompt (13 stages, 5-8 min, synchronous)
+  → the wave manager returns the BATCH FORM (background:true) + the flow-safe check-in
+  → the orchestrator DISPATCHES the batch as ONE message
+  → the task calls return IMMEDIATELY with task_ids (the background dispatch)
+  → the orchestrator CAPTURES the task_ids + CONTINUES its own work
+  → the agents run in the background, streaming their work to the session DB
+  → check-ins: task_status (the state) + trident-wave-status sessionId (the part stream)
+  → the cron's isBackgroundTerminal marks completion → the wave auto-completes
+  → the COLLECT directive: audit the results, apply to the build, advance
+```
 
 ---
 
