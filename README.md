@@ -13,20 +13,11 @@ Trident inverts the standard AI coding relationship: most tools write code and c
 
 ---
 
-## The Wave-Manager Async — The New Subagent Orchestration System (2026-08-12)
+## The Wave-Manager Async — The Subagent Orchestration System
 
-**What it is (new to this repo):** the wave manager is Trident's subagent-dispatch orchestration system — the machinery that generates, dispatches, watches, steers, and collects parallel agent waves. It did NOT exist in this repo's last-pushed state. The branch's prior git history (the `ALL_TOOLS_WORKING_v5.4_FULL_SHIP` checkpoint, 2026-07-23) carried only the L3 parallel dispatch, the CS T2 bible generation, and the identity overhaul — **no wave tooling of any kind**. The ENTIRE wave system described below is the advancement since that checkpoint.
+The wave manager is Trident's subagent-dispatch orchestration system: it generates prompt files for parallel agents (the shadow pipeline), returns a batch form whose task calls are always dispatched in the background (`background: true` — the calls return immediately with task_ids), and gives the orchestrator a three-channel control surface — completion/state, in-flight vision, and steering. The orchestrator dispatches the batch as ONE message, captures the task_ids, checks in every 5-10 minutes, and continues its own work — never hostage to a wave.
 
-**The advancements since the v5.4 FULL SHIP checkpoint (2026-07-23 → 2026-08-12):**
-
-- **The wave dispatch overhaul (2026-08-07):** the wave manager as the ONLY subagent dispatch path — the generator-only baseline (the shadow pipeline → the prompt files → the batch form; the tool NEVER spawns). The `[WAVE VERBATIM]` firewall (the SHA-verified promptFile channel) + the `[WAVE BATCH]` firewall (the ONE-message batch discipline).
-- **The batch process (2026-08-10):** the message is the unit of execution — ALL the task calls as the parts of ONE message, the runtime executes them in one concurrent pass. The density law (the dispatch args at 10-50x the floors) + the anti-cuck law (the expand reflex).
-- **The wave-manager async wire-in (2026-08-12):** the background-first dispatch — the batch form ALWAYS emits `background: true`, the dispatch returns immediately with task_ids, the orchestrator is never hostage to a wave. Plus: the steer tool (`trident-wave-steer`), the full-scroll stream reader (`trident-wave-status sessionId` — the in-flight vision), the list-all dashboard, the cron background completion (`isBackgroundTerminal`), the 600s shadow-brain timeout (was 180s — the healthy-stream-killer) + the official-API fallback, the flow-safe check-in, the `task_status` allowlist admission, and the behavioral layer (WARHEADS 16-19, incl. the [CRITICAL] Poseidon-AGI flow-state law).
-- **The flow-state engineering bible (2026-08-12):** `LLM_FLOW_STATE_ENGINEERING.md` — the two operating states, the 7 quantifiable meters, the amplifiers + the inhibitors, the activation recipe (pre-loaded from token ~1, not drifted at 350k).
-
-**The current state:** the wave manager is now **background-first**. The dispatch ALWAYS emits `background: true` — the batch form's task calls return immediately with task_ids, the orchestrator is NEVER hostage to a wave, and the session spends its budget in the deep-flow state instead of waiting on waves.
-
-**The three channel surfaces (the orchestrator's control):**
+### The three channel surfaces (the orchestrator's control):
 1. **THE COMPLETION/STATE CHANNEL** — `task_status(taskId)`: wait=false for the live state; wait=true blocks (synchronous-on-demand).
 2. **THE IN-FLIGHT VISION CHANNEL** — `trident-wave-status sessionId`: the session part stream (the tools, the reasoning, the text as they land — the same data the TUI renders); no-arg: the list-all dashboard.
 3. **THE STEERING CHANNEL** — `trident-wave-steer sessionId + prompt`: send ANY prompt into a derailing subagent session; the message queues.
