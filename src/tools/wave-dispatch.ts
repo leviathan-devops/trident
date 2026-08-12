@@ -25,6 +25,9 @@ import {
   type WaveManifest, type WaveDispatchResult,
 } from './wave-constants.ts';
 import { baselineEtaMs } from './wave-eta.ts';
+import {
+  createWaveRegistry, releaseWaveRegistryFile,
+} from './wave-registry.ts';
 
 // ═══ THE BLOCK (Part 3.4 — the castration's simplified message) ═══
 
@@ -308,7 +311,8 @@ export async function executeWaveDispatch(
   fs.mkdirSync(tmpDir, { recursive: true });
   const manifest: WaveManifest = {
     wave: waveId,
-    dispatchedAt: new Date().toISOString(),
+    requestedWaveId: typeof args.waveId === 'string' && args.waveId.trim().length > 0 ? args.waveId.trim() : null,
+    generatedAt: new Date().toISOString(),   // GENERATION time — never 'dispatchedAt' (the generator does NOT dispatch; the 2026-08-12 bug-report's fiction fix)
     agents: [],
   };
 
@@ -381,14 +385,20 @@ export async function executeWaveDispatch(
     })));
   }
 
-  for (const { spec, prompt, startedAt, finishedAt, durationMs } of generated) {
+  for (const { spec, prompt, startedAt, durationMs } of generated) {
     manifest.agents.push({
       name: spec.name,
       type: resolveSubagentType(spec.template),
       lines: prompt.split('\n').length,
       sha256: createHash('sha256').update(prompt).digest('hex'),
-      status: 'running',
-      startedAt, finishedAt, durationMs,   // the generation telemetry (2026-08-09)
+      // THE HONEST LIFECYCLE STATE (2026-08-12 — the bug-report's §3 fix): the
+      // agent is 'ready' — the generator does NOT spawn; the old 'running' +
+      // startedAt/finishedAt/durationMs were shadow-generation timings dressed
+      // as agent-run telemetry (fiction frozen as 'running' on a never-
+      // dispatched wave). The timing is now honestly named generation telemetry.
+      status: 'ready',
+      generatedAt: startedAt,          // the ISO generation start
+      generationMs: durationMs,        // the wall-clock generation time
     });
   }
   try {
@@ -455,7 +465,8 @@ export async function executeWaveDispatch(
     const g = generated[i];
     const oneAgentRecord = {
       wave: waveId,
-      dispatchedAt: new Date().toISOString(),
+      requestedWaveId: typeof args.waveId === 'string' && args.waveId.trim().length > 0 ? args.waveId.trim() : null,
+      generatedAt: new Date().toISOString(),   // GENERATION time — never 'dispatchedAt' (the generator does NOT dispatch)
       agents: [manifest.agents[i]],
     };
     try {
@@ -465,30 +476,17 @@ export async function executeWaveDispatch(
     }
   }
   // THE WAVE-DISPATCH REGISTRY (2026-08-10 — THE WAVE_BATCH FALSE-POSITIVE
-  // CLASS fix, the FINAL design): the per-call hook CANNOT observe the
-  // message's sibling task parts (the InputMessage carries no parts — proven
-  // by the live ADM failure: the 5-call batch blocked per call). The batch-ness
-  // is enforced by the ATOMIC registry: { wave, total, calls, windowStart }.
-  // The gate's SYNCHRONOUS read-modify-write (no awaits between the readFileSync
-  // + writeFileSync) is atomic on the event loop — the batch's N calls each
-  // append their key + pass within the window; the one-at-a-time derailment's
-  // NEXT-TURN call hits the expired window → the block; a wave without the
-  // registry (generated pre-fix) → the REGENERATE directive (never the
-  // dead-loop the old message created). THE WINDOW opens on the FIRST DISPATCH
-  // CALL (windowStart: null here — the gate sets it), never on the generation:
-  // the batch's dispatch happens minutes after the generation — a
-  // generation-time window would block the legit batch.
-  const waveRegistry = {
-    wave: waveId,
-    total: generated.length,
-    calls: [] as string[],
-    windowStart: null as number | null,
-  };
-  try {
-    fs.writeFileSync(path.join(tmpDir, '.wave-registry-' + waveId + '.json'), JSON.stringify(waveRegistry, null, 2), 'utf-8');
-  } catch (rErr) {
-    tridentLog('WARN', 'wave-dispatch', 'the wave registry write failed: ' + (rErr instanceof Error ? rErr.message : String(rErr)));
-  }
+  // CLASS fix + the 2026-08-12 TRANSACTIONAL fix — BUGREPORT
+  // wave-manager-dispatch-authorization.md): the per-call hook CANNOT observe
+  // the message's sibling task parts. The batch-ness is enforced by the
+  // ATOMIC registry — a STATE MACHINE now (wave-registry.ts): { wave, total,
+  // calls: [{key, status: recorded|accepted|failed}], windowStart, status:
+  // ready|dispatching|dispatched }. The gate's synchronous read-modify-write
+  // is atomic on the event loop; a runtime-REJECTED dispatch (the after-hook
+  // marks the call 'failed') is RE-FIREABLE — the authorization is never
+  // consumed by a failed attempt. THE WINDOW opens on the FIRST DISPATCH CALL
+  // (windowStart: null here — the gate sets it), never on the generation.
+  createWaveRegistry(tmpDir, waveId, generated.length);
 
   // ── STEP 6 — THE TRACKER + THE WAVE ROW ──
   const respawnWaveId = typeof args.waveId === 'string' ? args.waveId : opts.waveId ?? null;
@@ -539,9 +537,14 @@ export async function executeWaveDispatch(
   // THE BACKGROUND DIRECTIVE (2026-08-12 — the background-only ruling): the
   // batch dispatches background — the orchestrator continues working.
   const finalCheckIn = checkIn + '\nThe wave runs in the BACKGROUND — dispatch the batch form as ONE message; the task calls return immediately with task_ids. CHECK IN every 5-10 minutes — POLL task_status(taskId) + READ the part stream (trident-wave-status sessionId); COLLECT if complete, and STEER a derailing agent (trident-wave-steer) wherever you have free space or deem it relevant. Manage the waves like a senior engineer. Continue with the rest of your tasks after dispatching this wave.';
-  // THE EXACT PROMPTS — the batch entries carry the generated content VERBATIM
-  // (the operator: "batch the task tool of the exact prompts with 0 ignore"):
-  const promptByAgent = new Map<string, string>(generated.map((g) => [g.spec.name, g.prompt]));
+  // THE BATCH FORM — THE SHRUNK PAYLOAD (2026-08-12 — the bug-report's §6.5:
+  // the full inline prompts doubled the payload (6 × 30K chars ≈ 168KB) and
+  // TRUNCATED in the tool output — 5 of 6 prompts were lost to truncation (only
+  // the promptFile channel saved the dispatch). THE FIX: the batch entries carry
+  // ONLY the dispatch metadata + a SHORT placeholder prompt — the promptFile
+  // loader (trident-hooks.ts) REPLACES the placeholder with the file's byte-
+  // exact content BEFORE the firewalls validate (the [WAVE VERBATIM] SHA check
+  // passes by construction). The response drops from ~168KB to ~2KB.
   const batchForm: WaveDispatchResult['batch'] = {
     tool: 'batch',
     parameters: {
@@ -549,16 +552,14 @@ export async function executeWaveDispatch(
         tool: 'task',
         parameters: {
           description: d.name,
-          prompt: promptByAgent.get(d.name) ?? 'EXECUTE THE FOLLOWING: the prompt file is missing — report the failure.',
+          prompt: 'EXECUTE THE TASK DEFINED IN THE GENERATED PROMPT FILE: ' + path.join(tmpDir, d.name + '.md') + ' — the promptFile loader injects the exact generated content (the SHA-verified verbatim).',
           subagent_type: d.type,
           // THE PROMPTFILE CHANNEL (2026-08-09 — the operator: 'agents STOP
-          // COMPRESSING/CONDENSING the fucking prompts'). The inline prompt
-          // requires the orchestrator to REPRODUCE the 30K-char text exactly —
-          // the model's output budget forces the compression. THE FIX: the
-          // promptFile param references the generated prompt's FILE — the task
-          // tool loads the EXACT content (no reproduction, no truncation, no
-          // condensation — the SHA verification confirms it). The t.e.a. wipe
-          // preserves the prompt files for the dispatch window.
+          // COMPRESSING/CONDENSING the fucking prompts'). The promptFile param
+          // references the generated prompt's FILE — the task tool loads the
+          // EXACT content (no reproduction, no truncation, no condensation —
+          // the SHA verification confirms it). The t.e.a. wipe preserves the
+          // prompt files for the dispatch window.
           promptFile: path.join(tmpDir, d.name + '.md'),
           // NEW (2026-08-12 — the background-only ruling): the batch ALWAYS
           // dispatches background — the task calls return immediately with
@@ -779,7 +780,7 @@ export function createWaveManagerTool() {
       position: z.string().optional().describe('Single-agent mode: THE POSITION (50c+).'),
       context: z.string().optional().describe('LEGACY single-agent mode: the single context blob.'),
       outputName: z.string().optional().describe('Single-agent mode: the output file name (without .md) — defaults to the semantic name.'),
-      action: z.enum(['generate', 'resume']).optional().describe('THE ACTION — generate (the default: the agents array → the prompt files + the batch form) OR resume (the taskIds array → the RESUME BATCH FORM for the interrupted sessions: the task_id + the 1-2 line continuation; the sessions persist in the opencode.db — the original prompts + the partial work in the session parts; the firewall\'s resume-channel exemption lets the continuations pass).'),
+      action: z.enum(['generate', 'resume', 'release']).optional().describe('THE ACTION — generate (the default: the agents array → the prompt files + the batch form), resume (the taskIds array → the RESUME BATCH FORM for the interrupted sessions), OR release (the waveId → RESETS the wave\'s dispatch authorization in the wave registry to the ready state — the manual safety valve for a wave whose dispatch attempt failed (the 2026-08-12 BUGREPORT: a runtime-rejected dispatch consumed the authorization and permanently blocked the re-fire; the release makes the batch re-fireable WITHOUT regenerating).'),
       taskIds: z.array(z.string()).optional().describe('THE RESUME ANCHORS — the interrupted sessions\' task ids (from the EMPTY task returns or the wave-status\'s collected resume ids in .trident/resume-ids.json). An EMPTY task return = the provider interrupted the agent — resume it, never regenerate.'),
       names: z.array(z.string()).optional().describe('The name tokens for the resume form\'s descriptions (the session row\'s title overrides when available) — so the resumed agents are distinguishable.'),
     },
@@ -789,6 +790,25 @@ export function createWaveManagerTool() {
     ): Promise<{ title: string; output: string }> => {
       const mainSessionId = (context && typeof context.sessionID === 'string' && context.sessionID) || null;
       const action = typeof args.action === 'string' ? args.action : 'generate';
+      if (action === 'release') {
+        // THE RELEASE — the manual safety valve (2026-08-12 — BUGREPORT
+        // wave-manager-dispatch-authorization.md): resets the wave's dispatch
+        // authorization to the ready state so a wave whose dispatch attempt
+        // was REJECTED by the runtime can be re-fired WITHOUT regenerating.
+        const releaseWaveId = typeof args.waveId === 'string' && args.waveId.trim().length > 0 ? args.waveId.trim() : '';
+        if (!releaseWaveId) {
+          throw new Error('[RELEASE] waveId is required — the wave whose dispatch authorization to reset (e.g. wave-1786556140247)');
+        }
+        const releaseTmp = resolveTmpDir(typeof args.dispatchDir === 'string' ? args.dispatchDir : undefined);
+        const released = releaseWaveRegistryFile(releaseTmp, releaseWaveId);
+        if (!released) {
+          throw new Error('[RELEASE] no dispatch registry found for wave ' + releaseWaveId + ' — nothing to release (the wave may not exist or was pruned)');
+        }
+        return {
+          title: 'WAVE RELEASE — ' + releaseWaveId + ' authorization reset to ready',
+          output: JSON.stringify({ action: 'release', waveId: releaseWaveId, registry: released, checkIn: 'WAVE ' + releaseWaveId + ' RELEASED — the dispatch authorization was reset to the ready state. RE-DISPATCH the batch form (the task calls from the generation) as ONE message — the [WAVE BATCH] gate now ALLOWS the re-fire.' }, null, 2),
+        };
+      }
       if (action === 'resume') {
         const taskIds = Array.isArray(args.taskIds) ? (args.taskIds as string[]) : [];
         const names = Array.isArray(args.names) ? (args.names as string[]) : [];

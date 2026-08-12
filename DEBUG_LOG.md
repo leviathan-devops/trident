@@ -157,3 +157,18 @@ The request model 'deepseek-chat' resolves to deepseek-v4-flash on the official 
 7. **The doctrine ban is absolute** — deepseek-v4-pro is banned; the configs must never declare it. (D-06)
 8. **The failsafe is verified once, then forgotten** — the primary path is the only path in practice. (D-07)
 9. **The flow state is engineered, not awaited** — the deep condition is entered from token ~1 by pre-loading the conditions; the derailment is a decompilation, protected preventatively. (D-08)
+
+
+## 2026-08-12 — THE WAVE-MANAGER DISPATCH-AUTHORIZATION TRANSACTIONAL FIX (BUGREPORT_wave-manager-dispatch-authorization.md)
+
+**THE BUG:** the [WAVE BATCH] gate appended the dispatch authorization to the wave registry at ATTEMPT time and treated "authorization recorded" as "already dispatched" — a runtime-REJECTED dispatch (e.g. OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS missing) permanently bricked the wave (the ONLY escape was the regenerate). The manifest also recorded shadow-GENERATION timing as agent-run telemetry (status "running" + startedAt/finishedAt/durationMs on never-dispatched waves) — theatrical-green fiction.
+
+**THE FIX (the transactional state machine, src/tools/wave-registry.ts):** the registry now carries per-call statuses (recorded → accepted | failed) + the wave-level state (ready → dispatching → dispatched). The gate BLOCKS only: the accepted calls, the in-flight duplicates (recorded + window open), and the one-at-a-time derailment (accepted > 0 + window expired + a never-seen key). A failed/stale-recorded call is RE-FIREABLE. The tool.after hook confirms the runtime's acceptance/rejection. The manifest records status "ready" + generatedAt/generationMs (the honest lifecycle). The response batch form is SHRUNK to the placeholder + promptFile (the 168KB truncation fix). A manual safety valve: trident-wave-manager action=release waveId=... resets a stuck registry.
+
+**THE RED-TEAM FINDINGS + FIXES (the container red-team, trident-registry-ct):**
+- S1-S3, S5-S8 PASS live: the exact bug (schema-rejected dispatch → re-fire sanctioned), the recovery (accepted + subagent ran), the protection (third dispatch blocked, exactly ONE subagent), the manifest honesty, the shrink, the verbatim protection, the never-dispatched wave.
+- S4 FAIL initially → FOUND + FIXED: the release by ALIAS (the operator-facing waveId) did not resolve to the generated wave id — releaseWaveRegistryFile looked for the alias-named registry file and failed. FIX: the manifest records requestedWaveId (the alias); resolveReleaseWaveId resolves the alias → the generated wave id. Retested live: the alias release resets the registry to ready.
+
+**THE STALE TEST-CONTRACT FIXES (the wave suite — pre-existing failures caused by earlier operator rulings the tests never absorbed):** wave-resume (the continuation is "continue", not "CONTINUATION"), wave-spawn + wave-telemetry (the shrunk batch placeholder + the honest manifest fields), shadow-brain (the retry-on-timeout + the official-API fallback contract — the morning session's container-proven fix; the tests were updated to the POST-fix contract: the timeout class retries once on the primary + once on the fallback).
+
+**VERIFICATION:** unit battery 21/21 (the exact bug + 10 variations), full wave suite 103/103, tsc clean for the changed files (the 13 remaining errors are pre-existing broken test files — ship-gate + surgical-mutator, git-identical to the last commit), container red-team 8/8 PASS (dist SHA e48b2621).

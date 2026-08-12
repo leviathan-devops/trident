@@ -87,7 +87,7 @@ describe('WAVE-RESUME: THE SANCTIONED SMOKE (the operator ONE authorized scenari
       expect(t.tool).toBe('task');
       const p = t.parameters as { task_id?: string; prompt?: string; subagent_type?: string; description?: string };
       expect((p.task_id || '').length).toBeGreaterThan(10);
-      expect(p.prompt).toContain('CONTINUATION');
+      expect(p.prompt).toBe('continue');   // the operator's edit (2026-08-12): "literally just continue is enough"
       expect(p.subagent_type).toBe('trident_build');
       expect(String(p.description)).toMatch(/^resume-/);
     }

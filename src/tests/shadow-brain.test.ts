@@ -66,7 +66,13 @@ describe('shadow-brain — the model-disciplined LLM call (D-SH-2)', () => {
         args.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       });
     const started = Date.now();
-    const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: hanging, timeoutMs: 60 });
+    // THE NEW CONTRACT (2026-08-12 — the retry-on-timeout ruling, the live
+    // proof: the identical wave input failed at 180s then succeeded on retry
+    // in 361s): a timeout-class stall is RETRYABLE (the primary retries once
+    // after the backoff, then the official-API fallback retries once). The
+    // injected backoff keeps the unit test fast; the total stays well under
+    // the 2s elapsed bar.
+    const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: hanging, timeoutMs: 60, retryBackoffMs: 1 });
     const elapsed = Date.now() - started;
     expect(r.ok).toBe(false);
     expect(r.error).toContain('SHADOW_BRAIN_TIMEOUT');
@@ -88,9 +94,14 @@ describe('shadow-brain — the model-disciplined LLM call (D-SH-2)', () => {
       });
       expect(r1.stopReason).toBe('error');
       expect(r1.errorMessage).toContain('SHADOW_BRAIN_HTTP_500');
-      const r2 = await callShadow('p', 's', 100, { apiKey: 'test-key' });
+      // THE NEW CONTRACT (2026-08-12 — the retry + the official-API fallback):
+      // the primary 500 retries once after the backoff, then the fallback
+      // transport (api.deepseek.com) retries once. The injected backoff keeps
+      // the unit test fast (the default 3000ms would trip the 5s runner cap).
+      const r2 = await callShadow('p', 's', 100, { apiKey: 'test-key', retryBackoffMs: 1 });
       expect(r2.ok).toBe(false);
       expect(r2.error).toContain('SHADOW_BRAIN_HTTP_500');
+      expect(r2.error).toContain('fallback');   // the final error names BOTH transports
     } finally {
       globalThis.fetch = realFetch;
     }
@@ -418,26 +429,34 @@ describe('shadow-brain — the streaming transport (2026-08-09)', () => {
     expect(r.content).toBe('the recovered prompt');
   });
 
-  test('RETRY: a double 500 fails LOUDLY after the retry — never a silent pass, never a third attempt', async () => {
-    let calls = 0;
-    const doubleFlaky: ShadowStreamFn = async () => {
-      calls++;
+  test('RETRY: a double 500 exhausts the primary (ONE retry) + the official-API fallback (ONE retry) then fails LOUDLY naming both transports — never a silent pass', async () => {
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    const doubleFlaky: ShadowStreamFn = async (args) => {
+      if (args.model === SHADOW_MODEL) primaryCalls++;
+      else fallbackCalls++;   // the fallback runs with the fallback model (deepseek-chat)
       return { content: '', stopReason: 'error', errorMessage: 'SHADOW_BRAIN_HTTP_500: opencode-go 500 boom' };
     };
     const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: doubleFlaky, retryBackoffMs: 1 });
-    expect(calls).toBe(2);
+    expect(primaryCalls).toBe(2);    // THE PRIMARY RETRIES EXACTLY ONCE — never more
+    expect(fallbackCalls).toBe(2);   // the official-API fallback also retries exactly once
     expect(r.ok).toBe(false);
     expect(r.error).toContain('SHADOW_BRAIN_HTTP_500');
+    expect(r.error).toContain('primary');
+    expect(r.error).toContain('fallback');
   });
 
-  test('RETRY: a non-500 error does NOT retry — the timeout class fails immediately', async () => {
-    let calls = 0;
-    const timeoutClass: ShadowStreamFn = async () => {
-      calls++;
+  test('RETRY: the timeout class IS retryable (the 2026-08-12 live ruling) — ONE primary retry + ONE fallback retry, then the loud timeout', async () => {
+    let primaryCalls = 0;
+    let fallbackCalls = 0;
+    const timeoutClass: ShadowStreamFn = async (args) => {
+      if (args.model === SHADOW_MODEL) primaryCalls++;
+      else fallbackCalls++;
       return { content: '', stopReason: 'error', errorMessage: 'SHADOW_BRAIN_TIMEOUT: the LLM call stalled' };
     };
     const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: timeoutClass, retryBackoffMs: 1 });
-    expect(calls).toBe(1);
+    expect(primaryCalls).toBe(2);    // the timeout retries ONCE (the live proof: 180s fail → 361s success)
+    expect(fallbackCalls).toBe(2);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('SHADOW_BRAIN_TIMEOUT');
   });

@@ -436,3 +436,11 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 
 **THE SHIP PACKAGE IS COMPLETE AND HOST-DEPLOY READY.** The dist: /home/leviathan/OPENCODE_WORKSPACE/Shared Workspace Context/Trident_Agent/v4.4.2-wave-manager-async/dist/index.js — SHA dce7ca40063757a392296cf5017ef3db5148dfde5ec527a89f622b0d6440f488.
 
+
+
+## BUILD REPORT ADDENDUM — 2026-08-12: THE DISPATCH-AUTHORIZATION TRANSACTIONAL FIX
+
+- **Files:** src/tools/wave-registry.ts (NEW — the state machine), src/hooks/trident-hooks.ts (the gate rewrite + the after-hook confirmation), src/tools/wave-dispatch.ts (the v2 registry + the manifest honesty + the batch shrink + the release action), src/tools/wave-constants.ts (the manifest type), src/tests/wave-registry.test.ts (NEW — 21 tests), src/tests/{wave-resume,wave-spawn,wave-telemetry,shadow-brain}.test.ts (the stale-contract updates).
+- **Dist SHA:** e48b2621a18d8bb0bab872417a28ca1d7c65ebc1cd87276c1a988f3c3b610b0f.
+- **Evidence:** .trident/container-test-results.json (8/8 PASS, container trident-registry-ct), the wave suite 103/103, the registry unit battery 21/21.
+- **Pre-existing failures (NOT regressions):** ship-gate.test.ts + surgical-mutator.test.ts — broken tests of removed APIs, git-identical to the last commit 4601ae3.

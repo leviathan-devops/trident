@@ -78,11 +78,16 @@ describe('wave-dispatch — the bounded-concurrency generation + the telemetry (
     expect(r.telemetry['a1'].durationMs!).toBeGreaterThanOrEqual(0);
     expect(r.telemetry['a2']).toBeDefined();
     expect(r.telemetry['a2'].status).toBe('ok');
-    // the batch form carries the exact prompts (the generator-only contract)
+    // the batch form carries the dispatch metadata + the promptFile channel
+    // (2026-08-12 — the SHRUNK payload: the full inline prompts truncated the
+    // tool output at ~168KB; the batch now carries the placeholder + the
+    // promptFile — the loader injects the byte-exact content before the gates)
     expect(r.batch).toBeDefined();
-    const tools = (r.batch.parameters as { tools: Array<{ parameters: { description: string; prompt: string } }> }).tools;
+    const tools = (r.batch.parameters as { tools: Array<{ parameters: { description: string; prompt: string; promptFile?: string; background?: boolean } }> }).tools;
     expect(tools.length).toBe(2);
-    expect(tools[0].parameters.prompt).toContain('EXECUTE THE FOLLOWING FORENSIC');
+    expect(tools[0].parameters.prompt).toContain('EXECUTE THE TASK DEFINED IN THE GENERATED PROMPT FILE:');
+    expect(tools[0].parameters.promptFile).toContain('a1.md');
+    expect(tools[0].parameters.background).toBe(true);
     expect(r.failed).toHaveLength(0);
     // the prompt files landed in the tmp dir (the durable record)
     expect(fs.existsSync(path.join(SANDBOX, 'a1.md'))).toBe(true);
@@ -155,11 +160,16 @@ describe('wave-dispatch — the bounded-concurrency generation + the telemetry (
       { generator: async (spec) => ({ prompt: BIG_PROMPT(spec.name), notes: [] }) },
     );
     const manifest = JSON.parse(fs.readFileSync(path.join(SANDBOX, '.wave-manifest-' + r.wave + '.json'), 'utf-8')) as {
-      agents: Array<{ name: string; startedAt?: string; durationMs?: number }>;
+      agents: Array<{ name: string; status: string; generatedAt?: string; generationMs?: number }>;
     };
     expect(manifest.agents[0].name).toBe('m1');
-    expect(typeof manifest.agents[0].startedAt).toBe('string');
-    expect(typeof manifest.agents[0].durationMs).toBe('number');
+    // THE HONEST LIFECYCLE (2026-08-12 — the bug-report's fiction fix): the
+    // manifest records the generation telemetry under the GENERATION-named
+    // fields + the status 'ready' — NEVER 'running'/'startedAt' (the generator
+    // does not spawn; the old fields froze a never-dispatched wave as running).
+    expect(manifest.agents[0].status).toBe('ready');
+    expect(typeof manifest.agents[0].generatedAt).toBe('string');
+    expect(typeof manifest.agents[0].generationMs).toBe('number');
     expect(r.wave).toMatch(/^wave-\d+$/);
   });
 });

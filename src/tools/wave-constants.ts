@@ -24,21 +24,23 @@ export function resolveTmpDir(override?: string | null): string {
 // THE WAVE MANIFEST (the machine-readable record — the audit trail + the
 // re-dispatch source):
 export interface WaveManifest {
-  wave: string;                          // "wave-<epoch-ms>"
-  dispatchedAt: string;                  // the ISO timestamp
+  wave: string;                          // "wave-<epoch-ms>" — the GENERATED id (the file names use this)
+  requestedWaveId?: string | null;       // the operator-facing alias (the waveId arg) — the release resolves it to `wave` (2026-08-12 — the red-team's release-alias finding)
+  generatedAt: string;                   // the ISO GENERATION timestamp (2026-08-12 — BUGREPORT: NEVER 'dispatchedAt' — the generator does NOT dispatch)
   agents: Array<{
     name: string;
     type: 'trident_explore' | 'trident_build';
     lines: number;
     sha256: string;
-    sessionId?: string;                  // set by the spawn
-    status: 'running' | 'spawn_failed';
-    // THE GENERATION TELEMETRY (2026-08-09 — the forensics' fix #1: the
-    // per-agent startedAt/finishedAt/durationMs make the async-parallel
-    // generation PROVABLE in the output, not just claimed).
-    startedAt?: string;                  // the ISO generation start
-    finishedAt?: string;                 // the ISO generation end
-    durationMs?: number;                 // the wall-clock generation time
+    sessionId?: string;                  // set by the batch dispatch
+    status: 'ready';                     // 'ready' until the batch dispatch (2026-08-12 — BUGREPORT: NEVER 'running'/'spawn_failed' — the generator does NOT spawn; a failed GENERATION excludes the agent from the manifest entirely)
+    // THE GENERATION TELEMETRY (2026-08-09 + the 2026-08-12 renaming — the
+    // BUGREPORT's §3: the old startedAt/finishedAt/durationMs were shadow-
+    // GENERATION timings dressed as agent-run telemetry — fiction that froze
+    // a never-dispatched wave as 'running'. The fields are now honestly named;
+    // only a real dispatch + agent completion writes run telemetry).
+    generatedAt?: string;                // the ISO generation start
+    generationMs?: number;               // the wall-clock generation time
   }>;
 }
 

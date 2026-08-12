@@ -31,6 +31,10 @@ import { SHADOW_TOOLS, TRIDENT_TMP_DIR } from '../tools/wave-constants.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
 import { startWaveCron, setCronMainSessionId } from '../tools/wave-cron.ts';
 import { advancePlanOnEvent } from '../tools/wave-todowrite.ts';
+import {
+  evaluateWaveBatchGate, confirmWaveRegistryCall, isTaskCallAccepted,
+  deriveWaveStatus, readWaveRegistryFile, writeWaveRegistryFile,
+} from '../tools/wave-registry.ts';
 
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
@@ -2061,33 +2065,39 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
                   // directive — never the dead-loop the old message created.
                   var tfWaveRec = findWaveRecordForAgent(tfDesc, tfVerbatimSha);
                   if (tfWaveRec) {
-                    var tfReg = readWaveRegistry(tfWaveRec.wave);
+                    // ═══ THE [WAVE BATCH] GATE — THE TRANSACTIONAL STATE MACHINE
+                    // (2026-08-12 — BUGREPORT_wave-manager-dispatch-authorization.md:
+                    // the OLD gate appended the authorization at ATTEMPT time and
+                    // treated 'recorded' as 'dispatched' — a runtime-rejected
+                    // dispatch permanently bricked the wave (the ONLY escape was
+                    // the regenerate). THE FIX: the registry carries per-call
+                    // statuses (recorded → accepted | failed) + the wave-level
+                    // state (ready → dispatching → dispatched); the gate BLOCKS
+                    // ONLY the accepted calls, the in-flight duplicates, and the
+                    // one-at-a-time derailment; a failed/stale-recorded call is
+                    // RE-FIREABLE — the runtime-rejected dispatch recovers WITHOUT
+                    // regenerating. THE PURE DECISION: evaluateWaveBatchGate in
+                    // src/tools/wave-registry.ts (the sync read-modify-write here
+                    // stays atomic on the event loop — no awaits in between).
+                    var tfReg = readWaveRegistryFile(TRIDENT_TMP_DIR, tfWaveRec.wave);
                     if (!tfReg) {
                       throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') has ' + tfWaveRec.agents.length + ' agents but NO dispatch registry (generated before the registry fix). REGENERATE the wave with the current generator + dispatch the returned batch form verbatim — ALL ' + tfWaveRec.agents.length + ' task calls as the parts of ONE message (THE BATCH PROCESS — one concurrent pass).');
                     }
-                    // THE SYNC ATOMIC APPEND — no awaits from here to the write.
                     // THE KEY: desc + waveId + sha — the wave-scoped dedupe
                     // (the same agent name in two waves = different keys).
                     var tfCallKey = tfDesc + '|' + tfWaveRec.wave + '|' + tfVerbatimSha;
-                    // THE WINDOW opens on the FIRST dispatch call (the batch's
-                    // dispatch lands minutes after the generation — a
-                    // generation-time window would block the legit batch). The
-                    // expired check applies only AFTER the first call.
-                    if (tfReg.calls.length === 0) tfReg.windowStart = Date.now();
-                    var tfWindowExpired = (tfReg.calls.length > 0 && typeof tfReg.windowStart === 'number')
-                      ? Date.now() - tfReg.windowStart > WAVE_DISPATCH_WINDOW_MS : false;
-                    if (tfReg.calls.indexOf(tfCallKey) !== -1) {
-                      throw new Error('[WAVE BATCH] the dispatch authorization for "' + tfDesc + '" is already recorded in the wave registry — do NOT re-fire the same call. REGENERATE the wave only if the wave must run again.');
+                    var tfDecision = evaluateWaveBatchGate(tfReg, tfCallKey, Date.now(), WAVE_DISPATCH_WINDOW_MS);
+                    if (tfDecision.action === 'block') {
+                      if (tfDecision.reason === 'accepted') {
+                        throw new Error('[WAVE BATCH] the dispatch authorization for "' + tfDesc + '" is CONFIRMED — the task call was ACCEPTED by the runtime (the wave is dispatched). Do NOT re-fire the same call. If the wave must run again: REGENERATE the wave, or run trident-wave-manager action=release waveId=' + tfWaveRec.wave + ' to reset the authorization.');
+                      }
+                      if (tfDecision.reason === 'in-flight') {
+                        throw new Error('[WAVE BATCH] "' + tfDesc + '" is mid-dispatch — its authorization was recorded within the current dispatch window (the batch is in flight). Do NOT re-fire the same call inside the window.');
+                      }
+                      throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') was PARTIALLY dispatched (' + tfDecision.reg.calls.filter(function (c) { return c.status === 'accepted'; }).length + ' accepted) and the dispatch window expired — the one-at-a-time derailment pattern. REGENERATE the wave + dispatch the FULL batch — ALL ' + tfDecision.reg.total + ' task calls as the parts of ONE message, or run trident-wave-manager action=release waveId=' + tfWaveRec.wave + ' then re-dispatch the full batch.');
                     }
-                    if (tfWindowExpired && tfReg.calls.length < tfReg.total) {
-                      throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') was PARTIALLY dispatched (' + tfReg.calls.length + '/' + tfReg.total + ') and the dispatch window expired — the one-at-a-time derailment pattern. REGENERATE the wave + dispatch the FULL batch — ALL ' + tfReg.total + ' task calls as the parts of ONE message.');
-                    }
-                    tfReg.calls.push(tfCallKey);
-                    try {
-                      writeFileSync(path.join(TRIDENT_TMP_DIR, '.wave-registry-' + tfWaveRec.wave + '.json'), JSON.stringify(tfReg, null, 2), 'utf-8');
-                    } catch (regWErr) {
-                      tridentLog('WARN', 'trident-hooks', 'the wave-registry append failed: ' + (regWErr instanceof Error ? regWErr.message : String(regWErr)));
-                    }
+                    tfDecision.reg.status = deriveWaveStatus(tfDecision.reg);
+                    writeWaveRegistryFile(TRIDENT_TMP_DIR, tfDecision.reg);
                   }
                 } catch (tfVerbatimErr) {
                   if (tfVerbatimErr instanceof Error && (tfVerbatimErr.message.indexOf('[WAVE VERBATIM]') === 0 || tfVerbatimErr.message.indexOf('[WAVE BATCH]') === 0)) throw tfVerbatimErr;
@@ -2613,6 +2623,32 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
       }
     } catch (triageErr) {
       tridentLog('WARN', 'trident-hooks', 'TASK RETURN TRIAGE failed: ' + (triageErr instanceof Error ? triageErr.message : String(triageErr)));
+    }
+    // ═══ THE WAVE-REGISTRY CONFIRMATION (2026-08-12 — BUGREPORT
+    // wave-manager-dispatch-authorization.md: the transactional fix's AFTER
+    // half). The before-hook appended the authorization as 'recorded'; the
+    // runtime's acceptance (the task_id return) or rejection (the error text)
+    // is observed HERE — the tool.after — and applied to the registry: an
+    // accepted call transitions the wave to 'dispatched' (the re-fire block
+    // becomes REAL); a rejected call transitions to 'failed' (the re-fire
+    // becomes SANCTIONED — the exact bug's recovery). THE GUARD: an
+    // 'accepted' entry is NEVER downgraded (a blocked re-fire's error must
+    // not flip a confirmed dispatch back to re-fireable) — the guard lives in
+    // confirmWaveRegistryCall. Non-fatal: a confirmation failure never breaks
+    // the task completion. ═══
+    try {
+      var regArgs = cast<Record<string, unknown>>((input as any)?.args || {});
+      var regDesc = typeof regArgs.description === 'string' ? regArgs.description : '';
+      var regPromptFile = typeof regArgs.promptFile === 'string' ? regArgs.promptFile : '';
+      var regAccepted = isTaskCallAccepted(output);
+      if (regDesc && regAccepted !== null) {
+        var regConf = confirmWaveRegistryCall(TRIDENT_TMP_DIR, regDesc, regPromptFile, regAccepted);
+        if (regConf) {
+          tridentLog('INFO', 'trident-hooks', 'WAVE REGISTRY CONFIRM: ' + regDesc + ' → ' + regConf.status + ' (wave ' + regConf.wave + ')');
+        }
+      }
+    } catch (regConfErr) {
+      tridentLog('WARN', 'trident-hooks', 'the wave-registry confirmation failed (non-fatal): ' + (regConfErr instanceof Error ? regConfErr.message : String(regConfErr)));
     }
     // ═══ THE T.E.A. WIPE — REWIRED TO THE TASK TOOL (2026-08-10 — the operator:
     // 'THIS DOES NOT WIPE ON FUCKING GENERATION THE WIPE IS WIRED TO THE TASK

@@ -98,8 +98,12 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
     // The prompt file written to the tmp:
     const fileContent = fs.readFileSync(path.join(sandbox, 'file-src.md'), 'utf-8');
     expect(fileContent).toContain('EXECUTE THE FOLLOWING');
-    // The batch form carries the EXACT prompt (0 ignore — the operator):
-    expect(result.batch?.parameters?.tools?.[0]?.parameters?.prompt).toContain('EXECUTE THE FOLLOWING');
+    // THE BATCH FORM (2026-08-12 — the SHRUNK payload, the bug-report §6.5):
+    // the inline prompt is the placeholder; the promptFile channel carries the
+    // byte-exact content (the loader injects it before the gates — 0 ignore).
+    const batchParams = result.batch?.parameters?.tools?.[0]?.parameters as { prompt?: string; promptFile?: string } | undefined;
+    expect(batchParams?.prompt).toContain('EXECUTE THE TASK DEFINED IN THE GENERATED PROMPT FILE:');
+    expect(batchParams?.promptFile).toContain('file-src.md');
     // THE AP-1 RULE: the WaveAgentSpec has NO prompt field — the args cannot carry it:
     expect('prompt' in makeValidAgent('file-src')).toBe(false);
   });
