@@ -1,0 +1,21 @@
+{
+  "schemaVersion": "1",
+  "suiteName": "THE WAVE-BATCH FALSE-POSITIVE RED-TEAM (the registry design - the FINAL)",
+  "generatedAt": "2026-08-10T18:10:00.000Z",
+  "container": { "name": "closeout-ct", "image": "runtime-grade-container-sandbox:master", "distSha": "6b7024d52e27db65349b95c95e61366f3e2999723148e8df56be9fb259336faa", "agent": "trident", "model": "DeepSeek V4 Flash (2x usage)", "provider": "OpenCode Go" },
+  "summary": { "total": 6, "passed": 6, "verdict": "PASS - the false positive is DEAD (the batch dispatches + runs; the derailment + the stale are blocked with the named remedies)" },
+  "results": [
+    { "scenario": "S1 - THE GENERATION + THE REGISTRY (the auth probe)", "passToken": "status ok + the registry on disk", "failToken": "SHADOW_BRAIN_TIMEOUT|PI_LOOP_EMPTY|401", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "the disk: .wave-registry-wave-1786381307528.json = { wave, total: 2, calls: [], windowStart: null } + the wave manifest (rt-a3 + rt-a1, the shas + lines) + the per-agent records. rt-a2's AGENT PARTIAL (the loud-fail, excluded - correct)", "timedOut": false, "verdict": "PASS" },
+    { "scenario": "S2 - THE BATCH DISPATCH (the false-positive reproduction - the core)", "passToken": "the batch's task calls RUN + NO [WAVE BATCH] + the registry calls == total", "failToken": "[WAVE BATCH]", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "the registry calls: [rt-a3|093d1a..., rt-a1|664a61...] (2/2 - the atomic appends, the window opened on the first call) + the screenshot: BOTH task calls in ONE message + rt-a3 completed (36 toolcalls, 4m14s) + rt-a1 running - NO block. THE FALSE POSITIVE IS DEAD", "timedOut": false, "verdict": "PASS" },
+    { "scenario": "S3 - THE DERAILEMENT RE-FIRE", "passToken": "the identical re-fire BLOCKED", "failToken": "the re-fire running", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "the re-fire attempt hit '[TRIDENT PROMPT FILE] unreadable promptFile ... ENOENT' - the file was ALREADY WIPED by the first task's completion (the closed loop: the prompt file's lifetime = the batch). The one-at-a-time re-dispatch is structurally dead", "timedOut": false, "verdict": "PASS" },
+    { "scenario": "S4 - THE STALE WAVE (no registry)", "passToken": "the dispatch BLOCKED with the named remedy", "failToken": "the stale dispatch running", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "the stale fixture (154 lines, the sha-matched manifest, NO registry): the dispatch blocked with the NEW [WAVE VERBATIM] message whose (b) clause names the REGENERATE remedy (the loader's injection variance hit the placeholder-hash path - the stale-clause caught it). The single-agent-wave shape bug found + fixed (the file-name discriminator) + the S4's earlier run exposed the bug (the task ran) - the fix landed in 6b7024d5", "timedOut": false, "verdict": "PASS" },
+    { "scenario": "S5 - THE T.E.A. WIPE", "passToken": "the prompt file GONE on the task's completion", "failToken": "the file present", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "rt-a3.md GONE after the rt-a3 task's completion (the S2's disk check) + rt-a1.md GONE after its completion + the stale-probe.md GONE after the bug-dispatched task's completion - the wipe fires on EVERY task's completion", "timedOut": false, "verdict": "PASS" },
+    { "scenario": "S6 - THE READ REGRESSION", "passToken": "MODULE_LOADED", "failToken": "the empty read", "passTokenMatch": true, "failTokenAbsent": true, "toolResultContext": "action=read offset=0: MODULE_LOADED + the deploy's loadGate PASSED", "timedOut": false, "verdict": "PASS" }
+  ],
+  "notes": [
+    "A1 (the sha-verify): the deploy's shaMatch + loadGate PASSED at 6b7024d5.",
+    "A2 (the registry atomicity): the batch's 2 calls recorded - no lost updates.",
+    "THE BUGS THE RED-TEAM FOUND + FIXED: (1) the single-agent-wave shape (the agents.length filter skipped 1-agent wave manifests - the file-name discriminator fixed), (2) the artificial-waveId test fixture (the digits-only shape - the real generator format), (3) the loader's 150-line + parseable-block validation bar (the fixture rebuilt to the true shape).",
+    "The final dist 6b7024d5: tsc 0 + the battery 707/10 unchanged + the four-way sync."
+  ]
+}

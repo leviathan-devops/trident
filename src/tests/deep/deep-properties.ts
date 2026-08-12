@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { deepPlanningMachine } from '../../fsm/deep-planning-machine.ts';
-import { problemSolvingMachine } from '../../fsm/problem-solving-machine.ts';
+import { problemSolvingStateMachine } from '../../modes/problem-solving-state-machine.ts';
 import { contextSynthesisMachine } from '../../fsm/context-synthesis-machine.ts';
 import { OrchestratorMachineV2 } from '../../fsm/orchestrator-machine-v2.ts';
 import type { Finding } from '../../types.ts';
@@ -16,7 +16,7 @@ export function testZeroTolerance(): number {
   fc.assert(fc.property(fc.constantFrom('INVALID', '', '{}', '[]', '  '), (evt) => {
     let ok = true;
     try { const s = interpret(deepPlanningMachine).start(); s.send({ type: evt }); } catch { ok = false; }
-    try { const s = interpret(problemSolvingMachine).start(); s.send({ type: evt }); } catch { ok = false; }
+    try { problemSolvingStateMachine.getLayerConfig(1); problemSolvingStateMachine.validateLayerContent(0, ''); problemSolvingStateMachine.newIteration(); } catch { ok = false; }
     try { const s = interpret(contextSynthesisMachine).start(); s.send({ type: evt }); } catch { ok = false; }
     try { const m = new OrchestratorMachineV2(); m.startMode('CODE_REVIEW'); } catch { ok = false; }
     return ok;

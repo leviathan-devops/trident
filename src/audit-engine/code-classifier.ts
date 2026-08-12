@@ -125,6 +125,7 @@ export function classifyProject(
   return {
     constructs: allConstructs,
     symbolTable: result.symbolTable,
+    checker: result.checker,
     callGraph,
     preflight,
     packageJson,
@@ -185,6 +186,9 @@ function buildAST(projectRoot: string): ClassificationResult {
         // diagnostics stays as empty array [].
       }
 
+      if (!program) {
+        return { constructsByFile, symbolTable, callGraph: { entries: new Map(), totalCallSites: 0, resolvedCallSites: 0, coveragePercent: 0 }, diagnostics, sourceFiles: new Map<string, ts.SourceFile>(), checker: null };
+      }
       for (const sourceFile of program.getSourceFiles()) {
         const filePath = sourceFile.fileName;
         if (filePath.includes('node_modules') || filePath.includes('.d.ts') || filePath.includes('dist')) continue;
@@ -218,12 +222,12 @@ function buildAST(projectRoot: string): ClassificationResult {
   const srcDir = path.join(projectRoot, 'src');
   const baseDir = fs.existsSync(srcDir) ? srcDir : projectRoot;
   const { files: allFiles } = collectProjectFiles(baseDir, projectRoot, 0, 20);
-  const PARSEABLE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
-  const sourceOnlyFiles = allFiles.filter((f: string) =>
-    PARSEABLE_EXTENSIONS.has(path.extname(f).toLowerCase())
+
+  const astFiles = allFiles.filter((filePath: string) =>
+    AST_SOURCE_EXTENSIONS.has(path.extname(filePath).toLowerCase()),
   );
 
-  for (const filePath of sourceOnlyFiles) {
+  for (const filePath of astFiles) {
     if (!fs.existsSync(filePath)) continue;
     const content = fs.readFileSync(filePath, 'utf-8');
     const relativePath = path.relative(projectRoot, filePath);
@@ -756,6 +760,10 @@ const SUPPORTED_EXTENSIONS = new Set([
   '.py', '.rs', '.go', '.css', '.html', '.md',
 ]);
 
+const AST_SOURCE_EXTENSIONS = new Set([
+  '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
+]);
+
 function collectTsFiles(dir: string, projectRoot: string, depth: number = 0, maxDepth: number = 20): string[] {
   // v4.4.2: Delegate to collectProjectFiles, filter to .ts/.tsx for backward compat
   const { files } = collectProjectFiles(dir, projectRoot, depth, maxDepth);
@@ -978,6 +986,9 @@ function isReturnValueUsed(construct: CodeConstruct): boolean {
     case ConstructType.RETURN_STATEMENT:
     case ConstructType.PROPERTY_ACCESS_EXPRESSION:
     case ConstructType.AWAIT_EXPRESSION:
+    case ConstructType.CALL_EXPRESSION:
+      // When a call expression's parent is another CallExpression, the
+      // return value is used as an argument (e.g. parts.push(fn())).
       return true;
     default:
       break;

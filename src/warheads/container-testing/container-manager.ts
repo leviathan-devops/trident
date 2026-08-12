@@ -4,6 +4,17 @@ import { tridentLog } from '../../utils.js';
 export class ContainerManager {
   private containerId: string | null = null;
 
+  /** Check whether a path exists inside the container (the step-11 evidence probe). */
+  fileExistsInContainer(containerId: string, filePath: string): boolean {
+    try {
+      const out = execSync(`docker exec ${containerId} test -e ${JSON.stringify(filePath)}`, { timeout: 10000 });
+      return out !== null && String(out).length >= 0;
+    } catch (e) {
+      tridentLog('WARN', 'container-manager', `fileExistsInContainer failed: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  }
+
   /** Spawn a Docker container */
   async spawn(image: string, name?: string): Promise<string | null> {
     try {

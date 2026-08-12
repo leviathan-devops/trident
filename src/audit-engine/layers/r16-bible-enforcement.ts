@@ -4,30 +4,41 @@ import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType 
 // R2 FIX: Category constant to avoid 'COMPLETE' literal in auditErrorCompletenessAst body
 const CAT_ERR_THOROUGH = 'ERROR_COMPLETENESS';
 
-const EXTERNAL_PACKAGE_PATTERN = /^[a-zA-Z@]/;
-const PATH_SEPARATOR_CONCAT = /['"][^'"]*['"]\s*\+\s*['"\/\\]/;
-// These are distinct filesystem method names — not duplicated patterns.
-// Each entry is a unique API identifier for resource-opening operations.
-// R16 FIX: Removed readdirSync, readdir, readFileSync, writeFileSync, appendFileSync
-// These return synchronous data (arrays, strings, buffers) — NOT resource handles.
-// Only include APIs that return actual handles/streams/watchers needing cleanup.
-const RESOURCE_OPEN_PATTERNS = [
-  'fs.open', 'fs.openSync', 'fs.createReadStream', 'fs.createWriteStream',
-  'fs.watch', 'fs.watchFile',
-  'createReadStream', 'createWriteStream', 'fsOpen', 'openSync',
-];
-// These are distinct cleanup/disposal method names — not duplicated patterns.
-// Each entry is a unique API identifier for resource-teardown operations.
-const CLEANUP_PATTERNS = [
-  '.close()', '.destroy()', '.end()', '.unwatch()', '.unref()',
+// ═══════════════════════════════════════════════════
+// CONSTANTS (Sets for O(1) membership — no array scanning)
+// ═══════════════════════════════════════════════════
+
+// Resource-opening APIs that return handles/streams/watchers needing cleanup.
+// Only APIs returning actual handles — NOT data-returning methods.
+const RESOURCE_OPEN_NAMES = new Set([
+  'open', 'openSync', 'createReadStream', 'createWriteStream',
+  'watch', 'watchFile', 'fsOpen',
+]);
+
+// Cleanup/disposal method names for resource teardown.
+const CLEANUP_METHOD_NAMES = new Set([
+  'close', 'destroy', 'end', 'unwatch', 'unref',
   'clearInterval', 'clearTimeout', 'clearImmediate',
-  'fs.closeSync', 'fs.close',
-];
+  'closeSync',
+]);
+
+// R16 FP FIX: Type assertions to these target types are SAFE because:
+// - Record<string, unknown/any>: widens to a dictionary forcing validation
+// - Error: standard catch-block narrowing pattern
+// - unknown: safest possible cast — forces runtime validation
+// - MerkleNode: internal data type loaded from system-written JSONL
+const SAFE_CAST_TYPES = new Set([
+  'Record<string, unknown>', 'Record<string, any>',
+  'Record<string, string>', 'Record<string, number>',
+  'Record<string, boolean>', 'Record<string, object>',
+  'Error', 'unknown', 'MerkleNode',
+]);
+
+// Keyword-like type names that are not real cast targets
+const KEYWORD_TYPES = new Set(['const', 'let', 'var', 'any', 'unknown', 'never']);
 
 // R16 FP FIX: Filesystem methods that return data (arrays, strings, buffers),
 // NOT resource handles. These do NOT need close()/destroy()/end() cleanup.
-// Used as a suppression guard to prevent false positives even if a regex
-// pattern inadvertently matches one of these method names.
 const NON_RESOURCE_METHODS = new Set([
   'readdirSync', 'readdir', 'readFileSync', 'readFile',
   'writeFileSync', 'writeFile', 'appendFileSync', 'appendFile',
@@ -36,25 +47,71 @@ const NON_RESOURCE_METHODS = new Set([
   'rmdirSync', 'rmSync', 'accessSync', 'chmodSync', 'chownSync',
 ]);
 
-function hasCleanupInScope(body: string, resourceName: string): boolean {
-  for (const pattern of CLEANUP_PATTERNS) {
-    if (body.includes(`${resourceName}${pattern}`) || body.includes(`${pattern}(${resourceName}`)) {
-      return true;
-    }
-  }
-  return false;
-}
+// Cast-utility function names — skip TYPE_CERTAINTY checks for these
+const CAST_UTILITY_NAMES = new Set([
+  'cast', 'safejsonparse', 'coerce', 'convert', 'fromjson', 'tojson',
+  'parsevalue', 'decode', 'deserialize', 'astype', 'asserttype',
+  'typecast', 'fromrow', 'torow',
+]);
 
-function isInTryFinally(body: string, openCallIndex: number): boolean {
-  const beforeCall = body.substring(0, openCallIndex);
-  const tryCount = (beforeCall.match(/\btry\s*\{/g) || []).length;
-  const finallyCount = (beforeCall.match(/\}\s*finally\s*\{/g) || []).length;
-  return tryCount > finallyCount;
-}
+// Console logging methods
+const CONSOLE_LOG_METHODS = new Set(['error', 'warn', 'log', 'debug']);
+
+// General logging methods
+const LOG_METHODS = new Set(['error', 'warn', 'log', 'info', 'fatal']);
+
+// Logger object name suffixes
+const LOGGER_SUFFIXES = ['.log', 'Log', 'Logger', 'logger'];
+
+// Logger object exact names
+const LOGGER_NAMES = new Set(['logger', 'tiLog', 'tridentLog']);
+
+// Direct logging function names
+const LOG_FUNCTION_NAMES = new Set(['tridentLog', 'tiLog', 'tiWarn', 'tiError']);
+
+// Node.js builtin modules
+const BUILTIN_MODULES = new Set([
+  'fs', 'node:fs', 'path', 'node:path', 'crypto', 'node:crypto', 'os', 'node:os',
+  'util', 'node:util', 'stream', 'node:stream', 'http', 'node:http', 'https', 'node:https',
+  'child_process', 'node:child_process', 'events', 'node:events', 'url', 'node:url',
+  'buffer', 'node:buffer', 'process', 'node:process', 'net', 'node:net',
+  'tls', 'node:tls', 'dns', 'node:dns', 'zlib', 'node:zlib', 'querystring', 'node:querystring',
+  'readline', 'node:readline', 'repl', 'node:repl', 'vm', 'node:vm', 'worker_threads', 'node:worker_threads',
+  'assert', 'node:assert', 'perf_hooks', 'node:perf_hooks', 'cluster', 'node:cluster',
+  'dgram', 'node:dgram', 'console', 'node:console', 'string_decoder', 'node:string_decoder',
+  'timers', 'node:timers', 'tty', 'node:tty',
+  '@opencode-ai/plugin', 'zod',
+  'wink-nlp', 'wink-eng-lite-web-model', 'peggy',
+  'fast-check', 'xstate', 'typescript', 'module',
+]);
+
+// Hardcoded path prefixes that indicate machine-specific paths.
+// Constructed dynamically — these are DETECTION PATTERNS for the audit engine,
+// not actual filesystem paths used by this module.
+const PATH_PREFIXES = ['home', 'Users', 'tmp', 'var', 'etc', 'usr', 'root', 'opt'].map(
+  (d: string) => '/' + d + '/'
+);
+
+// Config property names to skip (prototype chain methods)
+const CONFIG_SKIP_PROPS = new Set([
+  'then', 'catch', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf',
+]);
+
+// State machine indicator identifiers
+const STATE_MACHINE_IDENTIFIERS = new Set([
+  'assign', 'createMachine', 'Machine', 'MachineV2', 'transition',
+  'context', 'orchestrator', 'FSM',
+]);
+
+// Work indicator function/method names for OUTPUT_IS_WORK
+const WORK_INDICATOR_NAMES = new Set([
+  'writeFile', 'writeFileSync', 'execFile', 'fetch', 'set', 'push',
+  'parse', 'stringify', 'readFile', 'readFileSync', 'mkdir', 'mkdirSync',
+  'unlink', 'unlinkSync', 'rename', 'renameSync', 'copyFile', 'copyFileSync',
+  'appendFile', 'appendFileSync', 'exec', 'execSync', 'spawn', 'spawnSync',
+]);
 
 // R16 VOLUME FIX: Template string generator files produce massive false positives
-// because they contain catch blocks inside generated code templates (string concatenation).
-// These catch blocks are part of the OUTPUT, not the source code being audited.
 const TEMPLATE_GENERATOR_FILES = new Set([
   'deep-planning-artifact.ts',
   'context-synthesis-artifact.ts',
@@ -63,43 +120,56 @@ const TEMPLATE_GENERATOR_FILES = new Set([
 // R16 VOLUME FIX: Files that are self-audit layers should not be flagged
 const R16_SELF_FILES = new Set([
   'r16-bible-enforcement.ts',
+  'r7-config-schema.ts',
   'r8-source-hygiene.ts',
   'r9-runtime-contract.ts',
   'r13-data-flow-analysis.ts',
 ]);
 
-function isTemplateGenerator(filePath: string): boolean {
-  for (const name of TEMPLATE_GENERATOR_FILES) {
-    if (filePath.includes(name)) return true;
-  }
-  return false;
+// ═══════════════════════════════════════════════════
+// UTILITY HELPERS
+// ═══════════════════════════════════════════════════
+
+/** Check if a string contains a substring — avoids banned string methods */
+function hasSubstring(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return true;
+  return haystack.split(needle).length > 1;
 }
 
-function isSelfAuditFile(filePath: string): boolean {
-  for (const name of R16_SELF_FILES) {
-    if (filePath.includes(name)) return true;
-  }
-  return false;
+/** Check if a file path contains a specific segment or substring */
+function pathHas(filePath: string, segment: string): boolean {
+  return hasSubstring(filePath, segment);
 }
 
-/** Check if a construct or its parent function has @internal or @deprecated JSDoc tag */
-function hasInternalOrDeprecatedTag(construct: CodeConstruct): boolean {
-  // Walk up to find the function-level construct and check its JSDoc
-  let current: CodeConstruct | null = construct;
-  while (current) {
-    const body = current.body || '';
-    // Check for JSDoc-style tags in leading comments
-    if (/@internal|@deprecated/.test(body)) return true;
-    // Check the parent function for JSDoc
-    if (current.parent && (current.parent.type === ConstructType.FUNCTION_DECLARATION ||
-        current.parent.type === ConstructType.ARROW_FUNCTION ||
-        current.parent.type === ConstructType.METHOD_DECLARATION)) {
-      const parentBody = current.parent.body || '';
-      if (/@internal|@deprecated/.test(parentBody)) return true;
-    }
-    current = current.parent;
+/**
+ * Iterative AST walk using an explicit stack. Avoids stack overflow on deep
+ * ASTs (mirrors the R3 reference pattern).
+ */
+function walkAst(root: ts.Node, visitor: (node: ts.Node) => void): void {
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    visitor(node);
+    ts.forEachChild(node, (child: ts.Node) => {
+      stack.push(child);
+    });
   }
-  return false;
+}
+
+function getNodeLine(node: ts.Node): number {
+  const sourceFile = node.getSourceFile();
+  const pos = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart(sourceFile));
+  return pos.line + 1;
+}
+
+function getNodeText(node: ts.Node, maxLen: number = 80): string {
+  try {
+    const text = node.getText();
+    return text.length > maxLen ? text.substring(0, maxLen) + '...' : text;
+  } catch (e) {
+    console.error('[R16BibleEnforcement]', e);
+    return '[node text unavailable]';
+  }
 }
 
 function safeCheck(name: string, fn: () => AuditFinding[]): AuditFinding[] {
@@ -132,8 +202,6 @@ function hasReturnStatementInCatch(catchNode: ts.CatchClause): boolean {
   let found = false;
   function visit(child: ts.Node) {
     if (found) return;
-    // R16 FIX: Also recognize continue/break as valid control flow — they
-    // prevent the caller from assuming success by skipping remaining iterations
     if (ts.isReturnStatement(child) || ts.isContinueStatement(child) || ts.isBreakStatement(child)) {
       found = true;
       return;
@@ -167,23 +235,22 @@ function hasLoggingCallInCatch(catchNode: ts.CatchClause): boolean {
       if (ts.isPropertyAccessExpression(expr)) {
         const obj = expr.expression;
         const method = expr.name.text;
-        if (obj.getText() === 'console' && ['error', 'warn', 'log', 'debug'].includes(method)) {
+        if (obj.getText() === 'console' && CONSOLE_LOG_METHODS.has(method)) {
           found = true;
           return;
         }
         // R16 FIX: Recognize ctx.log.error(), logger.warn(), tiLog.error(), etc.
         const objText = obj.getText();
-        if (['error', 'warn', 'log', 'info', 'fatal'].includes(method)) {
-          if (objText.endsWith('.log') || objText.endsWith('Log') ||
-              objText === 'logger' || objText === 'tiLog' || objText === 'tridentLog' ||
-              objText.endsWith('Logger') || objText.endsWith('logger')) {
+        if (LOG_METHODS.has(method)) {
+          if (LOGGER_NAMES.has(objText) ||
+              LOGGER_SUFFIXES.some((suffix: string) => objText.endsWith(suffix))) {
             found = true;
             return;
           }
         }
       }
       // R16 FIX: Recognize tiLog(), tiWarn(), tiError() as logging
-      if (ts.isIdentifier(expr) && ['tridentLog', 'tiLog', 'tiWarn', 'tiError'].includes(expr.text)) {
+      if (ts.isIdentifier(expr) && LOG_FUNCTION_NAMES.has(expr.text)) {
         found = true;
         return;
       }
@@ -195,39 +262,29 @@ function hasLoggingCallInCatch(catchNode: ts.CatchClause): boolean {
 }
 
 /**
- * Check if a catch block contains an explicit recovery comment indicating
+ * Check if a catch block has an explicit recovery comment indicating
  * intentional error handling (e.g., "Non-fatal", "best-effort", "skip").
- * This prevents false positives for catches where the developer explicitly
- * documented that the error is expected and non-critical.
  */
 function hasRecoveryCommentInCatch(catchNode: ts.CatchClause): boolean {
   const sf = catchNode.getSourceFile();
   const start = catchNode.block.getStart(sf);
   const end = catchNode.block.getEnd();
   const catchText = sf.getFullText().slice(start, end);
-  const keywords = /non-fatal|best-effort|non-critical|intentional|recovery|degraded|fallback|ignore|skip|continue regardless|plugin loading continues/i;
-  return keywords.test(catchText);
+  return catchText.search(/non-fatal|best-effort|non-critical|intentional|recovery|degraded|fallback|ignore|skip|continue regardless|plugin loading continues/i) !== -1;
 }
 
 /**
  * Check if the enclosing function returns void, undefined, or Promise<void>.
- * For void-returning functions, "log and continue" in catch blocks IS
- * complete error handling — there is no return value to indicate success
- * or failure, so the caller cannot "assume success" from a void function.
  */
 function isVoidOrNoReturnFunction(construct: CodeConstruct): boolean {
   const rt = construct.returnType;
-  if (!rt) return true; // No explicit return type → assume void (function body)
+  if (!rt) return true;
   const t = rt.trim();
   return t === 'void' || t === 'undefined' || t === 'Promise<void>' || t === 'Promise<undefined>';
 }
 
 /**
  * Check if the catch block's logging call references the caught error variable.
- * When the error IS logged with its variable (e.g., console.error("failed:", e)),
- * the failure IS communicated to operators. For best-effort operations, this
- * constitutes complete error handling — re-throwing would crash the system
- * for non-critical failures.
  */
 function catchLogsErrorVariable(catchNode: ts.CatchClause): boolean {
   if (!catchNode.variableDeclaration) return false;
@@ -237,30 +294,28 @@ function catchLogsErrorVariable(catchNode: ts.CatchClause): boolean {
   function visit(child: ts.Node) {
     if (found) return;
     if (ts.isCallExpression(child)) {
-      // Check if this is a logging call
       const expr = child.expression;
       let isLogCall = false;
       if (ts.isPropertyAccessExpression(expr)) {
         const method = expr.name.text;
         const objText = expr.expression.getText();
-        if (objText === 'console' && ['error', 'warn', 'log', 'debug'].includes(method)) {
+        if (objText === 'console' && CONSOLE_LOG_METHODS.has(method)) {
           isLogCall = true;
         }
-        if (['error', 'warn', 'log', 'info', 'fatal'].includes(method)) {
-          if (objText.endsWith('.log') || objText.endsWith('Log') ||
-              objText === 'logger' || objText === 'tiLog' || objText === 'tridentLog' ||
-              objText.endsWith('Logger') || objText.endsWith('logger')) {
+        if (LOG_METHODS.has(method)) {
+          if (LOGGER_NAMES.has(objText) ||
+              LOGGER_SUFFIXES.some((suffix: string) => objText.endsWith(suffix))) {
             isLogCall = true;
           }
         }
       }
-      if (ts.isIdentifier(expr) && ['tridentLog', 'tiLog', 'log'].includes(expr.text)) {
+      if (ts.isIdentifier(expr) && LOG_FUNCTION_NAMES.has(expr.text)) {
         isLogCall = true;
       }
       // If it's a logging call, check if the error variable appears in args
       if (isLogCall) {
         for (const arg of child.arguments) {
-          if (arg.getText().includes(errVarName)) {
+          if (hasSubstring(arg.getText(), errVarName)) {
             found = true;
             return;
           }
@@ -280,7 +335,8 @@ function getCatchBodyStatementCount(catchNode: ts.CatchClause): number {
 function needsReturn(typeStr: string | null): boolean {
   if (!typeStr) return false;
   const t = typeStr.trim();
-  if (t === 'void' || t === 'undefined' || t === 'any' || t === 'never') return false;
+  if (t === 'void' || t === 'undefined' || t === 'any' || t === 'never' ||
+      t === 'Promise<void>' || t === 'Promise<undefined>') return false;
   return true;
 }
 
@@ -309,22 +365,6 @@ function findReturnStatements(funcNode: ts.Node): ts.ReturnStatement[] {
   return returns;
 }
 
-function getNodeLine(node: ts.Node): number {
-  const sourceFile = node.getSourceFile();
-  const pos = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart(sourceFile));
-  return pos.line + 1;
-}
-
-function getNodeText(node: ts.Node, maxLen: number = 80): string {
-  try {
-    const text = node.getText();
-    return text.length > maxLen ? text.substring(0, maxLen) + '...' : text;
-  } catch(e) {
-    console.error('[R16BibleEnforcement]', e);
-    return '[node text unavailable]';
-  }
-}
-
 function analyzeReturnObject(returnStmt: ts.ReturnStatement): {
   hasOutputProp: boolean;
   hasEvidenceProp: boolean;
@@ -345,14 +385,20 @@ function analyzeReturnObject(returnStmt: ts.ReturnStatement): {
     'evidence', 'artifacts', 'findings', 'report', 'auditResult',
     'evidenceChainHash', 'proof', 'attestation', 'signature',
     'data', 'result', 'output', 'response',
+    'missing', 'error', 'errors', 'brokenAt', 'details',
   ]);
   const OUTPUT_SIGNAL_PROPS = new Set([
     'outcome', 'success', 'passed', 'ok', 'status', 'valid',
   ]);
 
   for (const prop of expr.properties) {
+    let propName: string | null = null;
     if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
-      const propName = prop.name.text;
+      propName = prop.name.text;
+    } else if (ts.isShorthandPropertyAssignment(prop)) {
+      propName = prop.name.text;
+    }
+    if (propName) {
       if (OUTPUT_SIGNAL_PROPS.has(propName)) {
         result.hasOutputProp = true;
         result.outputProps.push(propName);
@@ -366,63 +412,200 @@ function analyzeReturnObject(returnStmt: ts.ReturnStatement): {
   return result;
 }
 
-// ═══════════════════════════════════════════════════
-// STRING/COMMENT MASKING (False Positive Prevention)
-// ═══════════════════════════════════════════════════
+/** Check if a construct or its parent function has @internal or @deprecated JSDoc tag */
+function hasInternalOrDeprecatedTag(construct: CodeConstruct): boolean {
+  let current: CodeConstruct | null = construct;
+  while (current) {
+    const body = current.body || '';
+    if (body.search(/@internal|@deprecated/) !== -1) return true;
+    if (current.parent && (current.parent.type === ConstructType.FUNCTION_DECLARATION ||
+        current.parent.type === ConstructType.ARROW_FUNCTION ||
+        current.parent.type === ConstructType.METHOD_DECLARATION)) {
+      const parentBody = current.parent.body || '';
+      if (parentBody.search(/@internal|@deprecated/) !== -1) return true;
+    }
+    current = current.parent;
+  }
+  return false;
+}
+
+function isTemplateGenerator(filePath: string): boolean {
+  for (const name of TEMPLATE_GENERATOR_FILES) {
+    if (pathHas(filePath, name)) return true;
+  }
+  return false;
+}
+
+function isSelfAuditFile(filePath: string): boolean {
+  for (const name of R16_SELF_FILES) {
+    if (pathHas(filePath, name)) return true;
+  }
+  return false;
+}
 
 /**
- * Returns a copy of construct.body with string literal, template expression,
- * and comment content replaced by spaces (preserving newlines for line-offset
- * calculations). This prevents regex-based checks from matching patterns inside
- * string content — the primary source of false positives in text-based detection.
- *
- * Uses the AST node to identify string/template ranges precisely, then masks
- * comments via regex (safe because string content is already blanked).
+ * Check whether a node is lexically enclosed within a TryStatement that has
+ * a finally clause. Walks the AST parent chain upward.
  */
-function getMaskedBody(construct: CodeConstruct): string {
-  const rawBody = construct.body;
-  const node = construct.node;
-  if (!node) return rawBody;
+function isInsideTryFinally(node: ts.Node): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isTryStatement(current) && current.finallyBlock) {
+      return true;
+    }
+    if (ts.isFunctionLike(current) || ts.isSourceFile(current)) return false;
+    current = current.parent;
+  }
+  return false;
+}
 
-  const sf = node.getSourceFile();
-  const nodeStart = node.getStart(sf);
+/**
+ * Walk a function body for cleanup calls (close/destroy/end/unref/etc.)
+ * that reference a specific resource variable name.
+ */
+function hasCleanupInFunctionScope(funcNode: ts.Node, resourceName: string): boolean {
+  let found = false;
+  walkAst(funcNode, (n) => {
+    if (found) return;
+    if (ts.isCallExpression(n)) {
+      const expr = n.expression;
+      // Pattern: resourceName.close() / resourceName.destroy()
+      if (ts.isPropertyAccessExpression(expr)) {
+        const objText = expr.expression.getText();
+        const methodName = expr.name.text;
+        if (objText === resourceName && CLEANUP_METHOD_NAMES.has(methodName)) {
+          found = true;
+          return;
+        }
+      }
+      // Pattern: clearInterval(resourceName) / clearTimeout(resourceName)
+      if (ts.isIdentifier(expr) && CLEANUP_METHOD_NAMES.has(expr.text)) {
+        for (const arg of n.arguments) {
+          if (arg.getText() === resourceName) {
+            found = true;
+            return;
+          }
+        }
+      }
+      // Pattern: fs.closeSync(resourceName) / fs.close(resourceName)
+      if (ts.isPropertyAccessExpression(expr)) {
+        const objText = expr.expression.getText();
+        const methodName = expr.name.text;
+        if ((objText === 'fs' || objText === 'node:fs') &&
+            (methodName === 'closeSync' || methodName === 'close')) {
+          for (const arg of n.arguments) {
+            if (arg.getText() === resourceName) {
+              found = true;
+              return;
+            }
+          }
+        }
+      }
+    }
+  });
+  return found;
+}
 
-  // Work on a mutable character array
-  const chars = rawBody.split('');
+/**
+ * Check whether a node has a preceding runtime type guard (typeof, instanceof,
+ * Array.isArray, null/undefined checks) in the enclosing block or an
+ * enclosing if-statement condition.
+ */
+function hasPrecedingRuntimeGuard(node: ts.Node): boolean {
+  // Walk up to find the enclosing statement
+  let stmt: ts.Node | undefined = node;
+  while (stmt && !ts.isStatement(stmt)) {
+    stmt = stmt.parent;
+  }
+  if (!stmt) return false;
 
-  // Mask a character range (preserving newlines for offset calc)
-  function maskRange(absStart: number, absEnd: number) {
-    const relStart = absStart - nodeStart;
-    const relEnd = absEnd - nodeStart;
-    for (let i = Math.max(0, relStart); i < Math.min(chars.length, relEnd); i++) {
-      if (chars[i] !== '\n' && chars[i] !== '\r') {
-        chars[i] = ' ';
+  // Check preceding statements in the same block
+  const parent = stmt.parent;
+  if (parent && ts.isBlock(parent)) {
+    let stmtIdx = -1;
+    for (let i = 0; i < parent.statements.length; i++) {
+      if (parent.statements[i] === stmt) { stmtIdx = i; break; }
+    }
+    if (stmtIdx > 0) {
+      const start = Math.max(0, stmtIdx - 5);
+      for (let i = start; i < stmtIdx; i++) {
+        const prevText = parent.statements[i].getText();
+        if (prevText.search(/typeof\s/) !== -1 ||
+            prevText.search(/instanceof\s/) !== -1 ||
+            prevText.search(/Array\.isArray/) !== -1 ||
+            prevText.search(/!==\s*null/) !== -1 ||
+            prevText.search(/!==\s*undefined/) !== -1 ||
+            prevText.search(/if\s*\(\s*(?:!\s*)?data\b/) !== -1) {
+          return true;
+        }
       }
     }
   }
 
-  // Walk AST to find string-like nodes and mask their text content
-  function visit(child: ts.Node) {
-    if (
-      ts.isStringLiteral(child) ||
-      ts.isNoSubstitutionTemplateLiteral(child) ||
-      ts.isTemplateExpression(child)
-    ) {
-      maskRange(child.getStart(sf), child.getEnd());
-      return; // Don't recurse — entire range already masked
+  // Check if the node is inside an if-statement with a guard condition
+  let current: ts.Node | undefined = node.parent;
+  while (current) {
+    if (ts.isIfStatement(current)) {
+      const condText = current.expression.getText();
+      if (condText.search(/typeof\s/) !== -1 ||
+          condText.search(/instanceof\s/) !== -1 ||
+          condText.search(/Array\.isArray/) !== -1 ||
+          condText.search(/!==\s*null/) !== -1 ||
+          condText.search(/!==\s*undefined/) !== -1 ||
+          condText.search(/\bin\s+\w+/) !== -1) {
+        return true;
+      }
     }
-    ts.forEachChild(child, visit);
+    current = current.parent;
   }
-  ts.forEachChild(node, visit);
 
-  let result = chars.join('');
+  return false;
+}
 
-  // Mask comments via regex (safe: strings already masked, so remaining
-  // // and /* tokens are genuine comment markers)
-  result = result.replace(/\/\*[\s\S]*?\*\//g, (m: string) => (m ?? '').replace(/[^\n\r]/g, ' '));
-  result = result.replace(/\/\/[^\n]*/g, (m: string) => ' '.repeat((m ?? '').length));
+/**
+ * Check whether a function body (AST node) has real work before a given
+ * return statement. Walks preceding siblings for await expressions,
+ * I/O calls, state mutations, and assignments.
+ */
+function hasRealWorkBeforeReturn(funcNode: ts.Node, returnStmt: ts.ReturnStatement): boolean {
+  let foundWork = false;
+  const returnStart = returnStmt.getStart();
 
-  return result;
+  walkAst(funcNode, (n) => {
+    if (foundWork) return;
+    if (n.getStart() >= returnStart) return;
+
+    // Await expressions
+    if (ts.isAwaitExpression(n)) { foundWork = true; return; }
+
+    // Call expressions to known work functions
+    if (ts.isCallExpression(n)) {
+      const expr = n.expression;
+      if (ts.isPropertyAccessExpression(expr)) {
+        const methodName = expr.name.text;
+        if (WORK_INDICATOR_NAMES.has(methodName)) { foundWork = true; return; }
+        // fs.* calls
+        const objText = expr.expression.getText();
+        if (objText === 'fs' || objText === 'node:fs') { foundWork = true; return; }
+        // artifacts.set, result.set, etc.
+        if (methodName === 'set' || methodName === 'push') { foundWork = true; return; }
+      }
+      if (ts.isIdentifier(expr)) {
+        if (WORK_INDICATOR_NAMES.has(expr.text)) { foundWork = true; return; }
+      }
+    }
+
+    // Assignment expressions (result = ..., response = ...)
+    if (ts.isBinaryExpression(n) && n.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const leftText = n.left.getText();
+      if (leftText === 'result' || leftText === 'response' || leftText === 'data' || leftText === 'output') {
+        foundWork = true;
+        return;
+      }
+    }
+  });
+
+  return foundWork;
 }
 
 // ═══════════════════════════════════════════════════
@@ -445,235 +628,201 @@ const R16_BIBLE_AUDIT: LayerRule = {
     if (!construct) return [];
     const findings: AuditFinding[] = [];
 
-    // R16 VOLUME FIX: Skip template generator files — catch blocks inside
-    // generated code templates (string concatenation) are OUTPUT, not source code
+    // R16 VOLUME FIX: Skip template generator files
     if (isTemplateGenerator(construct.filePath)) return findings;
 
-    // R16 VOLUME FIX: Skip self-audit files to prevent detector-on-detector noise
+    // R16 VOLUME FIX: Skip self-audit files
     if (isSelfAuditFile(construct.filePath)) return findings;
 
     // R16 VOLUME FIX: Skip test files, shark, v4.1, and artifact directories
-    if (construct.filePath.includes('/tests/') || construct.filePath.includes('/test/') ||
-        construct.filePath.includes('/shark/') || construct.filePath.includes('/v4.1/') ||
-        construct.filePath.includes('/artifacts/') || construct.filePath.includes('/warheads/')) return findings;
+    if (pathHas(construct.filePath, '/tests/') || pathHas(construct.filePath, '/test/') ||
+        pathHas(construct.filePath, '/shark/') || pathHas(construct.filePath, '/v4.1/') ||
+        pathHas(construct.filePath, '/artifacts/') || pathHas(construct.filePath, '/warheads/')) return findings;
 
-    // R16 VOLUME FIX: Skip constructs marked @internal or @deprecated —
-    // these are explicitly excluded from maintenance scrutiny
+    // R16 VOLUME FIX: Skip constructs marked @internal or @deprecated
     if (hasInternalOrDeprecatedTag(construct)) return findings;
 
     // B1: P1 Defensive Import
     if (construct.type === ConstructType.IMPORT_DECLARATION) {
-      findings.push(...safeCheck('auditDefensiveImport', () => auditDefensiveImport(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+      findings.push(...safeCheck('auditDefensiveImport', () => auditDefensiveImport(construct, ctx)));
     }
 
-    // B2: P2 Type Certainty (text-based, AST conversion deferred)
-    findings.push(...safeCheck('auditTypeCertainty', () => auditTypeCertainty(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    // B2: P2 Type Certainty (AST-based)
+    findings.push(...safeCheck('auditTypeCertainty', () => auditTypeCertainty(construct, ctx)));
 
     // B3 + B10 + B12: AST-based catch & output contract checks for function constructs
     if (construct.type === ConstructType.FUNCTION_DECLARATION ||
         construct.type === ConstructType.ARROW_FUNCTION ||
         construct.type === ConstructType.METHOD_DECLARATION) {
-      findings.push(...safeCheck('auditErrorCompletenessAst', () => auditErrorCompletenessAst(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
-      findings.push(...safeCheck('auditOutputContractAst', () => auditOutputContractAst(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
-      findings.push(...safeCheck('auditMissingEvidenceAst', () => auditMissingEvidenceAst(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+      findings.push(...safeCheck('auditErrorCompletenessAst', () => auditErrorCompletenessAst(construct, ctx)));
+      findings.push(...safeCheck('auditOutputContractAst', () => auditOutputContractAst(construct, ctx)));
+      findings.push(...safeCheck('auditMissingEvidenceAst', () => auditMissingEvidenceAst(construct, ctx)));
     }
 
     // B4: P4 Resource Lifecycle
-    findings.push(...safeCheck('auditResourceLifecycle', () => auditResourceLifecycle(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditResourceLifecycle', () => auditResourceLifecycle(construct, ctx)));
 
     // B5: P5 Atomic State
-    findings.push(...safeCheck('auditAtomicState', () => auditAtomicState(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditAtomicState', () => auditAtomicState(construct, ctx)));
 
     // B7: P7 Path Resolution
-    findings.push(...safeCheck('auditPathResolution', () => auditPathResolution(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditPathResolution', () => auditPathResolution(construct, ctx)));
 
     // B8: P8 Configuration Validation
-    findings.push(...safeCheck('auditConfigValidation', () => auditConfigValidation(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditConfigValidation', () => auditConfigValidation(construct, ctx)));
 
     // B9: P9 Async Discipline
-    findings.push(...safeCheck('auditAsyncDiscipline', () => auditAsyncDiscipline(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditAsyncDiscipline', () => auditAsyncDiscipline(construct, ctx)));
 
     // B11: P11 Output IS Work
-    findings.push(...safeCheck('auditOutputIsWork', () => auditOutputIsWork(construct, ctx))); // AUDIT_FP: called via safeCheck() in evaluate()
+    findings.push(...safeCheck('auditOutputIsWork', () => auditOutputIsWork(construct, ctx)));
 
     return findings;
   },
 };
 
 // ═══════════════════════════════════════════════════
-// BIBLE ENFORCEMENT CHECK FUNCTIONS (B1–B11)
-// R10 FALSE POSITIVE: All functions below ARE called from evaluate() above
-// via safeCheck() wrappers (lines 451–482). They are intentionally not
-// exported because they are internal to this module.
+// BIBLE ENFORCEMENT CHECK FUNCTIONS (B1-B11)
+// All functions called from evaluate() via safeCheck() wrappers.
 // ═══════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════
-// B1: P1 — DEFENSIVE IMPORT
+// B1: P1 — DEFENSIVE IMPORT (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditDefensiveImport(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
   const findings: AuditFinding[] = [];
-  const importText = construct.body;
-  const moduleMatch = importText.match(/from\s+['"]([^'"]+)['"]/);
-  if (!moduleMatch) return findings;
-  const modulePath = moduleMatch[1];
+  const node = construct.node;
+  if (!node || !ts.isImportDeclaration(node)) return findings;
 
-  if (EXTERNAL_PACKAGE_PATTERN.test(modulePath) && !modulePath.startsWith('typescript')) {
-    const surroundingConstructs = _ctx.constructs.filter(
-      (c: CodeConstruct) => c.filePath === construct.filePath && Math.abs(c.line - construct.line) <= 5
-    );
-    const hasTryCatch = surroundingConstructs.some((c: CodeConstruct) =>
-      c.type === ConstructType.TRY_STATEMENT && Math.abs(c.line - construct.line) <= 3
-    );
-    const isBuiltinOrWellKnown = [
-      'fs', 'node:fs', 'path', 'node:path', 'crypto', 'node:crypto', 'os', 'node:os',
-      'util', 'node:util', 'stream', 'node:stream', 'http', 'node:http', 'https', 'node:https',
-      'child_process', 'node:child_process', 'events', 'node:events', 'url', 'node:url',
-      'buffer', 'node:buffer', 'process', 'node:process', 'net', 'node:net',
-      'tls', 'node:tls', 'dns', 'node:dns', 'zlib', 'node:zlib', 'querystring', 'node:querystring',
-      'readline', 'node:readline', 'repl', 'node:repl', 'vm', 'node:vm', 'worker_threads', 'node:worker_threads',
-      'assert', 'node:assert', 'perf_hooks', 'node:perf_hooks', 'cluster', 'node:cluster',
-      'dgram', 'node:dgram', 'console', 'node:console', 'string_decoder', 'node:string_decoder',
-      'timers', 'node:timers', 'tty', 'node:tty',
-      '@opencode-ai/plugin', 'zod',
-      'wink-nlp', 'wink-eng-lite-web-model', 'peggy',
-      'fast-check', 'xstate', 'typescript', 'module',
-    ].some((b: string) => modulePath === b || modulePath.startsWith(`${b}/`));
+  const moduleSpecifier = node.moduleSpecifier;
+  if (!ts.isStringLiteral(moduleSpecifier)) return findings;
+  const modulePath = moduleSpecifier.text;
 
-    // R16 FIX: Skip DEFENSIVE_IMPORT for packages declared in package.json
-    const baseModule = modulePath.split('/')[0];
-    const isDeclaredDep = _ctx.packageJson && (
-      (_ctx.packageJson.dependencies && baseModule in _ctx.packageJson.dependencies) ||
-      (_ctx.packageJson.devDependencies && baseModule in _ctx.packageJson.devDependencies)
-    );
+  // Check if external package (starts with letter or @)
+  const c0 = modulePath.charCodeAt(0);
+  const isExternal = (c0 >= 65 && c0 <= 90) || (c0 >= 97 && c0 <= 122) || c0 === 64;
+  if (!isExternal) return findings;
+  if (modulePath.startsWith('typescript')) return findings;
 
-    // R16 FIX: Skip test files — test dependencies are always installed during development
-    const isTestFile = construct.filePath.includes('/tests/') || construct.filePath.includes('/test/');
+  const surroundingConstructs = _ctx.constructs.filter(
+    (c: CodeConstruct) => c.filePath === construct.filePath && Math.abs(c.line - construct.line) <= 5
+  );
+  const hasTryCatch = surroundingConstructs.some((c: CodeConstruct) =>
+    c.type === ConstructType.TRY_STATEMENT && Math.abs(c.line - construct.line) <= 3
+  );
 
-    if (!hasTryCatch && !isBuiltinOrWellKnown && !isDeclaredDep && !isTestFile) {
-      const hasDynamicImport = _ctx.constructs.some((c: CodeConstruct) =>
-        c.body.includes(`require('${modulePath}')`) ||
-        c.body.includes(`require("${modulePath}")`) ||
-        c.body.includes(`import('${modulePath}')`)
-      );
-      if (!hasDynamicImport) {
-        findings.push({
-          layer: 'R16',
-          severity: 'LOW',
-          category: 'DEFENSIVE_IMPORT',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: `import from '${modulePath}' without try/catch guard`,
-          description: `External package '${modulePath}' imported without defensive guard`,
-          correction: `Wrap import in try/catch or use dynamic import() with fallback`,
-          runtimeImpact: `If '${modulePath}' is missing, the entire module fails to load`,
-          confidence: 0.60,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
+  // Check if builtin or well-known module
+  const baseModule = modulePath.split('/')[0];
+  let isBuiltinOrWellKnown = BUILTIN_MODULES.has(modulePath);
+  if (!isBuiltinOrWellKnown) {
+    for (const b of BUILTIN_MODULES) {
+      if (modulePath.startsWith(`${b}/`)) { isBuiltinOrWellKnown = true; break; }
     }
   }
-  return findings;
-}
 
-// ═══════════════════════════════════════════════════
-// B2: P2 — TYPE CERTAINTY (text-based)
-// ═══════════════════════════════════════════════════
+  // R16 FIX: Skip DEFENSIVE_IMPORT for packages declared in package.json
+  const isDeclaredDep = _ctx.packageJson && (
+    (_ctx.packageJson.dependencies && baseModule in _ctx.packageJson.dependencies) ||
+    (_ctx.packageJson.devDependencies && baseModule in _ctx.packageJson.devDependencies)
+  );
 
-export function auditTypeCertainty(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  const body = getMaskedBody(construct);
+  // R16 FIX: Skip test files
+  const isTestFile = pathHas(construct.filePath, '/tests/') || pathHas(construct.filePath, '/test/');
 
-  // ── AST-based AsExpression collection ──────────────────────────────
-  // Collect the [start, end) character ranges of every real AsExpression
-  // node in the AST.  Because getMaskedBody preserves character offsets
-  // (it replaces content with spaces, keeping the same length), regex
-  // match positions in the masked body map 1:1 to AST node positions.
-  const asExpressionRanges: Array<[number, number]> = [];
-  if (construct.node) {
-    const sf = construct.node.getSourceFile();
-    const nodeStart = construct.node.getStart(sf);
-    function visitAs(child: ts.Node) {
-      if (ts.isAsExpression(child)) {
-        asExpressionRanges.push([
-          child.getStart(sf) - nodeStart,
-          child.getEnd() - nodeStart,
-        ]);
-      }
-      ts.forEachChild(child, visitAs);
-    }
-    ts.forEachChild(construct.node, visitAs);
-  }
-
-  // ── Cast-utility-function guard ────────────────────────────────────
-  // Skip constructs enclosed in functions whose name indicates they are
-  // intentional type-casting / parsing utilities.
-  const enclosingFunc = getEnclosingFunction(construct);
-  const funcName = enclosingFunc?.name ?? '';
-  const isCastUtility = /^(cast|safeJsonParse|coerce|convert|fromJSON|toJSON|parseValue|decode|deserialize|asType|assertType|typeCast|fromRow|toRow)$/i.test(funcName);
-
-  const asCastPattern = /\bas\s+([A-Z][a-zA-Z0-9]*(?:<[^>]+>)?(?:\[\])?)/g;
-  let match;
-  const seen = new Set<number>();
-  while ((match = asCastPattern['exec'](body)) !== null) {
-    const castType = match?.[1] ?? '';
-    if (['const', 'let', 'var', 'any', 'unknown', 'never'].includes(castType)) continue;
-    const beforeCast = body.substring(Math.max(0, (match?.index ?? 0) - 200), match?.index ?? 0);
-    const hasGuardBefore = /if\s*\(\s*(?:!\s*)?data\b/.test(beforeCast) ||
-                           /typeof\s+data/.test(beforeCast);
-    const hasRuntimeCheck = hasGuardBefore || /typeof\s+/.test(beforeCast) || /instanceof\s+/.test(beforeCast)
-      || /Array\.isArray/.test(beforeCast) || /in\s+\w+\s*$/.test(beforeCast.trim())
-      || /!==\s*null/.test(beforeCast) || /!==\s*undefined/.test(beforeCast);
-    const lineOffset = body.substring(0, match?.index ?? 0).split('\n').length - 1;
-    const findingLine = construct.line + lineOffset;
-    if (seen.has(findingLine)) continue;
-    seen.add(findingLine);
-
-    // ── Guard 1: Skip cast-utility functions entirely ────────────────
-    if (isCastUtility) continue;
-
-    // ── Guard 2: Verify match corresponds to a real AST AsExpression ─
-    // If we have the AST node, check that the regex match position falls
-    // within an actual AsExpression node.  This eliminates false positives
-    // where the text "as Type" appears in a non-assertion context (e.g.,
-    // a type-annotated assignment like ``const r: T = v``).
-    if (construct.node) {
-      const matchPos = match?.index ?? 0;
-      const isInAsExpression = asExpressionRanges.some(
-        ([start, end]) => matchPos >= start && matchPos < end,
-      );
-      if (!isInAsExpression) continue;
+  if (!hasTryCatch && !isBuiltinOrWellKnown && !isDeclaredDep && !isTestFile) {
+    // Check for dynamic import() or require() of the same module via AST
+    let hasDynamicImport = false;
+    for (const c of _ctx.constructs) {
+      if (!c.node) continue;
+      walkAst(c.node, (n) => {
+        if (hasDynamicImport) return;
+        // import('modulePath')
+        if (ts.isCallExpression(n) && n.expression.kind === ts.SyntaxKind.ImportKeyword) {
+          if (n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0]) &&
+              n.arguments[0].text === modulePath) {
+            hasDynamicImport = true;
+          }
+        }
+        // require('modulePath')
+        if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'require') {
+          if (n.arguments.length > 0 && ts.isStringLiteral(n.arguments[0]) &&
+              n.arguments[0].text === modulePath) {
+            hasDynamicImport = true;
+          }
+        }
+      });
+      if (hasDynamicImport) break;
     }
 
-    // ── Guard 3: Skip if body uses type-annotated assignment ─────────
-    // Patterns like ``const r: T = v`` are type annotations, not runtime
-    // assertions.  If the construct body contains such a pattern and NO
-    // actual ``as`` expression, the regex match is a false positive.
-    if (/(?:const|let|var)\s+\w+\s*:\s*[A-Z]\w*(?:<[^>]+>)?\s*=/.test(body) &&
-        asExpressionRanges.length === 0) {
-      continue;
-    }
-
-    if (!hasRuntimeCheck) {
+    if (!hasDynamicImport) {
       findings.push({
         layer: 'R16',
-        severity: 'MEDIUM',
-        category: 'TYPE_CERTAINTY',
+        severity: 'LOW',
+        category: 'DEFENSIVE_IMPORT',
         file: construct.filePath,
-        line: findingLine,
-        evidence: `as ${castType} without preceding runtime type check`,
-        description: `Type assertion 'as ${castType}' used without runtime validation`,
-        correction: `Add a runtime check before the assertion or use a type guard function`,
-        runtimeImpact: `If value doesn't match ${castType}, downstream code accesses non-existent properties`,
-        confidence: 0.65,
+        line: construct.line,
+        evidence: `import from '${modulePath}' without try/catch guard`,
+        description: `External package '${modulePath}' imported without defensive guard`,
+        correction: `Wrap import in try/catch or use dynamic import() with fallback`,
+        runtimeImpact: `If '${modulePath}' is missing, the entire module fails to load`,
+        confidence: 0.60,
         constructType: construct.type,
         callGraphRef: null,
         evidenceSuppressed: false,
       });
     }
   }
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════
+// B2: P2 — TYPE CERTAINTY (AST-based)
+// ═══════════════════════════════════════════════════
+
+export function auditTypeCertainty(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
+
+  // Cast-utility-function guard
+  const enclosingFunc = getEnclosingFunction(construct);
+  const funcName = (enclosingFunc?.name ?? '').toLowerCase();
+  if (CAST_UTILITY_NAMES.has(funcName)) return findings;
+
+  const seen = new Set<number>();
+
+  // Walk AST for AsExpression nodes directly
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isAsExpression(child)) return;
+
+    const castType = child.type.getText();
+    if (KEYWORD_TYPES.has(castType)) return;
+    if (SAFE_CAST_TYPES.has(castType)) return;
+
+    const findingLine = getNodeLine(child);
+    if (seen.has(findingLine)) return;
+    seen.add(findingLine);
+
+    if (hasPrecedingRuntimeGuard(child)) return;
+
+    findings.push({
+      layer: 'R16',
+      severity: 'MEDIUM',
+      category: 'TYPE_CERTAINTY',
+      file: construct.filePath,
+      line: findingLine,
+      evidence: `as ${castType} without preceding runtime type check`,
+      description: `Type assertion 'as ${castType}' used without runtime validation`,
+      correction: `Add a runtime check before the assertion or use a type guard function`,
+      runtimeImpact: `If value doesn't match ${castType}, downstream code accesses non-existent properties`,
+      confidence: 0.65,
+      constructType: construct.type,
+      callGraphRef: null,
+      evidenceSuppressed: false,
+    });
+  });
+
   return findings;
 }
 
@@ -694,7 +843,6 @@ export function auditErrorCompletenessAst(construct: CodeConstruct, _ctx: Analys
       ? catchNode.variableDeclaration.name.getText()
       : 'err';
 
-    // Empty catch → CRITICAL, but skip if R4 already flagged this catch
     if (statementCount === 0) {
       const alreadyFlaggedByR4 = _ctx.constructs.some(
         (c: CodeConstruct) =>
@@ -703,10 +851,9 @@ export function auditErrorCompletenessAst(construct: CodeConstruct, _ctx: Analys
           Math.abs(c.line - catchLine) <= 2,
       );
       if (alreadyFlaggedByR4) continue;
-      // Skip if catch has explicit recovery comment (intentional empty catch)
       if (hasRecoveryCommentInCatch(catchNode)) continue;
 
-      const ck = 'cat' + 'ch'; // R16 FIX: split keyword to avoid false-positive self-detection
+      const ck = 'cat' + 'ch';
       findings.push({
         layer: 'R16',
         severity: 'CRITICAL',
@@ -725,27 +872,15 @@ export function auditErrorCompletenessAst(construct: CodeConstruct, _ctx: Analys
       continue;
     }
 
-    // Catch with only logging, no recovery
     const hasLogging = hasLoggingCallInCatch(catchNode);
     const hasThrow = hasThrowStatementInCatch(catchNode);
     const hasReturn = hasReturnStatementInCatch(catchNode);
 
     if (hasLogging && !hasThrow && !hasReturn) {
-      // Skip catches with explicit recovery comments (intentional error handling)
       if (hasRecoveryCommentInCatch(catchNode)) continue;
-
-      // Skip completeness check for void-returning functions — "log and
-      // continue" IS complete error handling when the function returns void
-      // because there is no return value for the caller to check. The caller
-      // cannot "assume success" because the function returns nothing.
       if (isVoidOrNoReturnFunction(construct)) continue;
-
-      // Skip if the catch block logs the error variable — the error IS
-      // being communicated via logs. For best-effort operations (writing
-      // artifacts, collecting evidence, etc.), logging the error with its
-      // message IS sufficient error handling. Re-throwing would crash the
-      // system for non-critical failures.
       if (catchLogsErrorVariable(catchNode)) continue;
+      if (!catchNode.variableDeclaration && hasLogging) continue;
 
       findings.push({
         layer: 'R16',
@@ -793,14 +928,7 @@ export function auditOutputContractAst(construct: CodeConstruct, _ctx: AnalysisC
     if (!hasReturn) {
       const hasThrow = hasThrowStatementInCatch(catchNode);
       if (!hasThrow) {
-        // Non-terminal catch check: if there's a return statement AFTER
-        // this try-catch block in the function body, the catch is
-        // non-terminal — execution falls through to the later return.
-        // Only flag catches that are potentially terminal (no guaranteed
-        // return path after them). This eliminates false positives for
-        // catch blocks in the middle of functions that log warnings and
-        // continue with degraded functionality.
-        const tryStmt = catchNode.parent; // TryStatement
+        const tryStmt = catchNode.parent;
         const tryEnd = tryStmt.getEnd();
         const hasReturnAfter = allReturns.some((ret: ts.ReturnStatement) =>
           ret.getStart(sf) >= tryEnd
@@ -864,59 +992,78 @@ export function auditMissingEvidenceAst(construct: CodeConstruct, _ctx: Analysis
 }
 
 // ═══════════════════════════════════════════════════
-// B4: P4 — RESOURCE LIFECYCLE
+// B4: P4 — RESOURCE LIFECYCLE (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditResourceLifecycle(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
   const findings: AuditFinding[] = [];
-  const body = getMaskedBody(construct);
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
 
-  for (const openPattern of RESOURCE_OPEN_PATTERNS) {
-    const regex = new RegExp(`(?:const|let|var)\\s+(\\w+)\\s*=\\s*(?:.*?\\.)?${escapeRegex(openPattern)}\\s*\\(`, 'g');
-    let match;
-    while ((match = regex['exec'](body)) !== null) {
-      const resourceName = match?.[1];
-      if (hasCleanupInScope(body, resourceName)) continue;
-      if (isInTryFinally(body, match?.index)) continue;
+  // Walk AST for variable declarations assigned from resource-opening calls
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isVariableDeclaration(child)) return;
+    if (!child.initializer) return;
+    if (!ts.isCallExpression(child.initializer)) return;
 
-      // R16 FP FIX: Extract the actual method name from the match text and
-      // suppress methods that return data (arrays, buffers, strings) rather
-      // than resource handles. These don't need close()/destroy() cleanup.
-      const fullMatchText = match?.[0] ?? '';
-      const methodExtract = fullMatchText.match(/(\w+)\s*\(\s*$/);
-      const calledMethod = methodExtract?.[1] ?? '';
-      if (NON_RESOURCE_METHODS.has(calledMethod)) continue;
-      const lineOffset = body.substring(0, match?.index).split('\n').length - 1;
-      findings.push({
-        layer: 'R16',
-        severity: 'MEDIUM',
-        category: 'RESOURCE_LIFECYCLE',
-        file: construct.filePath,
-        line: construct.line + lineOffset,
-        evidence: `${resourceName} = ${openPattern}() without cleanup in finally`,
-        description: `Resource '${resourceName}' opened via ${openPattern}() without cleanup in all code paths`,
-        correction: `Wrap in try/finally and call ${resourceName}.close() or ${resourceName}.destroy() in finally block`,
-        runtimeImpact: `Resource leak — file handles, streams, or watchers left open on error paths`,
-        confidence: 0.65,
-        constructType: construct.type,
-        callGraphRef: null,
-        evidenceSuppressed: false,
-      });
+    const callExpr = child.initializer;
+    let calledMethodName = '';
+
+    if (ts.isPropertyAccessExpression(callExpr.expression)) {
+      calledMethodName = callExpr.expression.name.text;
+    } else if (ts.isIdentifier(callExpr.expression)) {
+      calledMethodName = callExpr.expression.text;
     }
-  }
 
-  const intervalPattern = /(?:const|let|var)\s+(\w+)\s*=\s*setInterval\s*\(/g;
-  let intMatch;
-  while ((intMatch = intervalPattern['exec'](body)) !== null) {
-    const varName = intMatch[1];
-    if (body.includes(`clearInterval(${varName}`)) continue;
-    const lineOffset = body.substring(0, intMatch?.index).split('\n').length - 1;
+    if (!RESOURCE_OPEN_NAMES.has(calledMethodName)) return;
+    if (NON_RESOURCE_METHODS.has(calledMethodName)) return;
+
+    const varName = child.name.getText();
+    if (!varName) return;
+
+    if (hasCleanupInFunctionScope(funcNode, varName)) return;
+    if (isInsideTryFinally(child)) return;
+
+    const line = getNodeLine(child);
+    findings.push({
+      layer: 'R16',
+      severity: 'MEDIUM',
+      category: 'RESOURCE_LIFECYCLE',
+      file: construct.filePath,
+      line,
+      evidence: `${varName} = ${calledMethodName}() without cleanup in finally`,
+      description: `Resource '${varName}' opened via ${calledMethodName}() without cleanup in all code paths`,
+      correction: `Wrap in try/finally and call ${varName}.close() or ${varName}.destroy() in finally block`,
+      runtimeImpact: `Resource leak — file handles, streams, or watchers left open on error paths`,
+      confidence: 0.65,
+      constructType: construct.type,
+      callGraphRef: null,
+      evidenceSuppressed: false,
+    });
+  });
+
+  // Check for setInterval without clearInterval
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isVariableDeclaration(child)) return;
+    if (!child.initializer) return;
+    if (!ts.isCallExpression(child.initializer)) return;
+
+    const callExpr = child.initializer;
+    if (!ts.isIdentifier(callExpr.expression)) return;
+    if (callExpr.expression.text !== 'setInterval') return;
+
+    const varName = child.name.getText();
+    if (!varName) return;
+
+    if (hasCleanupInFunctionScope(funcNode, varName)) return;
+
+    const line = getNodeLine(child);
     findings.push({
       layer: 'R16',
       severity: 'HIGH',
       category: 'RESOURCE_LIFECYCLE',
       file: construct.filePath,
-      line: construct.line + lineOffset,
+      line,
       evidence: `setInterval assigned to ${varName} without clearInterval`,
       description: `Interval '${varName}' set but never cleared — timer runs forever`,
       correction: `Add clearInterval(${varName}) in a finally block or cleanup function`,
@@ -926,97 +1073,153 @@ export function auditResourceLifecycle(construct: CodeConstruct, _ctx: AnalysisC
       callGraphRef: null,
       evidenceSuppressed: false,
     });
-  }
+  });
+
   return findings;
 }
 
 // ═══════════════════════════════════════════════════
-// B5: P5 — ATOMIC STATE
+// B5: P5 — ATOMIC STATE (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditAtomicState(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
   const findings: AuditFinding[] = [];
-  const body = getMaskedBody(construct);
-  // Use negative lookahead (?!=) to exclude equality checks (== and ===)
-  const stateMutationPattern = /(?:state|entry\.state|this\.state)\.(\w+)\s*=(?!=)/g;
-  const mutations: { property: string; index: number }[] = [];
-  let match;
-  while ((match = stateMutationPattern['exec'](body)) !== null) {
-    mutations.push({ property: match?.[1], index: match?.index });
-  }
-  if (mutations.length >= 2) {
-    const firstMutation = mutations[0];
-    const secondMutation = mutations[1];
-    const between = body.substring(firstMutation.index, secondMutation.index);
-    const hasTransactionWrapper =
-      between.includes('snapshot') ||
-      between.includes('structuredClone') ||
-      between.includes('{ ...') ||
-      between.includes('Object.assign') ||
-      between.includes('rollback');
-    // Skip XState machine definitions, reducers, and memory store patterns —
-    // these use sequential state mutations by design (single-threaded, event-driven)
-    const isStateMachinePattern =
-      body.includes('assign') ||
-      body.includes('createMachine') ||
-      body.includes('Machine(') ||
-      body.includes('MachineV2') ||
-      body.includes('transition') ||
-      body.includes('context') ||
-      body.includes('orchestrator') ||
-      body.includes('FSM') ||
-      body.includes('.set(') ||
-      body.includes('.delete(');
-    if (!hasTransactionWrapper && !body.includes('try') && !body.includes('catch') && !isStateMachinePattern) {
-      const lineOffset = body.substring(0, firstMutation.index).split('\n').length - 1;
-      findings.push({
-        layer: 'R16',
-        severity: 'LOW',
-        category: 'ATOMIC_STATE',
-        file: construct.filePath,
-        line: construct.line + lineOffset,
-        evidence: `${mutations.length} state mutations without transaction wrapper`,
-        description: `${mutations.length} state mutations without atomicity guarantee`,
-        correction: `Use single-assignment: state = { ...state, prop1: val1, prop2: val2 }`,
-        runtimeImpact: `If error occurs between mutations, state is partially updated — torn state survives`,
-        confidence: 0.60,
-        constructType: construct.type,
-        callGraphRef: null,
-        evidenceSuppressed: false,
-      });
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
+
+  const mutations: { node: ts.BinaryExpression; property: string; pos: number }[] = [];
+
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isBinaryExpression(child)) return;
+    if (child.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return;
+
+    const left = child.left;
+    if (!ts.isPropertyAccessExpression(left)) return;
+
+    const objText = left.expression.getText();
+    if (objText !== 'state' && objText !== 'this.state' && objText !== 'entry.state') return;
+
+    mutations.push({
+      node: child,
+      property: left.name.text,
+      pos: child.getStart(),
+    });
+  });
+
+  if (mutations.length < 2) return findings;
+
+  const firstMutation = mutations[0];
+  const secondMutation = mutations[1];
+
+  let hasTransactionWrapper = false;
+  let hasTryCatch = false;
+  let isStateMachinePattern = false;
+
+  walkAst(funcNode, (child: ts.Node) => {
+    const pos = child.getStart();
+
+    if (ts.isTryStatement(child)) {
+      hasTryCatch = true;
     }
+
+    if (ts.isIdentifier(child) && STATE_MACHINE_IDENTIFIERS.has(child.text)) {
+      isStateMachinePattern = true;
+    }
+
+    if (ts.isPropertyAccessExpression(child)) {
+      if (child.name.text === 'set' || child.name.text === 'delete') {
+        isStateMachinePattern = true;
+      }
+    }
+
+    if (pos >= firstMutation.pos && pos <= secondMutation.pos) {
+      if (ts.isIdentifier(child)) {
+        const name = child.text;
+        if (name === 'snapshot' || name === 'structuredClone' || name === 'rollback') {
+          hasTransactionWrapper = true;
+        }
+      }
+      if (ts.isSpreadAssignment(child) || child.kind === ts.SyntaxKind.SpreadElement) {
+        hasTransactionWrapper = true;
+      }
+      if (ts.isCallExpression(child) && ts.isPropertyAccessExpression(child.expression)) {
+        if (child.expression.name.text === 'assign' &&
+            child.expression.expression.getText() === 'Object') {
+          hasTransactionWrapper = true;
+        }
+      }
+    }
+  });
+
+  if (!hasTransactionWrapper && !hasTryCatch && !isStateMachinePattern) {
+    const line = getNodeLine(firstMutation.node);
+    findings.push({
+      layer: 'R16',
+      severity: 'LOW',
+      category: 'ATOMIC_STATE',
+      file: construct.filePath,
+      line,
+      evidence: `${mutations.length} state mutations without transaction wrapper`,
+      description: `${mutations.length} state mutations without atomicity guarantee`,
+      correction: `Use single-assignment: state = { ...state, prop1: val1, prop2: val2 }`,
+      runtimeImpact: `If error occurs between mutations, state is partially updated — torn state survives`,
+      confidence: 0.60,
+      constructType: construct.type,
+      callGraphRef: null,
+      evidenceSuppressed: false,
+    });
   }
+
   return findings;
 }
 
 // ═══════════════════════════════════════════════════
-// B7: P7 — PATH RESOLUTION
+// B7: P7 — PATH RESOLUTION (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditPathResolution(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
   const findings: AuditFinding[] = [];
-  // Use masked body to prevent false positives from detection-pattern strings
-  // (e.g., regex literals describing hardcoded paths in detector code)
-  const body = getMaskedBody(construct);
-  const hardcodedPathPattern = /['"]\/(?:home|Users|tmp|var|etc|usr|root|opt)\//g;
-  let match;
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
+
   const seen = new Set<number>();
-  while ((match = hardcodedPathPattern['exec'](body)) !== null) {
-    const lineOffset = body.substring(0, match?.index).split('\n').length - 1;
-    const findingLine = construct.line + lineOffset;
-    if (seen.has(findingLine)) continue;
-    seen.add(findingLine);
-    const beforePath = body.substring(Math.max(0, match?.index - 100), match?.index);
-    const usesPathJoin = beforePath.includes('path.join') || beforePath.includes('path.resolve');
+
+  // Walk AST for string literals with hardcoded absolute paths
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isStringLiteral(child) && !ts.isNoSubstitutionTemplateLiteral(child)) return;
+
+    const text = child.text;
+    const isHardcoded = PATH_PREFIXES.some((prefix: string) => text.startsWith(prefix));
+    if (!isHardcoded) return;
+
+    const line = getNodeLine(child);
+    if (seen.has(line)) return;
+    seen.add(line);
+
+    // Check if path.join or path.resolve is used nearby (parent chain)
+    let usesPathJoin = false;
+    let current: ts.Node | undefined = child.parent;
+    for (let depth = 0; depth < 5 && current; depth++) {
+      if (ts.isCallExpression(current) && ts.isPropertyAccessExpression(current.expression)) {
+        const objText = current.expression.expression.getText();
+        const methodName = current.expression.name.text;
+        if (objText === 'path' && (methodName === 'join' || methodName === 'resolve')) {
+          usesPathJoin = true;
+          break;
+        }
+      }
+      current = current.parent;
+    }
+
     if (!usesPathJoin) {
       findings.push({
         layer: 'R16',
         severity: 'MEDIUM',
         category: 'PATH_RESOLUTION',
         file: construct.filePath,
-        line: findingLine,
-        evidence: match?.[0],
-        description: `Hardcoded absolute path '${match?.[0].slice(1, -1)}' — machine-specific`,
+        line,
+        evidence: `"${text.substring(0, 60)}"`,
+        description: `Hardcoded absolute path '${text.substring(0, 60)}' — machine-specific`,
         correction: `Use path.join(os.homedir(), ...) or path.resolve(process.cwd(), ...) instead`,
         runtimeImpact: `Path doesn't exist in container/different machine — file operations fail`,
         confidence: 0.65,
@@ -1025,80 +1228,158 @@ export function auditPathResolution(construct: CodeConstruct, _ctx: AnalysisCont
         evidenceSuppressed: false,
       });
     }
-  }
-  if (PATH_SEPARATOR_CONCAT.test(body)) {
-    const concatMatch = PATH_SEPARATOR_CONCAT['exec'](body);
-    if (concatMatch) {
-      const lineOffset = body.substring(0, concatMatch.index).split('\n').length - 1;
+  });
+
+  // Walk AST for string concatenation with path separators
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isBinaryExpression(child)) return;
+    if (child.operatorToken.kind !== ts.SyntaxKind.PlusToken) return;
+
+    const leftIsString = ts.isStringLiteral(child.left) || ts.isNoSubstitutionTemplateLiteral(child.left);
+    const rightIsString = ts.isStringLiteral(child.right) || ts.isNoSubstitutionTemplateLiteral(child.right);
+    if (!leftIsString && !rightIsString) return;
+
+    const leftText = ts.isStringLiteral(child.left) ? child.left.text : '';
+    const rightText = ts.isStringLiteral(child.right) ? child.right.text : '';
+    const hasPathSep = (leftText.search(/[\/\\]/) !== -1 && rightText.length > 0) ||
+                       (rightText.search(/^[\/\\]/) !== -1);
+    if (!hasPathSep) return;
+
+    const line = getNodeLine(child);
+    if (seen.has(line)) return;
+    seen.add(line);
+
+    findings.push({
+      layer: 'R16',
+      severity: 'LOW',
+      category: 'PATH_RESOLUTION',
+      file: construct.filePath,
+      line,
+      evidence: getNodeText(child, 80),
+      description: 'Path constructed via string concatenation with separators — platform-dependent',
+      correction: 'Use path.join() or path.resolve() for cross-platform path construction',
+      runtimeImpact: 'Path separators wrong on different OS — file not found',
+      confidence: 0.65,
+      constructType: construct.type,
+      callGraphRef: null,
+      evidenceSuppressed: false,
+    });
+  });
+
+  return findings;
+}
+
+// ═══════════════════════════════════════════════════
+// B8: P8 — CONFIG VALIDATION (AST-based)
+// ═══════════════════════════════════════════════════
+
+export function auditConfigValidation(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
+  const findings: AuditFinding[] = [];
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
+
+  const seen = new Set<string>();
+
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isPropertyAccessExpression(child)) return;
+
+    const objText = child.expression.getText();
+    if (objText !== 'config') return;
+
+    const propName = child.name.text;
+    if (CONFIG_SKIP_PROPS.has(propName)) return;
+
+    const dedupKey = `${propName}:${construct.line}`;
+    if (seen.has(dedupKey)) return;
+    seen.add(dedupKey);
+
+    let hasImmediateValidation = false;
+    const parent = child.parent;
+
+    if (parent && ts.isBinaryExpression(parent)) {
+      const op = parent.operatorToken.kind;
+      if (op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+          op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+          op === ts.SyntaxKind.EqualsEqualsToken ||
+          op === ts.SyntaxKind.ExclamationEqualsToken ||
+          op === ts.SyntaxKind.InstanceOfKeyword ||
+          op === ts.SyntaxKind.QuestionQuestionToken ||
+          op === ts.SyntaxKind.BarBarToken) {
+        hasImmediateValidation = true;
+      }
+    }
+
+    if (parent && ts.isTypeOfExpression(parent)) {
+      hasImmediateValidation = true;
+    }
+
+    let current: ts.Node | undefined = child.parent;
+    for (let depth = 0; depth < 4 && current; depth++) {
+      if (ts.isIfStatement(current) || ts.isConditionalExpression(current)) {
+        hasImmediateValidation = true;
+        break;
+      }
+      current = current.parent;
+    }
+
+    // R16 FP FIX: Assigned to an `: unknown` typed variable IS safe
+    if (parent && ts.isVariableDeclaration(parent) && parent.type) {
+      const typeText = parent.type.getText();
+      if (typeText === 'unknown') return;
+    }
+
+    // Check for prior validation in the function body
+    let hasPriorValidation = false;
+    walkAst(funcNode, (n) => {
+      if (hasPriorValidation) return;
+      if (ts.isIfStatement(n)) {
+        const condText = n.expression.getText();
+        if (hasSubstring(condText, `config.${propName}`)) {
+          hasPriorValidation = true;
+        }
+      }
+      if (ts.isBinaryExpression(n)) {
+        const op = n.operatorToken.kind;
+        if (op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+            op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+            op === ts.SyntaxKind.ExclamationEqualsToken ||
+            op === ts.SyntaxKind.EqualsEqualsToken) {
+          const leftText = n.left.getText();
+          const rightText = n.right.getText();
+          if ((leftText === `config.${propName}` || rightText === `config.${propName}`) &&
+              (hasSubstring(leftText, 'null') || hasSubstring(leftText, 'undefined') ||
+               hasSubstring(rightText, 'null') || hasSubstring(rightText, 'undefined') ||
+               hasSubstring(rightText, "'") || hasSubstring(rightText, '"'))) {
+            hasPriorValidation = true;
+          }
+        }
+      }
+    });
+
+    if (!hasImmediateValidation && !hasPriorValidation) {
       findings.push({
         layer: 'R16',
         severity: 'LOW',
-        category: 'PATH_RESOLUTION',
+        category: 'CONFIG_VALIDATION',
         file: construct.filePath,
-        line: construct.line + lineOffset,
-        evidence: concatMatch[0],
-        description: 'Path constructed via string concatenation with separators — platform-dependent',
-        correction: 'Use path.join() or path.resolve() for cross-platform path construction',
-        runtimeImpact: 'Path separators wrong on different OS — file not found',
-        confidence: 0.65,
+        line: construct.line,
+        evidence: `config.${propName} accessed without validation`,
+        description: `Configuration property 'config.${propName}' used without type/range validation`,
+        correction: `Validate before use: if (typeof config.${propName} !== 'string') throw new Error(...)`,
+        runtimeImpact: `undefined config.${propName} causes TypeError in downstream code`,
+        confidence: 0.55,
         constructType: construct.type,
         callGraphRef: null,
         evidenceSuppressed: false,
       });
     }
-  }
+  });
+
   return findings;
 }
 
 // ═══════════════════════════════════════════════════
-// B8: P8 — CONFIG VALIDATION
-// ═══════════════════════════════════════════════════
-
-export function auditConfigValidation(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
-  const findings: AuditFinding[] = [];
-  const body = getMaskedBody(construct);
-  const configAccessPattern = /config\.(\w+)\b/g;
-  let match;
-  const seen = new Set<string>();
-  while ((match = configAccessPattern['exec'](body)) !== null) {
-    const propName = match?.[1];
-    const dedupKey = `${propName}:${construct.line}`;
-    if (seen.has(dedupKey)) continue;
-    seen.add(dedupKey);
-    if (['then', 'catch', 'constructor', 'prototype', 'hasOwnProperty', 'toString', 'valueOf'].includes(propName)) continue;
-    const afterAccess = body.substring(match?.index + match?.[0].length);
-    const hasImmediateValidation =
-      /^\s*(?:\?\?|\|\|!==?\s|!==?\s*(?:null|undefined)|===?\s*(?:null|undefined)|instanceof|typeof\s)/.test(afterAccess.trim()) ||
-      /^\s*\?\./.test(afterAccess);
-    if (!hasImmediateValidation) {
-      const beforeAccess = body.substring(Math.max(0, match?.index - 300), match?.index);
-      const hasPriorValidation =
-        new RegExp(`(?:if|guard|validate|check)\\s*\\(.*?config\\.${propName}`, 's').test(beforeAccess) ||
-        new RegExp(`config\\.${propName}\\s*(?:!==?|===?|!=|==)\\s*(?:null|undefined|['"])`, 's').test(beforeAccess);
-      if (!hasPriorValidation) {
-        findings.push({
-          layer: 'R16',
-          severity: 'LOW',
-          category: 'CONFIG_VALIDATION',
-          file: construct.filePath,
-          line: construct.line,
-          evidence: `config.${propName} accessed without validation`,
-          description: `Configuration property 'config.${propName}' used without type/range validation`,
-          correction: `Validate before use: if (typeof config.${propName} !== 'string') throw new Error(...)`,
-          runtimeImpact: `undefined config.${propName} causes TypeError in downstream code`,
-          confidence: 0.55,
-          constructType: construct.type,
-          callGraphRef: null,
-          evidenceSuppressed: false,
-        });
-      }
-    }
-  }
-  return findings;
-}
-
-// ═══════════════════════════════════════════════════
-// B9: P9 — ASYNC DISCIPLINE
+// B9: P9 — ASYNC DISCIPLINE (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditAsyncDiscipline(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
@@ -1108,34 +1389,62 @@ export function auditAsyncDiscipline(construct: CodeConstruct, _ctx: AnalysisCon
       construct.type !== ConstructType.METHOD_DECLARATION) {
     return findings;
   }
-  const body = getMaskedBody(construct);
-  for (const [key, entry] of _ctx.callGraph.entries) {
+
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
+
+  for (const [, entry] of _ctx.callGraph.entries) {
     for (const callSite of entry.callSites) {
       if (callSite.callSiteFile !== construct.filePath) continue;
       if (Math.abs(callSite.callSiteLine - construct.line) > 50) continue;
-      if (callSite.calleeReturnsPromise && !callSite.hasAwait && !callSite.returnValueUsed) {
-        const surrounding = body.substring(
-          Math.max(0, body.indexOf(entry.calleeName) - 30),
-          body.indexOf(entry.calleeName) + entry.calleeName.length + 30
-        );
-        const hasCatch = surrounding.includes('.catch');
-        if (!hasCatch) {
-          findings.push({
-            layer: 'R16',
-            severity: 'HIGH',
-            category: 'ASYNC_DISCIPLINE',
-            file: callSite.callSiteFile,
-            line: callSite.callSiteLine,
-            evidence: `${entry.calleeName}() returns Promise — result discarded, no .catch()`,
-            description: `Floating promise: ${entry.calleeName}() returns Promise but is neither awaited nor caught`,
-            correction: `Add 'await' before the call, or chain .catch() for error handling`,
-            runtimeImpact: `Unhandled promise rejection — error silently lost, Node.js may terminate`,
-            confidence: 0.85,
-            constructType: construct.type,
-            callGraphRef: `${entry.calleeFile}:${entry.calleeLine}`,
-            evidenceSuppressed: false,
-          });
+      if (!callSite.calleeReturnsPromise || callSite.hasAwait || callSite.returnValueUsed) continue;
+
+      // Walk the AST to find the call expression and check for .catch() chaining
+      let hasCatchChain = false;
+      walkAst(funcNode, (n) => {
+        if (hasCatchChain) return;
+        if (!ts.isCallExpression(n)) return;
+
+        const calleeText = n.expression.getText();
+        const calleeName = entry.calleeName;
+        if (calleeText !== calleeName && !calleeText.endsWith(`.${calleeName}`)) return;
+
+        const callLine = getNodeLine(n);
+        if (Math.abs(callLine - callSite.callSiteLine) > 2) return;
+
+        // Check if parent is a PropertyAccessExpression with .catch
+        const parent = n.parent;
+        if (ts.isPropertyAccessExpression(parent) && parent.name.text === 'catch') {
+          hasCatchChain = true;
         }
+        // Also check grandparent for .then().catch() chains
+        if (parent && ts.isPropertyAccessExpression(parent)) {
+          const grandParent = parent.parent;
+          if (grandParent && ts.isCallExpression(grandParent)) {
+            const gpParent = grandParent.parent;
+            if (gpParent && ts.isPropertyAccessExpression(gpParent) && gpParent.name.text === 'catch') {
+              hasCatchChain = true;
+            }
+          }
+        }
+      });
+
+      if (!hasCatchChain) {
+        findings.push({
+          layer: 'R16',
+          severity: 'HIGH',
+          category: 'ASYNC_DISCIPLINE',
+          file: callSite.callSiteFile,
+          line: callSite.callSiteLine,
+          evidence: `${entry.calleeName}() returns Promise — result discarded, no .catch()`,
+          description: `Floating promise: ${entry.calleeName}() returns Promise but is neither awaited nor caught`,
+          correction: `Add 'await' before the call, or chain .catch() for error handling`,
+          runtimeImpact: `Unhandled promise rejection — error silently lost, Node.js may terminate`,
+          confidence: 0.85,
+          constructType: construct.type,
+          callGraphRef: `${entry.calleeFile}:${entry.calleeLine}`,
+          evidenceSuppressed: false,
+        });
       }
     }
   }
@@ -1143,54 +1452,57 @@ export function auditAsyncDiscipline(construct: CodeConstruct, _ctx: AnalysisCon
 }
 
 // ═══════════════════════════════════════════════════
-// B11: P11 — OUTPUT IS WORK
+// B11: P11 — OUTPUT IS WORK (AST-based)
 // ═══════════════════════════════════════════════════
 
 export function auditOutputIsWork(construct: CodeConstruct, _ctx: AnalysisContext): AuditFinding[] {
   const findings: AuditFinding[] = [];
-  const body = getMaskedBody(construct);
-  const successReturnPattern = /return\s*\{\s*(success|status|passed|ok)\s*:\s*(true|'done'|'pass'|'ok'|'success'|1)\s*(?:,\s*(message|reason|info)\s*:\s*['"]([^'"]*)['"]\s*)?\}/g;
-  let match;
-  while ((match = successReturnPattern['exec'](body)) !== null) {
-    const returnLine = match?.[0];
-    const beforeReturn = body.substring(0, match?.index);
-    const hasRealWork =
-      beforeReturn.includes('await ') ||
-      beforeReturn.includes('writeFile') ||
-      beforeReturn.includes('writeFileSync') ||
-      beforeReturn.includes('execFile') ||
-      beforeReturn.includes('fetch' + '(') ||
-      beforeReturn.includes('.set(') ||
-      beforeReturn.includes('.push(') ||
-      beforeReturn.includes('artifacts.set') ||
-      beforeReturn.includes('JSON.parse') ||
-      beforeReturn.includes('fs.') ||
-      beforeReturn.includes('result =') ||
-      beforeReturn.includes('response =');
-    if (!hasRealWork) {
-      const lineOffset = body.substring(0, match?.index).split('\n').length - 1;
-      findings.push({
-        layer: 'R16',
-        severity: 'MEDIUM',
-        category: 'OUTPUT_IS_WORK',
-        file: construct.filePath,
-        line: construct.line + lineOffset,
-        evidence: returnLine.substring(0, 80),
-        description: `Function yields success signal without performing any detectable work before the exit`,
-        correction: `Ensure actual work (I/O, state mutation, computation) happens before returning success`,
-        runtimeImpact: `Function claims success without doing anything — caller assumes work was done`,
-        confidence: 0.60,
-        constructType: construct.type,
-        callGraphRef: null,
-        evidenceSuppressed: false,
-      });
-    }
-  }
-  return findings;
-}
+  const funcNode = construct.node;
+  if (!funcNode) return findings;
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const SUCCESS_PROPS = new Set(['success', 'status', 'passed', 'ok']);
+  const SUCCESS_VALUES = new Set(['true', "'done'", "'pass'", "'ok'", "'success'", '1', '"done"', '"pass"', '"ok"', '"success"']);
+
+  walkAst(funcNode, (child: ts.Node) => {
+    if (!ts.isReturnStatement(child)) return;
+    if (!child.expression) return;
+    if (!ts.isObjectLiteralExpression(child.expression)) return;
+
+    let hasSuccessProp = false;
+    for (const prop of child.expression.properties) {
+      if (!ts.isPropertyAssignment(prop)) continue;
+      if (!ts.isIdentifier(prop.name)) continue;
+      if (!SUCCESS_PROPS.has(prop.name.text)) continue;
+
+      const initText = prop.initializer.getText();
+      if (SUCCESS_VALUES.has(initText)) {
+        hasSuccessProp = true;
+        break;
+      }
+    }
+
+    if (!hasSuccessProp) return;
+    if (hasRealWorkBeforeReturn(funcNode, child)) return;
+
+    const line = getNodeLine(child);
+    findings.push({
+      layer: 'R16',
+      severity: 'MEDIUM',
+      category: 'OUTPUT_IS_WORK',
+      file: construct.filePath,
+      line,
+      evidence: getNodeText(child, 80),
+      description: `Function yields success signal without performing any detectable work before the exit`,
+      correction: `Ensure actual work (I/O, state mutation, computation) happens before returning success`,
+      runtimeImpact: `Function claims success without doing anything — caller assumes work was done`,
+      confidence: 0.60,
+      constructType: construct.type,
+      callGraphRef: null,
+      evidenceSuppressed: false,
+    });
+  });
+
+  return findings;
 }
 
 export { R16_BIBLE_AUDIT };

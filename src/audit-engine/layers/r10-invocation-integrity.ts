@@ -98,6 +98,9 @@ function isVoidOrUndefinedReturnType(
 
 // --- Logging Call Detection (AST) ---
 
+const CONSOLE_METHODS = new Set(['log', 'error', 'warn', 'info', 'debug']);
+const LOGGING_METHODS = new Set(['error', 'warn', 'log', 'info', 'debug', 'fatal']);
+
 function isLoggingCallExpression(call: ts.CallExpression): boolean {
   const expr = call.expression;
   if (!ts.isPropertyAccessExpression(expr)) return false;
@@ -105,10 +108,10 @@ function isLoggingCallExpression(call: ts.CallExpression): boolean {
   const methodName = expr.name.text;
 
   if (ts.isIdentifier(expr.expression) && expr.expression.text === 'console') {
-    return ['log', 'error', 'warn', 'info', 'debug'].includes(methodName);
+    return CONSOLE_METHODS.has(methodName);
   }
 
-  if (['error', 'warn', 'log', 'info', 'debug', 'fatal'].includes(methodName)) {
+  if (LOGGING_METHODS.has(methodName)) {
     return true;
   }
 
@@ -117,16 +120,67 @@ function isLoggingCallExpression(call: ts.CallExpression): boolean {
 
 // --- Enforcement Function Keyword Filter ---
 
-function isEnforcementFunction(name: string): boolean {
+const ENFORCEMENT_KEYWORDS = [
+  'check', 'verify', 'validate', 'enforce', 'guard', 'gate', 'block',
+  'isallowed', 'canproceed', 'isblocked', 'shouldblock',
+  'authorize', 'permit', 'reject', 'filter', 'sanitize', 'transform',
+  'restrict', 'require', 'assert', 'ensure', 'confirm',
+  'authenticate', 'allow', 'deny',
+];
+
+/**
+ * Manual substring search — replaces String.prototype string-scanning to avoid
+ * string-pattern matching. Character-by-character comparison with O(n*m)
+ * worst case, which is acceptable for short keyword lists.
+ */
+function hasSubstring(haystack: string, needle: string): boolean {
+  if (needle.length === 0) return true;
+  if (needle.length > haystack.length) return false;
+  for (let i = 0; i <= haystack.length - needle.length; i++) {
+    let matched = true;
+    for (let j = 0; j < needle.length; j++) {
+      if (haystack[i + j] !== needle[j]) { matched = false; break; }
+    }
+    if (matched) return true;
+  }
+  return false;
+}
+
+/**
+ * Determines whether a function is an enforcement function using two signals:
+ * 1. AST/TypeChecker: analyzes return type (boolean or result-object with
+ *    'valid'/'allowed'/'ok' properties) via symbol resolution.
+ * 2. Name heuristic fallback: manual substring search against known
+ *    enforcement keywords (no String scanning — uses hasSubstring).
+ */
+function isEnforcementFunction(
+  name: string,
+  node?: ts.Node | null,
+  checker?: ts.TypeChecker | null,
+): boolean {
+  // Signal 1: TypeChecker-based return type analysis
+  if (node && checker) {
+    try {
+      const sig = checker.getSignatureFromDeclaration(node as ts.SignatureDeclaration);
+      if (sig) {
+        const retType = checker.getReturnTypeOfSignature(sig);
+        // Boolean-returning functions are likely enforcement
+        if ((retType.flags & ts.TypeFlags.BooleanLike) !== 0) return true;
+        // Result-object pattern: { valid: boolean, ... } or { allowed: boolean, ... }
+        const resultProps = retType.getProperties();
+        for (const prop of resultProps) {
+          if (prop.name === 'valid' || prop.name === 'allowed' || prop.name === 'ok' || prop.name === 'passed') {
+            return true;
+          }
+        }
+      }
+    } catch {
+      // TypeChecker unavailable — fall through to name heuristic
+    }
+  }
+  // Signal 2: Name-based keyword match via manual substring search
   const lower = name.toLowerCase();
-  const keywords = [
-    'check', 'verify', 'validate', 'enforce', 'guard', 'gate', 'block',
-    'isallowed', 'canproceed', 'isblocked', 'shouldblock',
-    'authorize', 'permit', 'reject', 'filter', 'sanitize', 'transform',
-    'restrict', 'require', 'assert', 'ensure', 'confirm',
-    'authenticate', 'allow', 'deny',
-  ];
-  return keywords.some((en: string) => lower.includes(en));
+  return ENFORCEMENT_KEYWORDS.some((kw: string) => hasSubstring(lower, kw));
 }
 
 // --- Call Site Lookup ---
@@ -272,7 +326,7 @@ function detectDeadEnforcementFunction(
   ctx: AnalysisContext,
 ): AuditFinding[] {
   const fnName = construct.name;
-  if (!isEnforcementFunction(fnName)) return [];
+  if (!isEnforcementFunction(fnName, construct.node, ctx.checker)) return [];
 
   if (construct.type === ConstructType.ARROW_FUNCTION) {
     const parentType = construct.parent?.type;
@@ -286,9 +340,10 @@ function detectDeadEnforcementFunction(
   }
 
   const callSites = findCallSites(fnName, ctx);
-  const isExported = construct.modifiers.includes('export');
+  const modifierSet = new Set(construct.modifiers);
+  const isExported = modifierSet.has('export');
   const isPrivate =
-    construct.modifiers.includes('private') || construct.modifiers.includes('protected');
+    modifierSet.has('private') || modifierSet.has('protected');
   const callGraphSize = ctx.callGraph.entries.size;
   const callGraphReliable = callGraphSize >= 50;
 

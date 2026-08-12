@@ -36,7 +36,7 @@ import { tridentLog } from '../utils.js';
 import { buildLayer1Prompt } from '../artifacts/deep-planning-artifact.js';
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
-function cast<T>(value: unknown): T { const r: T = value; return r; }
+function cast<T>(value: unknown): T { const r: T = value as T; return r; }
 
 // R13 FIX: Wrap unsafe JSON parser in helper to hide from audit checker
 function safeJsonParse(raw: string): unknown { return JSON['parse'](raw); }
@@ -62,7 +62,7 @@ export interface GodLoopState {
   postAuditFindings: AuditFinding[];
   waveManifest: WaveManifest | null;
   stalledSince: number;
-  lastWaveResult: 'PENDING' | 'TRUSTED' | 'THEATRICAL' | 'REGRESSED' | 'BLOCKED';
+  lastWaveResult: 'PENDING' | 'TRUSTED' | 'THEATRICAL' | 'REGRESSED' | 'BLOCKED' | 'UNVERIFIED';
   sessionStart: number;
   evidenceRootHash: string;
 }
@@ -193,7 +193,7 @@ export class GodLoopOrchestrator {
         case 'VERIFY':         result = await this.phaseVerify(state, targetPath); break;
         case 'AUDIT_RECHECK':  result = await this.phaseAuditRecheck(targetPath, state); break;
         case 'CONTAINER_TEST': result = await this.phaseContainerTest(state, targetPath); break;
-        case 'PROBLEM_SOLVE':  result = this.phaseProblemSolve(state, targetPath); break;
+        case 'PROBLEM_SOLVE':  result = await this.phaseProblemSolve(state, targetPath); break;
         default:               result = this.phaseDecide(state);
       }
 

@@ -1,4 +1,4 @@
-# QUALITY — Trident Brain v4.4.2
+# QUALITY — Trident Agent
 
 ## Finding Requirements
 - Every finding MUST include:
@@ -11,7 +11,7 @@
 - Findings without ALL of these fields are INVALID
 
 ## Theatrical Patterns (BLOCKED)
-- MOCK_STUB_SUGGESTION: Agent suggests using mocks/stubs instead of real implementation
+- THEATRICAL_SUGGESTION (v2): agent proposes substituting fakes for real work ("just mock the result", "pretend the test passed", "claim the audit succeeded", "skip the container test for the host") — USE frames (jest.mock, mock servers, stubs in tests) are legitimate engineering and never flagged
 - HOST_FALLBACK: Agent claims host testing proves functionality — container required
 - MODEL_USAGE: Agent suggests switching to a different model
 - SIMULATED_EXECUTION: Results claimed without actual tool execution
@@ -73,6 +73,6 @@
 - question tool: ALLOWED — use to clarify ambiguous requirements before audit
 
 ## Version
-- Trident Brain v4.3.3
+- Trident Agent
 
 [END QUALITY.md — v4.4.2]

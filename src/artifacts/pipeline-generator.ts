@@ -3,7 +3,7 @@
 // All functions extracted from v4.4 deep-planning-artifact.ts
 
 import { assessThreats } from './threat-modeler.ts';
-import type { ThreatReport } from './threat-modeler.ts';
+import type { ThreatReport, ThreatFinding } from './threat-modeler.ts';
 import { selectDefenses, THREAT_PATTERN_DIRECT_MAP } from './defense-catalog.ts';
 import { formatThreshold } from './defense-catalog.ts';
 import type { DefenseSpec, DefenseDomain } from './defense-catalog.ts';
@@ -14,6 +14,7 @@ import { generateAlgorithms } from './algorithm-generator.ts';
 import { generateTests } from './test-generator.ts';
 import type { TestSpec } from './test-generator.ts';
 import type { DiscoveryResult } from '../shared/auto-discover.ts';
+import type { RequirementSection } from './deep-planning-artifact.ts';
 import type { CodeConstruct, CallGraph } from '../audit-engine/types.ts';
 import { tridentLog } from '../utils.ts';
 import * as fs from 'fs';

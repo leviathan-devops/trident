@@ -1,5 +1,6 @@
-import { createMachine, interpret } from 'xstate';
+import { createMachine, interpret, type Actor } from 'xstate';
 import { tridentLog } from '../../utils.js';
+import { AuditEngine } from '../../audit-engine/index.js';
 
 export type AuditMode = 'idle' | 'scanning' | 'analyzing' | 'reporting' | 'failed';
 export type AuditEvent = 
@@ -23,12 +24,13 @@ export interface AuditContext {
 }
 
 // R2 FIX: Event-type constants to avoid 'COMPLETE' literal in runFullCycle body
-const EVT_SCAN_DONE = 'SCAN_COMPLETE';
-const EVT_ANALYSIS_DONE = 'ANALYSIS_COMPLETE';
-const EVT_REPORT_DONE = 'REPORT_COMPLETE';
+const EVT_SCAN_DONE = 'SCAN_COMPLETE' as const;
+const EVT_ANALYSIS_DONE = 'ANALYSIS_COMPLETE' as const;
+const EVT_REPORT_DONE = 'REPORT_COMPLETE' as const;
 
 const auditMachine = createMachine({
   id: 'audit',
+  types: { context: {} as AuditContext, events: {} as AuditEvent },
   initial: 'idle',
   context: {
     targetPath: '',
@@ -45,9 +47,9 @@ const auditMachine = createMachine({
         START_SCAN: {
           target: 'scanning',
           actions: ({ context, event }) => {
-            context.targetPath = (event as any).targetPath;
+            context.targetPath = event.targetPath;
             context.startTime = Date.now();
-            tridentLog('FSM', 'xstate', `Transition: idle → scanning (${(event as any).targetPath})`);
+            tridentLog('FSM', 'xstate', `Transition: idle → scanning (${event.targetPath})`);
           },
         },
       },
@@ -57,15 +59,15 @@ const auditMachine = createMachine({
         SCAN_COMPLETE: {
           target: 'analyzing',
           actions: ({ context, event }) => {
-            context.filesFound = (event as any).filesFound;
-            tridentLog('FSM', 'xstate', `Transition: scanning → analyzing (${(event as any).filesFound} files)`);
+            context.filesFound = event.filesFound;
+            tridentLog('FSM', 'xstate', `Transition: scanning → analyzing (${event.filesFound} files)`);
           },
         },
         FAIL: {
           target: 'failed',
           actions: ({ context, event }) => {
-            context.error = (event as any).error;
-            tridentLog('FSM', 'xstate', `Transition: scanning → failed (${(event as any).error})`);
+            context.error = event.error;
+            tridentLog('FSM', 'xstate', `Transition: scanning → failed (${event.error})`);
           },
         },
       },
@@ -75,15 +77,15 @@ const auditMachine = createMachine({
         ANALYSIS_COMPLETE: {
           target: 'reporting',
           actions: ({ context, event }) => {
-            context.findings = (event as any).findings;
-            tridentLog('FSM', 'xstate', `Transition: analyzing → reporting (${(event as any).findings} findings)`);
+            context.findings = event.findings;
+            tridentLog('FSM', 'xstate', `Transition: analyzing → reporting (${event.findings} findings)`);
           },
         },
         FAIL: {
           target: 'failed',
           actions: ({ context, event }) => {
-            context.error = (event as any).error;
-            tridentLog('FSM', 'xstate', `Transition: analyzing → failed (${(event as any).error})`);
+            context.error = event.error;
+            tridentLog('FSM', 'xstate', `Transition: analyzing → failed (${event.error})`);
           },
         },
       },
@@ -99,7 +101,7 @@ const auditMachine = createMachine({
         FAIL: {
           target: 'failed',
           actions: ({ context, event }) => {
-            context.error = (event as any).error;
+            context.error = event.error;
           },
         },
       },
@@ -120,8 +122,8 @@ const auditMachine = createMachine({
 });
 
 export class AuditFSM {
-  private service: any;
-  private actor: any;
+  private service: Actor<typeof auditMachine>;
+  private actor: Actor<typeof auditMachine>;
 
   constructor() {
     this.actor = interpret(auditMachine);
@@ -139,11 +141,12 @@ export class AuditFSM {
   }
 
   getState(): string {
-    return this.actor.getSnapshot()?.value as string || 'unknown';
+    const value = this.actor.getSnapshot().value;
+    return typeof value === 'string' ? value : 'unknown';
   }
 
   getContext(): AuditContext {
-    return this.actor.getSnapshot()?.context as AuditContext;
+    return this.actor.getSnapshot().context;
   }
 
   isRunning(): boolean {
@@ -166,6 +169,7 @@ export class AuditFSM {
 
     // Real filesystem scan — count .ts files
     let filesFound = 0;
+    let scanError: string | null = null;
     const skipDirs = new Set(['node_modules', 'dist', '.git', '.trident']);
     const walk = (dir: string) => {
       try {
@@ -180,22 +184,37 @@ export class AuditFSM {
           }
         }
       } catch (e) {
-        console.error('[AuditFSM] error:', e);
-        // [P3] Skip unreadable directories
+        scanError = e instanceof Error ? e.message : String(e);
+        tridentLog('ERROR', 'xstate-fsm', `[AuditFSM] scan error: ${scanError}`);
       }
     };
     walk(targetPath);
 
-    this.send({ type: EVT_SCAN_DONE as 'SCAN_COMPLETE', filesFound });
+    // A scan that errored is a loud FAIL — the cycle never advances on partial data
+    if (scanError !== null) {
+      this.send({ type: 'FAIL', error: scanError });
+      return { state: this.getState(), context: this.getContext() };
+    }
+
+    this.send({ type: EVT_SCAN_DONE, filesFound });
     this.send({ type: 'START_ANALYSIS', mode: 'full' });
 
-    // Findings count determined by actual audit — use 0 as placeholder
-    // The real audit engine will report actual findings
-    this.send({ type: EVT_ANALYSIS_DONE as 'ANALYSIS_COMPLETE', findings: 0 });
-    this.send({ type: 'START_REPORT', format: 'markdown' });
-    this.send({ type: EVT_REPORT_DONE as 'REPORT_COMPLETE' });
+    // The analysis phase awaits the REAL audit engine — findings are the real count
+    let findings: number;
+    try {
+      const engine = new AuditEngine();
+      const result = await engine.audit(targetPath);
+      findings = result.findings.length;
+    } catch (e) {
+      this.send({ type: 'FAIL', error: e instanceof Error ? e.message : String(e) });
+      return { state: this.getState(), context: this.getContext() };
+    }
+    this.send({ type: EVT_ANALYSIS_DONE, findings });
 
-    tridentLog('INFO', 'xstate-fsm', `Audit cycle complete for ${targetPath} (${filesFound} files found)`);
+    this.send({ type: 'START_REPORT', format: 'markdown' });
+    this.send({ type: EVT_REPORT_DONE });
+
+    tridentLog('INFO', 'xstate-fsm', `Audit cycle complete for ${targetPath} (${filesFound} files found, ${findings} findings)`);
     return { state: this.getState(), context: this.getContext() };
   }
 }

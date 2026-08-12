@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { deepPlanningMachine } from '../../fsm/deep-planning-machine.ts';
-import { problemSolvingMachine } from '../../fsm/problem-solving-machine.ts';
+import { problemSolvingStateMachine } from '../../modes/problem-solving-state-machine.ts';
 import { contextSynthesisMachine } from '../../fsm/context-synthesis-machine.ts';
 import { OrchestratorMachineV2 } from '../../fsm/orchestrator-machine-v2.ts';
 import { deduplicateFindings } from '../../utils.ts';
@@ -24,11 +24,25 @@ export function testDeepPlanning(): number {
 
 export function testProblemSolving(): number {
   let c = 0;
-  fc.assert(fc.property(fc.constant('SUBMIT_ASSUMPTION'), (e) => {
-    const s = interpret(problemSolvingMachine).start();
-    s.send({type:e});
-    return s.getSnapshot().value === 'assumption';
+  // v2 (2026-08-05): the problem-solving machine moved from src/fsm/ to
+  // src/modes/ and became a CLASS (ProblemSolvingStateMachine) — the old
+  // xstate-based test was obsolete (the module import failed). Test the
+  // current API: the iteration counter + the layer configs + the validation.
+  fc.assert(fc.property(fc.integer({min: 1, max: 6}), (layer) => {
+    const cfg = problemSolvingStateMachine.getLayerConfig(layer);
+    return cfg !== null && cfg.name.length > 0 && cfg.description.length > 0;
   }), { numRuns: 50 }); c += 50;
+  fc.assert(fc.property(fc.integer({min: 7, max: 20}), (layer) => {
+    return problemSolvingStateMachine.getLayerConfig(layer) === null;
+  }), { numRuns: 50 }); c += 50;
+  fc.assert(fc.property(fc.string({minLength: 1}), (content) => {
+    const v = problemSolvingStateMachine.validateLayerContent(1, content);
+    return v.valid === true && v.evidence.length > 0;
+  }), { numRuns: 50 }); c += 50;
+  const s0 = problemSolvingStateMachine.getIteration();
+  problemSolvingStateMachine.newIteration();
+  const s1 = problemSolvingStateMachine.getIteration();
+  if (s1 === s0 + 1) c += 1;
   return c;
 }
 
@@ -47,7 +61,10 @@ export function testOrchestrator(): number {
   fc.assert(fc.property(fc.constantFrom('CODE_REVIEW','DEEP_PLANNING','PROBLEM_SOLVING','CONTEXT_SYNTHESIS'), (mode) => {
     const m = new OrchestratorMachineV2();
     m.startMode(mode as any);
-    return m.getStatus() === 'RUNNING' && m.getLayer() === 0;
+    // v2 (2026-08-05): the machine starts at layer 1 (the code comment
+    // "Start at layer 1" — the old test asserted layer 0, stale since the
+    // v4.4.x layer renumbering).
+    return m.getStatus() === 'RUNNING' && m.getLayer() === 1;
   }), { numRuns: 50 }); c += 50;
   fc.assert(fc.property(fc.string({minLength:1}), (reason) => {
     const m = new OrchestratorMachineV2();

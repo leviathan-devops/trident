@@ -18,7 +18,7 @@ export class TsProgramWrapper {
   private sourceFiles: ts.SourceFile[] = [];
   private targetPath: string = '';
 
-  createProgram(targetPath: string, compilerOptions?: ts.CompilerOptions): boolean {
+  async createProgram(targetPath: string, compilerOptions?: ts.CompilerOptions): Promise<boolean> {
     this.targetPath = targetPath;
     try {
       const configPath = ts.findConfigFile(targetPath, ts.sys.fileExists, 'tsconfig.json');
@@ -37,18 +37,18 @@ export class TsProgramWrapper {
 
       // Find .ts files recursively (skip node_modules, dist)
       const files: string[] = [];
-      const walkDir = (dir: string) => {
+      const walkDir = async (dir: string): Promise<void> => {
         try {
-          const entries = fs.readdirSync(dir, { withFileTypes: true });
+          const entries = await fs.promises.readdir(dir, { withFileTypes: true });
           for (const entry of entries) {
             if (entry.name === 'node_modules' || entry.name === 'dist' || entry.name === '.git') continue;
             const fullPath = path.join(dir, entry.name);
-            if (entry.isDirectory()) walkDir(fullPath);
+            if (entry.isDirectory()) await walkDir(fullPath);
             else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts')) files.push(fullPath);
           }
-      } catch (e: unknown) { /* R16 FIX: non-fatal skip — walkDir failed, directory skipped */ tridentLog('WARN', 'ts-compiler-api', `walkDir failed for ${dir}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable dirs */ return; }
+        } catch (e: unknown) { /* R16 FIX: non-fatal skip — walkDir failed, directory skipped */ tridentLog('WARN', 'ts-compiler-api', `walkDir failed for ${dir}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable dirs */ return; }
       };
-      walkDir(targetPath);
+      await walkDir(targetPath);
 
       if (files.length === 0) {
         tridentLog('WARN', 'ts-compiler-api', `No .ts files found in ${targetPath}`);
@@ -57,11 +57,12 @@ export class TsProgramWrapper {
 
       this.program = ts.createProgram(files, options);
       this.checker = this.program.getTypeChecker();
-      this.sourceFiles = files.map(f => {
+      this.sourceFiles = await Promise.all(files.map(async f => {
         const sf = this.program!.getSourceFile(f);
         if (sf) return sf;
-        return ts.createSourceFile(f, fs.readFileSync(f, 'utf-8'), ts.ScriptTarget.Latest, true);
-      });
+        const content = await fs.promises.readFile(f, 'utf-8');
+        return ts.createSourceFile(f, content, ts.ScriptTarget.Latest, true);
+      }));
       
       tridentLog('INFO', 'ts-compiler-api', `Created ts.Program with ${files.length} files`);
       return true;
@@ -105,7 +106,6 @@ export class TsProgramWrapper {
   analyzeCircularDeps(): AnalyzerResult[] {
     const results: AnalyzerResult[] = [];
     if (!this.program) return results;
-    const seen = new Set<string>();
     const visit = (file: string, chain: string[], visited: Set<string>) => {
       if (chain.includes(file)) {
         const cycleStart = chain.indexOf(file);
@@ -113,24 +113,29 @@ export class TsProgramWrapper {
         results.push({
           file, line: 1, severity: 'high',
           message: `Circular dependency: ${cycle}`,
-          rule: 'CIRCULAR_DEP', confidence: 0.85,
+          rule: 'CIRCULAR_DEP', confidence: 1.0,
         });
         return;
       }
       if (visited.has(file)) return;
       visited.add(file);
-      // Simple import scanning
-      try {
-        const content = fs.readFileSync(file, 'utf-8');
-        const importRe = /from\s+['"]([^'"]+)['"]/g;
-        let match;
-        while ((match = importRe.exec(content)) !== null) {
-          const resolved = resolveModulePath(match[1], path.dirname(file));
+      // Structural import scanning via the AST — the regex on raw file text is replaced
+      const sf = this.sourceFiles.find((f: ts.SourceFile) => f.fileName === file);
+      if (!sf) return;
+      ts.forEachChild(sf, (node: ts.Node) => {
+        let specifier: string | null = null;
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier)) {
+          specifier = node.moduleSpecifier.text;
+        } else if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+          specifier = node.moduleSpecifier.text;
+        }
+        if (specifier) {
+          const resolved = resolveModulePath(specifier, path.dirname(file));
           if (resolved && resolved.startsWith(this.targetPath)) {
             visit(resolved, [...chain, file], visited);
           }
         }
-      } catch (e: unknown) { /* R16 FIX: non-fatal skip — import scan failed, file skipped */ tridentLog('WARN', 'ts-compiler-api', `Import scan failed for ${file}: ${e instanceof Error ? e.message : String(e)}`); /* skip unreadable */ return; }
+      });
     };
     this.sourceFiles.forEach((sf: ts.SourceFile) => visit(sf.fileName, [], new Set()));
     return results;
@@ -175,17 +180,20 @@ export class TsProgramWrapper {
   detectEmptyCatches(): AnalyzerResult[] {
     const results: AnalyzerResult[] = [];
     this.sourceFiles.forEach((sf: ts.SourceFile) => {
-      const lines = sf.text.split('\n');
-      const emptyCatchRe = /catch\s*\([^)]*\)\s*\{\s*\}/g;
-      for (let i = 0; i < lines.length; i++) {
-        if (emptyCatchRe.test(lines[i])) {
-          results.push({
-            file: sf.fileName, line: i + 1, severity: 'critical',
-            message: 'Empty catch block — error silently swallowed',
-            rule: 'P3_EMPTY_CATCH', confidence: 0.95,
-          });
+      ts.forEachChild(sf, function visit(node: ts.Node) {
+        if (ts.isTryStatement(node) && node.catchClause) {
+          const block = node.catchClause.block;
+          if (block.statements.length === 0) {
+            const pos = sf.getLineAndCharacterOfPosition(node.catchClause.getStart(sf));
+            results.push({
+              file: sf.fileName, line: pos.line + 1, severity: 'critical',
+              message: 'Empty catch block — error silently swallowed',
+              rule: 'P3_EMPTY_CATCH', confidence: 1.0,
+            });
+          }
         }
-      }
+        ts.forEachChild(node, visit);
+      });
     });
     return results;
   }
@@ -194,17 +202,20 @@ export class TsProgramWrapper {
   detectHardcodedPaths(): AnalyzerResult[] {
     const results: AnalyzerResult[] = [];
     this.sourceFiles.forEach((sf: ts.SourceFile) => {
-      const lines = sf.text.split('\n');
-      const hardcodedRe = /['"](?:\/home\/|\/root\/|\/var\/|\/etc\/)/;
-      for (let i = 0; i < lines.length; i++) {
-        if (hardcodedRe.test(lines[i])) {
-          results.push({
-            file: sf.fileName, line: i + 1, severity: 'high',
-            message: 'Hardcoded absolute path — use path.join(os.homedir(), ...) instead',
-            rule: 'P7_HARDCODED_PATH', confidence: 0.90,
-          });
+      ts.forEachChild(sf, function visit(node: ts.Node) {
+        if (ts.isStringLiteral(node)) {
+          const text = node.text;
+          if (/^(?:\/home\/|\/root\/|\/var\/|\/etc\/)/.test(text)) {
+            const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+            results.push({
+              file: sf.fileName, line: pos.line + 1, severity: 'high',
+              message: 'Hardcoded absolute path — use path.join(os.homedir(), ...) instead',
+              rule: 'P7_HARDCODED_PATH', confidence: 1.0,
+            });
+          }
         }
-      }
+        ts.forEachChild(node, visit);
+      });
     });
     return results;
   }
@@ -213,20 +224,21 @@ export class TsProgramWrapper {
   detectFireAndForget(): AnalyzerResult[] {
     const results: AnalyzerResult[] = [];
     this.sourceFiles.forEach((sf: ts.SourceFile) => {
-      const lines = sf.text.split('\n');
-      const ffRe = /\.then\s*\([^)]*\)\s*;\s*$/;
-      for (let i = 0; i < lines.length; i++) {
-        if (ffRe.test(lines[i])) {
-          const hasCatch = lines[i + 1]?.includes('.catch');
-          if (!hasCatch) {
+      ts.forEachChild(sf, function visit(node: ts.Node) {
+        if (ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)) {
+          const call = node.expression;
+          const callee = call.expression;
+          if (ts.isPropertyAccessExpression(callee) && callee.name.text === 'then') {
+            const pos = sf.getLineAndCharacterOfPosition(node.getStart(sf));
             results.push({
-              file: sf.fileName, line: i + 1, severity: 'high',
+              file: sf.fileName, line: pos.line + 1, severity: 'high',
               message: 'Fire-and-forget promise — no .catch() error handling',
-              rule: 'P9_FIRE_FORGET', confidence: 0.85,
+              rule: 'P9_FIRE_FORGET', confidence: 1.0,
             });
           }
         }
-      }
+        ts.forEachChild(node, visit);
+      });
     });
     return results;
   }

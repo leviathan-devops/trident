@@ -1,5 +1,5 @@
 // @ts-ignore
-import { tool } from '@opencode-ai/plugin';
+import { tool } from '../shared/tool-schema.js';
 import { z } from 'zod';
 import * as path from 'path';
 import * as fs from 'fs/promises';
@@ -9,12 +9,21 @@ import { orchestrator } from '../orchestrator.js';
 import { AuditEngine } from '../audit-engine/index.js';
 import type { AuditFinding } from '../audit-engine/types.js';
 import { generateCodeReviewArtifact } from '../artifacts/code-review-artifact.ts';
-import { generateLayer1InitialPlan, generateLayer2DetailedWorkflow, generateContextLibraryManifest, generateContextBrief, buildLayer1Prompt } from '../artifacts/deep-planning-artifact.ts';
+import { generateLayer1InitialPlan, generateLayer2DetailedWorkflow, generateContextLibraryManifest, generateContextBrief, buildLayer1Prompt, generateContainerTestPlanSection, generateExactTestPlanSection } from '../artifacts/deep-planning-artifact.ts';
 import { generatePipelineSpec } from '../artifacts/pipeline-generator.ts';
 import { analyzeProject } from '../artifacts/analysis-engine.ts';
 import { classifyProject } from '../audit-engine/code-classifier.ts';
 import type { ProblemContext } from '../poseidon/problem-solver.js';
-import { generateT1Injectable, generateT2Artifact } from '../artifacts/context-synthesis-artifact.ts';
+import { generateT1Injectable, generateT2Artifact, buildBibleBrief, generateBibleViaLLM, auditBibleGrounding } from '../artifacts/context-synthesis-artifact.ts';
+import { createOmniVisionTool } from './omni-vision.js';
+import { createContainerTestTool } from './container-test.js';
+import { createShipPackageTool } from './trident-ship-package.js';
+import { createPreflightTool } from './trident-preflight.ts';
+
+import { createWaveManagerTool } from './wave-dispatch.ts';
+import { createWaveStatusTool } from './wave-status-tool.ts';
+import { createWaveSteerTool } from './wave-steer-tool.ts';
+import { createWaveProbeTool } from './wave-probe-tool.ts';
 import { contextSynthesisEngine } from '../modes/context-synthesis-engine.js';
 import * as fsSync from 'fs';
 import { TRIDENT_CONFIG } from '../config.js';
@@ -24,6 +33,7 @@ import { contextSynthesisModule } from '../modes/context-synthesis.js';
 import { tridentPoseidonTool } from './trident-poseidon.js';
 import { godLoopOrchestrator } from '../poseidon/god-loop.js';
 import { discoverProject, type DiscoveryResult, type DiscoveredPattern, type DiscoveredFailure, type DiscoveredDecision } from '../shared/auto-discover.js';
+import { validateDeepPlanningInput, validateContextSynthesisInput, validateProblemSolvingInput, validateEmbeddedTestPlan } from './input-validation.js';
 import { interpret } from 'xstate';
 import { deepPlanningMachine } from '../fsm/deep-planning-machine.js';
 import { contextSynthesisMachine } from '../fsm/context-synthesis-machine.js';
@@ -34,16 +44,21 @@ import { deriveFullStrategy, getDefaultStrategy, type L2Strategy } from '../arti
 import { buildBrief, readSourceFiles, appendComplianceAndAppendix, formatDeepeningFeedback, formatAuditFeedback } from '../artifacts/l2-brief-builder.ts';
 import { runDeepeningChecks, runCrossSectionAudit, type DeepeningResult, type CrossSectionAuditResult } from '../artifacts/l2-quality-audit.ts';
 import { REFERENCE_EXCERPTS } from '../artifacts/l2-reference-library.ts';
-import { generateSpecViaLLM, generateSpecViaLLMAsync, setClientGetter } from '../artifacts/l2-llm-generator.ts';
+import { generateSpecViaLLM, setClientGetter, drainPendingSessions } from '../artifacts/llm-generator.ts';
 import { runInternalLLMLoop } from '../artifacts/shared-llm-loop.ts';
 import { buildL1Brief } from '../artifacts/l1-brief-builder.ts';
 import { buildT1Brief } from '../artifacts/t1-brief-builder.ts';
 import { buildT2Brief } from '../artifacts/t2-brief-builder.ts';
-import { detectEngineDomains, scopeAnalysisToDomain } from '../artifacts/l3-engine-discoverer.ts';
-import { setPendingDispatch, setPendingL1Path } from '../hooks/agent-state.js';
+// l3-engine-discoverer no longer needed — L3 is directed, not autonomous
+import { setPendingL1Path } from '../hooks/agent-state.js';
 
 // M7: No shared singleton — create fresh AuditEngine per invocation
 // M3: Wire completeLayer/failLayer for state machine hardening
+
+// ═══ RUNTIME INPUT VALIDATION ═══
+// Per-tool validators live in ./input-validation.ts (validateDeepPlanningInput,
+// validateContextSynthesisInput, validateProblemSolvingInput, validateTestPlan).
+// They replace zod .min() which crashes the opencode SDK's resolveTools.
 
 // ═══ L2 DESIGN MODE HELPERS ═══
 
@@ -205,16 +220,76 @@ function buildDesignBrief(
     }
   }
 
+  // ═══ v4.4.2 STRUCTURED CONTEXT INJECTION — L2 ═══
+  if (args.context && typeof args.context === 'string' && args.context.length > 10) {
+    L.push('## AGENT FIRST-HAND CONTEXT — PRIMARY SOURCE OF TRUTH');
+    L.push('');
+    L.push('The following is first-hand knowledge from the agent that called this tool.');
+    L.push('EVERY name, file, component, gate, tier, and structure mentioned below is REAL.');
+    L.push('You MUST use ONLY these names and structures in your output.');
+    L.push('NEVER invent alternative names, fictional scripts, or idealized architectures.');
+    L.push('');
+    L.push(args.context);
+    L.push('');
+  }
+  if (args.components && typeof args.components === 'string' && args.components.length > 10) {
+    L.push('## COMPONENTS TO BUILD');
+    L.push(args.components);
+    L.push('');
+  }
+  if (args.constraints && typeof args.constraints === 'string' && args.constraints.length > 10) {
+    L.push('## HARD CONSTRAINTS');
+    L.push(args.constraints);
+    L.push('');
+  }
+  if (args.designDecisions && typeof args.designDecisions === 'string' && args.designDecisions.length > 10) {
+    L.push('## DESIGN DECISIONS');
+    L.push(args.designDecisions);
+    L.push('');
+  }
+  if (args.knownGaps && typeof args.knownGaps === 'string' && args.knownGaps.length > 10) {
+    L.push('## KNOWN GAPS AND BUGS');
+    L.push(args.knownGaps);
+    L.push('');
+  }
+  if (args.sourceLineage && typeof args.sourceLineage === 'string' && args.sourceLineage.length > 10) {
+    L.push('## SOURCE LINEAGE');
+    L.push(args.sourceLineage);
+    L.push('');
+  }
+  if (args.fileInventory && typeof args.fileInventory === 'string' && args.fileInventory.length > 10) {
+    L.push('## FILE INVENTORY');
+    L.push(args.fileInventory);
+    L.push('');
+  }
+
   // Generation instructions — L2 engineering spec format
-  L.push('## GENERATION INSTRUCTIONS');
+  L.push('## GENERATION INSTRUCTIONS — L2 ENGINEERING SPECIFICATION');
   L.push('');
   L.push('Write a COMPLETE engineering spec for the system described in the PRIMARY DIRECTIVE.');
   L.push('The spec MUST cover the topic described in PRIMARY DIRECTIVE — do NOT drift to other topics.');
   L.push('Use the user-provided sections above as the spec content structure.');
   L.push('Include: Executive Summary, Architecture, Data Model, Engine Class, Defense Rules,');
   L.push('Algorithm Specs, Test Specs, Integration, Compliance Matrix, What This Spec Does NOT Cover.');
-  L.push('60%+ TypeScript code blocks. Real implementations, not pseudocode.');
-  L.push('Maximum 5000 lines. Output ONLY the spec document.');
+  L.push('');
+  L.push('Target 2000+ lines. NO MAXIMUM. 5000+ is normal for complex systems.');
+  L.push('LENGTH IS NEVER A CONCERN. DENSITY is the ONLY metric. Be PRECISE not CONCISE.');
+  L.push('');
+  L.push('CODE BLOCKS: Full pseudocode implementations — TypeScript interfaces with all fields,');
+  L.push('algorithm descriptions with step-by-step logic, method signatures with parameters and');
+  L.push('return types, configuration objects with exact keys. Complete enough that a build agent');
+  L.push('can implement directly — like the CME spec pattern. NOT complete runtime code.');
+  L.push('Pseudocode building blocks that serve as the implementation blueprint.');
+  L.push('');
+  L.push('## GROUNDING CONTRACT');
+  L.push('');
+  L.push('Every file path, Docker image name, config value, constant MUST come from provided context.');
+  L.push('Unknown values: PROPOSED: [value]. NEVER fabricate from training data.');
+  L.push('Code blocks: Full TypeScript interfaces with all fields. Pseudocode algorithms');
+  L.push('with step-by-step logic. Method signatures with parameters and return types.');
+  L.push('Configuration objects with exact keys. Complete enough that a build agent can');
+  L.push('implement directly — like the CME spec pattern. NOT complete implementations —');
+  L.push('pseudocode building blocks that serve as the implementation blueprint.');
   L.push('');
   L.push('## THRESHOLD RATIONALE REQUIREMENT (CRITICAL)');
   L.push('');
@@ -226,19 +301,7 @@ function buildDesignBrief(
   L.push('  occurs at X-0.1, what false positives occur at X+0.1, what analysis or data');
   L.push('  supports choosing X over alternatives]');
   L.push('');
-  L.push('Examples:');
-  L.push('  passThreshold = 0.7 BECAUSE agents below 70% alignment introduce 3x more defects.');
-  L.push('  Analysis of 50 build sessions shows defect rate correlates with alignment');
-  L.push('  score at r=0.82. Below 0.7, false-negative rate exceeds 15%. Above 0.8,');
-  L.push('  false-positive rate exceeds 20% (legitimate exploration flagged as drift).');
-  L.push('');
-  L.push('  windowSize = 10 BECAUSE windows <8 produce excessive noise (single outlier');
-  L.push('  dominates distribution). Windows >15 introduce lag (agent has already moved');
-  L.push('  to next phase before stagnation is detected).');
-  L.push('');
-  L.push('A threshold WITHOUT a BECAUSE paragraph is a DEFECT. The build agent cannot');
-  L.push('tune, validate, or understand thresholds without the reasoning. Every threshold');
-  L.push('must answer: "Why this value and not something else?"');
+  L.push('A threshold WITHOUT a BECAUSE paragraph is a DEFECT.');
   L.push('');
 
   return L.join('\n');
@@ -271,6 +334,44 @@ function buildL1ContentBrief(
     L.push('If the context says scripts are named deploy.sh, write deploy.sh — NOT 01-inject-artifacts.sh.');
     L.push('');
     L.push(args.context);
+    L.push('');
+  }
+
+  // v4.4.2 structured context fields — flat string injection
+  if (args.components && typeof args.components === 'string' && args.components.length > 10) {
+    L.push('## COMPONENTS TO BUILD');
+    L.push('');
+    L.push(args.components);
+    L.push('');
+  }
+  if (args.constraints && typeof args.constraints === 'string' && args.constraints.length > 10) {
+    L.push('## HARD CONSTRAINTS');
+    L.push('');
+    L.push(args.constraints);
+    L.push('');
+  }
+  if (args.designDecisions && typeof args.designDecisions === 'string' && args.designDecisions.length > 10) {
+    L.push('## DESIGN DECISIONS');
+    L.push('');
+    L.push(args.designDecisions);
+    L.push('');
+  }
+  if (args.knownGaps && typeof args.knownGaps === 'string' && args.knownGaps.length > 10) {
+    L.push('## KNOWN GAPS AND BUGS');
+    L.push('');
+    L.push(args.knownGaps);
+    L.push('');
+  }
+  if (args.sourceLineage && typeof args.sourceLineage === 'string' && args.sourceLineage.length > 10) {
+    L.push('## SOURCE LINEAGE');
+    L.push('');
+    L.push(args.sourceLineage);
+    L.push('');
+  }
+  if (args.fileInventory && typeof args.fileInventory === 'string' && args.fileInventory.length > 10) {
+    L.push('## FILE INVENTORY');
+    L.push('');
+    L.push(args.fileInventory);
     L.push('');
   }
 
@@ -323,16 +424,27 @@ function buildL1ContentBrief(
     }
   }
 
-  // Format — L1 specific, NOT L2 structure
-  L.push('## FORMAT');
+  // Format — L1 specific
+  L.push('## FORMAT — L1 INITIAL PLAN');
   L.push('');
   L.push('Generate the content described in WHAT TO GENERATE above.');
-  L.push('Target 200-800 lines depending on task complexity. Maximum 1500 lines. No imposed section structure.');
-  L.push('The output format depends entirely on what the requirements ask for.');
-  L.push('If asked for a guide → write a guide. If asked for a prompt → write a prompt.');
-  L.push('If asked for a checklist → write a checklist.');
-  L.push('Use the reference material to inform and enrich the output.');
-  L.push('Output ONLY the requested content. No preamble. No meta-commentary.');
+  L.push('Target 300-800 lines depending on task scope. Maximum 2200 lines.');
+  L.push('Flexible structure — output depends on requirements.');
+  L.push('If asked for a guide, write a guide. If asked for a prompt, write a prompt.');
+  L.push('If asked for a checklist, write a checklist.');
+  L.push('Use the reference material to ground every claim.');
+  L.push('Output ONLY the content. No preamble. No filler. Be PRECISE not CONCISE.');
+  L.push('');
+
+  // ═══ GROUNDING CONTRACT — Anti-Fabrication ═══
+  L.push('## GROUNDING CONTRACT');
+  L.push('');
+  L.push('Every file path, Docker image name, config value MUST come from provided context.');
+  L.push('Unknown values: PROPOSED: [value]. NEVER fabricate from training data.');
+  L.push('Code blocks: Full TypeScript interfaces with all fields. Pseudocode algorithms');
+  L.push('with step-by-step logic. Method signatures with parameters and return types.');
+  L.push('Configuration objects with exact keys. Pseudocode building blocks — not complete');
+  L.push('runtime code, not stubs. Complete enough that a build agent can implement directly.');
   L.push('');
 
   return L.join('\n');
@@ -475,6 +587,12 @@ function buildT1InjectableBrief(
   L.push('- NO pseudocode — only real runnable commands.');
   L.push('- NO "implement actual logic" or other template phrases.');
   L.push('');
+  L.push('### T1 STANDARD (the operator\'s law):');
+  L.push('The output is LINE-COUNTED, not token-counted. TARGET 300-800 LINES. MAX 1200 LINES.');
+  L.push('A T1 under 300 lines is UNDER-DELIVERED — every section must carry the full engineering');
+  L.push('detail (the 7-Q depth: return/error/side-effect/callers/edge/evidence/rollback where applicable).');
+  L.push('DENSITY is the only metric. Do NOT pad with whitespace — pad with CONTENT.');
+  L.push('');
   L.push('Output ONLY the T1 injectable document.');
   L.push('');
 
@@ -592,7 +710,7 @@ async function writeArtifactFile(modeFolder: string, content: string, outputPath
       if (!(await fileExists(outputPath))) {
         await fs.mkdir(outputPath, { recursive: true });
       }
-      const finalPath = path.join(outputPath, `${fileName}.md`);
+      const finalPath = path.join(outputPath, `${fileName.replace(/\.md$/i, '')}.md`);
       await fs.writeFile(finalPath, content, 'utf-8');
       tridentLog('INFO', 'trident-tools', `Artifact saved to: ${finalPath}`);
       return finalPath;
@@ -604,6 +722,22 @@ async function writeArtifactFile(modeFolder: string, content: string, outputPath
   // If outputPath specified, write directly there instead of GENERATED_ARTIFACTS
   if (outputPath) {
     try {
+      // DIRECTORY BUG FIX: when outputPath is an existing directory and no
+      // fileName/outputName is provided, writing literally to the directory path
+      // creates a FILE named after the directory (e.g., "GENERATED_ARTIFACTS"
+      // becomes a file, not a folder). Auto-generate a semantic name inside the
+      // directory instead. (Identified by PS diagnostic analysis.)
+      const fsSync = await import('fs');
+      const isDir = fsSync.existsSync(outputPath) && fsSync.statSync(outputPath).isDirectory();
+      if (isDir) {
+        const semanticName = outputName
+          ? outputName.replace(/\.md$/i, '')
+          : extractSemanticName(content, modeFolder);
+        const finalPath = path.join(outputPath, `${semanticName}.md`);
+        await fs.writeFile(finalPath, content, 'utf-8');
+        tridentLog('INFO', 'trident-tools', `Artifact saved inside directory: ${finalPath}`);
+        return finalPath;
+      }
       const dir = path.dirname(outputPath);
       if (!(await fileExists(dir))) {
         await fs.mkdir(dir, { recursive: true });
@@ -936,13 +1070,14 @@ export function createTridentTools(client?: any) {
       description: 'Run DEEP_PLANNING mode: 3-layer pipeline (Initial Plan → Detailed Workflow → Context Library). Validates output against DeepPlanningModule requirements at each layer. Produces Build Spec + Context Library Manifest.',
       args: {
         targetPath: z.string().optional().describe('Absolute path to project root. Source files are read as REFERENCE material for the spec. The tool does NOT audit or analyze this code — it reads it as context.'),
-        requirements: z.string().optional().describe('PRIMARY input. What system to design and build. The spec will be generated from these requirements using contextFiles as reference material.'),
+        requirements: z.string().optional().describe('MINIMUM 4000+ CHARS for layer=2 (500+ for layer=1). PRIMARY input. What system to design and build. The spec will be generated from these requirements using contextFiles as reference material. Include FR-1 through FR-N with interface specs, acceptance criteria, and testable outputs.'),
         architecture: z.string().optional().describe('Architecture description for the spec'),
         patterns: z.array(z.string()).optional().describe('Known patterns to include in context library (merged with auto-discovered patterns)'),
         failures: z.array(z.string()).optional().describe('Known failure modes to document (merged with auto-discovered failures)'),
         decisions: z.array(z.string()).optional().describe('Design decisions already made (merged with auto-discovered decisions)'),
-        layer: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().describe('Explicit layer override: 1=Initial Plan, 2=Detailed Workflow, 3=Context Library (auto-detected from requirements if omitted)'),
-        context: z.string().describe('MANDATORY: First-hand context from the calling agent. Paste actual file names, actual architecture, actual implementation details. The LLM uses this as PRIMARY source of truth and will NOT invent alternatives.'),
+        layer: z.union([z.literal(1), z.literal(2), z.literal(3)]).describe('REQUIRED — no default. Choose CONSCIOUSLY: 1=Initial Plan (quick top-level approach), 2=Detailed Workflow (3000+ line implementation build spec), 3=Context Library (manifest). Passing 1 when you meant 2 silently produces the wrong artifact — there is no auto-detect and no fallback.'),
+        inputFile: z.string().optional().describe('Path to a JSON file containing the 8 structured fields (requirements, context, components, constraints, designDecisions, knownGaps, sourceLineage, fileInventory). REQUIRED for L2 when the function-calling payload limit prevents passing 68K+ chars as inline args. Fields from the file MERGE with inline args (file wins for its fields).'),
+        context: z.string().describe('MINIMUM 16000+ CHARS for layer=2 (2000+ for layer=1). MANDATORY: First-hand context from the calling agent. Paste actual file names, actual architecture, actual implementation details. The LLM uses this as PRIMARY source of truth and will NOT invent alternatives. Fill to the minimum for your layer — short content causes validation failure.'),
         keyFacts: z.array(z.string()).optional().describe('Critical facts that MUST appear in the output verbatim'),
         outputPath: z.string().describe('MANDATORY: Absolute directory path where the artifact .md file must be written.'),
         fileName: z.string().optional().describe('Output filename WITHOUT extension. Example: "FULL_BUILD_REPORT" → writes FULL_BUILD_REPORT.md. The agent MUST provide this.'),
@@ -960,8 +1095,23 @@ export function createTridentTools(client?: any) {
         evidenceFormat: z.string().optional().describe('Full markdown for Evidence Output Format. JSON schema, field table, sample output.'),
         testSpecs: z.string().optional().describe('Full markdown for Test Specifications. Negative and positive tests per rule.'),
         migrationStrategy: z.string().optional().describe('Full markdown for Migration Strategy. Phased rollout with rollback conditions.'),
-        engineSpecs: z.array(z.string()).optional().describe('Full markdown, one per engine (L3 recursive mode). Each is a complete L2 spec for that engine.'),
-        recursive: z.boolean().optional().describe('L3 recursive mode: generate per-engine specs + structural docs (MASTER_BIBLE, CROSS_REFERENCE_INDEX, README)'),
+        engineSpecs: z.array(z.string()).optional().describe('DEPRECATED: L3 now generates internally. Do not use.'),
+        recursive: z.boolean().optional().describe('DEPRECATED: L3 now generates internally. Do not use.'),
+        domains: z.array(z.object({
+          name: z.string().describe('Domain name — becomes the filename. e.g., "CME_CONTEXT_MANAGEMENT_ENGINE"'),
+          context: z.string().describe('FULL architecture description for this domain. Everything the LLM needs to write the spec. This is the PRIMARY DIRECTIVE for this domain\'s L2 generation.'),
+          files: z.array(z.string()).optional().describe('Source file paths belonging to this domain. Read as reference material for the brief.'),
+        })).optional().describe('MANDATORY for layer=3 (or use domainNames+domainContexts). Array of domain definitions. Each domain becomes one L2 spec file.'),
+        domainsJson: z.string().optional().describe('ALTERNATIVE: JSON string of domains array. Example: \'[{"name":"AUTH","context":"Design auth..."}]\''),
+        domainNames: z.array(z.string()).optional().describe('SIMPLEST for layer=3: Array of domain names. Zip with domainContexts. Example: ["AUTH_ENGINE", "RATE_LIMITER"]'),
+        domainContexts: z.array(z.string()).optional().describe('SIMPLEST for layer=3: Array of domain descriptions (same order as domainNames). Example: ["Design auth engine with JWT...", "Design rate limiter with sliding window..."]'),
+        // v4.4.2 structured context — ALL appended at END (inserting mid-object breaks SDK schema converter)
+        components: z.string().describe('MINIMUM 8000+ CHARS for layer=2. Components to build. Name, purpose, source, target file. Every component: purpose, file location, exported interfaces, dependencies, data flow, failure modes.'),
+        constraints: z.string().describe('MINIMUM 8000+ CHARS for layer=2. Hard constraints. Each with full WHY: origin, type, impact, failure mode prevented.'),
+        designDecisions: z.string().describe('MINIMUM 8000+ CHARS for layer=2. Decisions with rationale + rejected alternatives. Chosen + rejected + rationale + cost per decision.'),
+        knownGaps: z.string().describe('MINIMUM 8000+ CHARS for layer=2. Bugs, audit findings. Each with impact, location, description, status.'),
+        sourceLineage: z.string().describe('MINIMUM 8000+ CHARS for layer=2. Pattern attribution. Version introduced, problem solved, evolution, superseded by.'),
+        fileInventory: z.string().describe('MINIMUM 8000+ CHARS for layer=2. File map. All files: path, lines, purpose, key exports.'),
       },
       execute: async (args: {
         targetPath?: string;
@@ -970,9 +1120,13 @@ export function createTridentTools(client?: any) {
         patterns?: string[];
         failures?: string[];
         decisions?: string[];
-        layer?: number;
+        layer?: number | string;
+        inputFile?: string;
         contextFiles?: string[];
         outputPath?: string;
+        fileName?: string;
+        outputName?: string;
+        components: string;
         executiveSummary?: string;
         architectureOverview?: string;
         dataModel?: string;
@@ -985,7 +1139,34 @@ export function createTridentTools(client?: any) {
         migrationStrategy?: string;
         engineSpecs?: string[];
         recursive?: boolean;
+        domains?: Array<{ name: string; context: string; files?: string[] }>;
+        domainsJson?: string;
+        domainNames?: string[];
+        domainContexts?: string[];
       }) => {
+        // inputFile merge: read structured fields from JSON file BEFORE validation.
+        // The function-calling payload limit truncates 68K+ inline args — L2's
+        // mega-input can only arrive via file. File fields override inline args.
+        if (args.inputFile) {
+          try {
+            const fileContent = fsSync.readFileSync(args.inputFile, 'utf-8');
+            const fileFields = JSON.parse(fileContent);
+            const MERGE_FIELDS = ['requirements', 'context', 'components', 'constraints', 'designDecisions', 'knownGaps', 'sourceLineage', 'fileInventory'];
+            for (const f of MERGE_FIELDS) {
+              if (typeof fileFields[f] === 'string' && fileFields[f].length > 0) {
+                (args as any)[f] = fileFields[f];
+              }
+            }
+            tridentLog('INFO', 'trident-deep-planning', `inputFile: merged fields from ${args.inputFile}`);
+          } catch (fileErr) {
+            return `INPUT FILE ERROR: could not read/parse ${args.inputFile}: ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`;
+          }
+        }
+
+        // Per-tool input validation — layer-conditional (L1 light, L2 full 84K, L3 domains)
+        const dpValidationError = validateDeepPlanningInput(args as Record<string, unknown>);
+        if (dpValidationError) return dpValidationError;
+
         // Validate targetPath if provided
         if (args.targetPath && !(await fileExists(args.targetPath))) {
           throw new Error('targetPath does not exist: ' + args.targetPath);
@@ -994,7 +1175,16 @@ export function createTridentTools(client?: any) {
         try {
           // Step 1: Layer determination — default to L1 (content generation).
           // L1 is the most common layer. L2/L3 require explicit layer=2 or layer=3.
-          const layer = args.layer || 1;
+          // LAYER IS REQUIRED — no default (operator mandate: the agent must
+          // consciously choose which layer runs; a silent L1 default produced
+          // the wrong artifact when the agent omitted the arg).
+          if (args.layer === undefined || args.layer === null || args.layer === '') {
+            return '❌ DP ARGUMENT VALIDATION FAILED:\n  - layer is REQUIRED (no default): pass 1 (Initial Plan), 2 (Detailed Workflow), or 3 (Context Library) explicitly. There is no auto-detect and no fallback — choose consciously.';
+          }
+          const layer = typeof args.layer === 'string' ? (parseInt(args.layer as string) || 0) : (args.layer as number);
+          if (layer !== 1 && layer !== 2 && layer !== 3) {
+            return '❌ DP ARGUMENT VALIDATION FAILED:\n  - layer must be 1, 2, or 3. Received: ' + JSON.stringify(args.layer) + '. Choose consciously — 2 is the 3000+ line Detailed Workflow build spec.';
+          }
           const layerNames: Record<number, string> = {
             1: 'INITIAL PROMPT',
             2: 'DETAILED WORKFLOW (Implementation Build Spec)',
@@ -1071,23 +1261,49 @@ export function createTridentTools(client?: any) {
             }
             const l1Strategy = getDefaultStrategy();
             const l1Brief = buildL1ContentBrief(args, l1SourceExtracts, projectName);
-            const L1_SYSTEM = 'You are an elite content generator. ' +
-              'You generate content based on FIRST-HAND CONTEXT provided by the calling agent. ' +
-              'Target 200-800 lines depending on task complexity. Maximum 1500 lines. ' +
-              'Output ONLY the requested content. No meta-commentary. No preamble.\n\n' +
+            const L1_SYSTEM = 'You are an elite engineering planner. Generate a Layer 1 initial plan. ' +
+              'Target 300-800 lines depending on task scope. Maximum 2200 lines. ' +
+              'Flexible structure — output depends on requirements. ' +
+              'Output ONLY the content. No preamble. No filler. Be PRECISE not CONCISE.\n\n' +
               'ANTI-HALLUCINATION RULES — ZERO TOLERANCE:\n' +
-              '1. NEVER invent file names, script names, or component names. Use ONLY names that appear in the PRIMARY FIRST-HAND CONTEXT.\n' +
-              '2. NEVER invent architecture. If the context describes 7 gates, write about 7 — not 8. If it describes 5 tiers, write about 5 — not 3.\n' +
+              '1. NEVER invent file names, script names, or component names. Use ONLY names from provided context.\n' +
+              '2. NEVER invent architecture. If the context describes 7 gates, write about 7 — not 8.\n' +
               '3. NEVER idealize or improve the architecture. Document WHAT EXISTS, not what SHOULD exist.\n' +
-              '4. If you lack context for a section, write "CONTEXT NEEDED: [describe what is missing]" — do NOT fabricate.\n' +
-              '5. NEVER create fictional evidence bundles, fictional circuit breakers, or fictional detection mechanisms.\n' +
-              '6. The PRIMARY FIRST-HAND CONTEXT is the source of truth. The requirements describe what to GENERATE from that context.\n' +
-              '7. If the requirements say "document what was built" — use the context to describe what was ACTUALLY built, not an idealized version.';
+              '4. If you lack context for a section, write CONTEXT NEEDED: [describe what is missing].\n' +
+              '5. NEVER create fictional evidence, fictional mechanisms, or fabricated values.\n' +
+              '6. The provided context is the source of truth. The requirements describe what to GENERATE.\n' +
+              '7. If the requirements say "document what was built" — describe what was ACTUALLY built.';
             const l1Output = await runInternalLLMLoop(l1Brief, null, l1Strategy, {
               useSplit: false, maxIterations: 1, skipQualityChecks: true,
               systemOverride: L1_SYSTEM,
             });
-            const l1Path = await writeArtifactFile('DP_L1_CONTENT', l1Output, args.outputPath, args.outputName, args.fileName);
+            // TEST-PLAN-FIRST (v2.0 mandate): append the mandatory container test
+            // plan section — planning defines the tests, tests define "done".
+            // NOTE: the L1 scope variable is `inputParams` (requirements string),
+            // NOT `requirements` — a ReferenceError here was silently caught and
+            // the append silently skipped (the GATE-C verification bug).
+            let l1FinalOutput = l1Output;
+            try {
+              const l1TestPlan = generateContainerTestPlanSection(inputParams + ' ' + (architecture || ''));
+              l1FinalOutput = l1Output + '\n' + l1TestPlan;
+              const l1TpError = validateEmbeddedTestPlan(l1FinalOutput);
+              // INSTRUMENTATION (GATE-C verification): write a marker so we can
+              // prove the append path executed in the deployed runtime.
+              try {
+                await fs.appendFile('/tmp/trident-l1-append-marker.txt',
+                  `APPENDED ${new Date().toISOString()} len=${l1TestPlan.length} err=${l1TpError || 'none'}\n`, 'utf-8');
+              } catch (markerErr) { /* non-fatal */ }
+              if (l1TpError) {
+                tridentLog('WARN', 'trident-deep-planning', `L1 test plan validation: ${l1TpError}`);
+              }
+            } catch (l1TpErr: unknown) {
+              tridentLog('WARN', 'trident-tools', `L1 test-plan wiring failed (non-fatal): ${l1TpErr instanceof Error ? l1TpErr.message : String(l1TpErr)}`);
+              try {
+                await fs.appendFile('/tmp/trident-l1-append-marker.txt',
+                  `THREW ${new Date().toISOString()} ${l1TpErr instanceof Error ? l1TpErr.message : String(l1TpErr)}\n`, 'utf-8');
+              } catch (markerErr) { /* non-fatal */ }
+            }
+            const l1Path = await writeArtifactFile('DP_L1_CONTENT', l1FinalOutput, args.outputPath, args.outputName, args.fileName);
             setPendingL1Path(l1Path);
             storeArtifacts({ 'layer': '1', 'layer-name': 'INITIAL PLAN', 'mode': 'LLM_GENERATED', 'artifact-path': l1Path });
             try { machineActor.send({ type: 'SUBMIT_LAYER1' }); orchestrator.completeLayer(); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
@@ -1157,17 +1373,103 @@ export function createTridentTools(client?: any) {
               `source files: ${l2SourceExtracts.size}, ` +
               `has requirements: ${l2HasRequirements}`);
 
-            // ── STEP 4: INTERNAL LLM GENERATION LOOP (max 3 iterations) ──
-            const MAX_L2_ITERATIONS = 3;
+            // ── STEP 4: INTERNAL LLM GENERATION LOOP ──
+            // v2 (2026-08-02, 2-hour-bug fix): MAX_L2_ITERATIONS=1. The v1 loop
+            // multiplied wall-clock: a gate failure triggered a FULL regeneration
+            // round (3 sequential chunks × up to 6 LLM calls each) — 2+ hours on
+            // the free tier. v2 generates ONCE (parallel chunks, ~30-40 min) and
+            // the gates are WARN-ONLY: unmet demands are appended to the artifact
+            // as a GENERATION DEMANDS block ("Block the CLAIM, not the WORK").
+            // Transient LLM errors now fail fast instead of silently re-running
+            // for hours — the operator's fail token is patience.
+            const MAX_L2_ITERATIONS = 1;
             let generatedSpec = '';
             let lastFeedback = '';
+
+            // ── L2 PREAMBLE CLEANUP (shared): strip leading LLM self-narration
+            // lines before the first markdown heading. Models occasionally leak
+            // lines like 'No file-write tool is available...' despite the
+            // 'No preamble' instruction — mechanical hygiene for the artifact.
+            const stripL2Preamble = (spec: string): string => {
+              const lines = spec.split('\n');
+              let firstHeading = -1;
+              for (let i = 0; i < lines.length; i++) {
+                if (/^#{1,3}\s+/.test(lines[i])) { firstHeading = i; break; }
+              }
+              if (firstHeading <= 0) return spec;
+              const head = lines.slice(0, firstHeading).join('\n');
+              if (/no file[- ]write tool|i (cannot|can't|don't|do not) have|i (cannot|can't) write|note:|as an ai|i'll (write|save|create)/i.test(head)) {
+                tridentLog('WARN', 'trident-deep-planning', 'L2 preamble stripped (' + firstHeading + ' lines)');
+                return lines.slice(firstHeading).join('\n');
+              }
+              return spec;
+            };
+            const L2_SYSTEM = 'You are an elite engineering spec writer. ' +
+              'Generate a Layer 2 detailed implementation specification. ' +
+              'Target 3000+ lines. NO MAXIMUM. 5000+ is normal for complex systems. ' +
+              'You do NOT need a file-write tool: this call RETURNS TEXT and the caller writes the artifact. ' +
+              'Never mention tools, limitations, or your environment in the output. ' +
+'GENERATION CONTRACTS (CME-grade depth — a table row is NOT a method spec): ' +
+'C1 every component/engine/action listed in any table MUST also have its own ### <Name> — <method> pseudocode subsection (50-100 lines per major method). ' +
+'C2 every hook rewrite MUST include the FULL line-by-line function code inside a code fence. ' +
+'C3 every change to an existing file MUST include an INSERTION-POINT mapping (file, function, before/after/inside which block, context). ' +
+'C4 every changed state/init function MUST include the exact initialization diff. ' +
+'C5 EVERY component MUST include an ASCII data-flow diagram. ' +
+'C6 a component×component PEER INTERACTION TABLE is REQUIRED. ' +
+'C7 test specs MUST include test-code pseudocode with concrete expect() calls. ' +
+'C8 include a what-this-does-NOT-fix blind-spot subsection. ' +
+'C9 the ## CONTAINER TEST PLAN section is embedded after the TOC in this document — never duplicate it, build against it. ' +
+'C10 when writing the ## CONTAINER TEST PLAN content, use ONLY the 7-field scenario format (Feature under test / Prompt / Pass token / Fail token / Max wait / Evidence capture) with tool-result-bound pass tokens. ' +
+              'Imposed section structure: Executive Summary, Architecture Overview, ' +
+              'Component Design (each with full TypeScript interfaces, pseudocode algorithms, ' +
+              'data flow, integration points, file paths, test specs), Data Model, ' +
+              'Integration Plan, Test Specifications, Migration Strategy, Known Gaps. ' +
+              'Full pseudocode blocks REQUIRED — tangible building blocks for build agents. ' +
+              'Algorithm descriptions with step-by-step logic. Complete type definitions. ' +
+              'Method signatures with parameters. Config objects with exact keys. ' +
+              'Do NOT write complete method bodies — pseudocode building blocks only. ' +
+              'Every file path must match FILE INVENTORY. Every config must match CONSTRAINTS. ' +
+              'Unknown values: PROPOSED: [value]. NEVER fabricate from training data. ' +
+              'LENGTH IS NEVER A CONCERN. DENSITY is the ONLY metric. Be PRECISE not CONCISE. ' +
+              'Output ONLY the specification. No preamble.';
 
             for (let l2Iter = 1; l2Iter <= MAX_L2_ITERATIONS; l2Iter++) {
               tridentLog('INFO', 'trident-deep-planning',
                 `L2 generation iteration ${l2Iter}/${MAX_L2_ITERATIONS}`);
 
               try {
-                generatedSpec = await generateSpecViaLLM(l2Brief, lastFeedback || undefined);
+                // CHUNKED GENERATION v2 (2-hour-bug fix): the v1 sequential loop
+                // multiplied wall-clock — each chunk call is itself 1 call + up to
+                // 5 continuations (continuationTarget), so 3 SEQUENTIAL chunks ran
+                // up to 18 sequential LLM calls (~2-4h on the free tier), and a
+                // gate failure regenerated ALL 3 chunks again (36 calls total).
+                // v2:
+                //   (1) PARALLEL generation — the 3 section ranges are standalone
+                //       (the SYSTEM prompt fixes the structure numbering), so they
+                //       run CONCURRENTLY via Promise.all; total time ≈ ONE chunk.
+                //   (2) continuationTarget 2000 → 1300 per chunk (3×1300 = 3900 ≥
+                //       the 3000-line gate, with margin for model shortfall).
+                //   (3) gates are WARN-ONLY (single round): unmet demands are
+                //       appended to the artifact and the best effort is SAVED.
+                // Operator mandate: "the loop must not multiply the 45-60 min a
+                // 3000-line L2 inherently takes."
+                const L2_SECTION_RANGES = ['1-3', '4-6', '7-9'];
+                const chunkBriefs = L2_SECTION_RANGES.map((range) =>
+                  l2Brief + '\n\nSECTION RANGE: write ONLY sections ' + range +
+                  ' of the spec structure (per the SYSTEM structure numbering). ' +
+                  'This range is a STANDALONE chunk — do NOT reference or wait for ' +
+                  'other ranges. Write every section of this range with FULL ' +
+                  'engineering depth (pseudocode, interfaces, data flows, failure ' +
+                  'modes, rationale). End your output when this range is complete.\n'
+                );
+                tridentLog('INFO', 'trident-deep-planning',
+                  `L2 PARALLEL generating ${chunkBriefs.length} chunks (sections ${L2_SECTION_RANGES.join(', ')}, target 1300 lines each)`);
+                const chunks = await Promise.all(chunkBriefs.map(brief =>
+                  generateSpecViaLLM(brief, undefined, false, L2_SYSTEM, undefined, 1300)
+                ));
+                generatedSpec = chunks.map((c) => c.trim()).join('\n\n');
+                tridentLog('INFO', 'trident-deep-planning',
+                  `L2 PARALLEL chunks complete: ${generatedSpec.split('\n').length} lines total (${chunks.map((c, i) => `chunk${i + 1}:${c.split('\n').length}`).join(' ')})`);
               } catch (llmErr) {
                 tridentLog('ERROR', 'trident-deep-planning',
                   `L2 LLM generation failed on iteration ${l2Iter}: ${llmErr instanceof Error ? llmErr.message : String(llmErr)}`);
@@ -1180,8 +1482,20 @@ export function createTridentTools(client?: any) {
                 continue;
               }
 
+              generatedSpec = stripL2Preamble(generatedSpec);
               tridentLog('INFO', 'trident-deep-planning',
-                `L2 iteration ${l2Iter}: LLM generated ${generatedSpec.split('\n').length} lines`);
+                `L2 iteration ${l2Iter}: LLM generated ${generatedSpec.split('\n').length} lines (post-preamble-strip)`);
+
+              // ── GATES v2 (WARN-ONLY, single round — the 2-hour-bug fix) ──
+              // v1 gates FAILED the iteration and triggered a FULL regeneration
+              // round (3 sequential chunks × up to 6 LLM calls each) — 2+ hours
+              // on the free tier. v2 collects every unmet demand into
+              // unmetL2Demands and appends them to the artifact as a GENERATION
+              // DEMANDS block (operator doctrine: "Block the CLAIM, not the
+              // WORK" — the WORK is saved, the claim of gate-passing is blocked
+              // loudly). Build agents MUST satisfy the demands. One generation
+              // pass → guaranteed completion.
+              const unmetL2Demands: string[] = [];
 
               // ── TOPIC ALIGNMENT GATE ──
               // Extract key terms from requirements, verify they appear in output.
@@ -1192,38 +1506,176 @@ export function createTridentTools(client?: any) {
                   !generatedSpec.toLowerCase().includes(term.toLowerCase())
                 );
                 if (missingTerms.length > 0) {
-                  tridentLog('WARN', 'trident-deep-planning',
-                    `L2 TOPIC DRIFT detected: missing terms [${missingTerms.join(', ')}] — requesting revision`);
-                  lastFeedback = `TOPIC ALIGNMENT FAILURE: The generated spec does not contain these key terms from the requirements: ${missingTerms.join(', ')}.\n` +
-                    `The spec has drifted to a different topic. Regenerate with EXPLICIT focus on: ${missingTerms.join(', ')}.\n` +
-                    `The requirements clearly state this is about: "${args.requirements.substring(0, 200)}..."\n` +
-                    `Do NOT write about memory management, theatrical detection, or any other topic. Write about EXACTLY what the requirements describe.`;
-                  if (l2Iter === MAX_L2_ITERATIONS) {
-                    tridentLog('ERROR', 'trident-deep-planning',
-                      `L2 TOPIC DRIFT persists after ${MAX_L2_ITERATIONS} iterations — saving despite drift`);
-                  }
-                  continue; // Skip other quality checks, go to next iteration
+                  tridentLog('ERROR', 'trident-deep-planning',
+                    `L2 TOPIC DRIFT: missing terms [${missingTerms.join(', ')}] — appending demand, saving best effort`);
+                  unmetL2Demands.push(
+                    'TOPIC ALIGNMENT: the spec is missing requirement key terms [' + missingTerms.join(', ') + ']. ' +
+                    'Regenerate the affected sections with EXPLICIT focus on these terms. The requirements describe: "' +
+                    args.requirements.substring(0, 200) + '..."',
+                  );
+                } else {
+                  tridentLog('INFO', 'trident-deep-planning',
+                    `L2 topic alignment PASSED: all ${keyTerms.length} key terms present`);
                 }
-                tridentLog('INFO', 'trident-deep-planning',
-                  `L2 topic alignment PASSED: all ${keyTerms.length} key terms present`);
               }
 
-              // No analysis-based quality checks (no analyzeProject in L2).
-              // Topic alignment gate above is the primary quality check.
+              // ── LINE COUNT GATE ──
+              // L2 specs must be 3000+ lines (operator mandate — a 2320-line spec
+              // passed the old 2000-line gate and missed the requirement).
+              const L2_MIN_LINES = 3000;
+              const currentLines = generatedSpec.split('\n').length;
+              if (currentLines < L2_MIN_LINES) {
+                // Identify thin sections by heading for the expansion work order
+                const sectionLines: Array<{ heading: string; lines: number }> = [];
+                const specLines = generatedSpec.split('\n');
+                let curHeading = '(front matter)';
+                let curCount = 0;
+                for (const sl of specLines) {
+                  if (/^#{1,3}\s+/.test(sl)) {
+                    if (curCount > 0) sectionLines.push({ heading: curHeading, lines: curCount });
+                    curHeading = sl.trim().substring(0, 80);
+                    curCount = 0;
+                  } else {
+                    curCount++;
+                  }
+                }
+                if (curCount > 0) sectionLines.push({ heading: curHeading, lines: curCount });
+                const thinSections = sectionLines.filter(s => s.lines < 80);
+                const thinList = thinSections.length > 0
+                  ? thinSections.map(s => `  - "${s.heading}" (${s.lines} lines — needs full depth)`).join('\n')
+                  : '  - ALL sections need more depth (no single thin section identified)';
+                tridentLog('ERROR', 'trident-deep-planning',
+                  `L2 LINE COUNT FAILURE: ${currentLines} lines < ${L2_MIN_LINES} minimum — appending demand, saving best effort`);
+                unmetL2Demands.push(
+                  `LINE COUNT: the spec is ${currentLines} lines; the operator mandate is ${L2_MIN_LINES}+. ` +
+                  'SURGICALLY EXPAND the document — do NOT regenerate from scratch, keep ALL existing correct content. ' +
+                  'These sections are thin and MUST be expanded to full engineering depth (full pseudocode or interfaces, ' +
+                  'data flows, failure modes with root causes, design rationale with rejected alternatives, cross-references):\n' +
+                  thinList + '\n' +
+                  'Use the provided context fields (components, constraints, designDecisions, knownGaps, sourceLineage, ' +
+                  'fileInventory) — they contain material NOT yet incorporated. Expand each component into its own ' +
+                  'deep-dive subsection.',
+                );
+              } else {
+                tridentLog('INFO', 'trident-deep-planning',
+                  `L2 line count PASSED: ${currentLines} lines >= ${L2_MIN_LINES}`);
+              }
+
+              // ── STRUCTURAL GATE (container-testing skill contract: tables ≠ depth) ──
+              // The 3000-line gate enforces VOLUME; this enforces STRUCTURE. The CME
+              // reference depth comes from per-method pseudocode, line-by-line hook
+              // code, insertion-point maps, init diffs, ASCII diagrams, peer tables,
+              // and tool-result-bound test tokens.
+              const specText = generatedSpec;
+              const codeFences = (specText.match(/```/g) || []).length;
+              const fenceBlocks = specText.split('```').filter((s, i) => i % 2 === 1).join('\n');
+              const hasBoxDrawing = /[\u2500-\u257F]/.test(specText);
+              const hasArrowFlow = /(-->|--->|⟶|=>)/.test(specText);
+              const structuralChecks: Array<{ id: string; ok: boolean; demand: string }> = [
+                { id: 'METHOD_DEPTH', ok: codeFences >= 12, demand: 'EVERY engine/method/action MUST have its own ### <Method> pseudocode subsection (50-100 lines). A table row is NOT a method spec. Expand every component with per-method code blocks.' },
+                { id: 'INSERTION_POINTS', ok: /(insert (before|after)|inside (the )?(function|block|method)|at line \d+)/i.test(specText), demand: 'EVERY change to an existing file MUST map the exact insertion point (file, function, before/after/inside which block, surrounding context).' },
+                { id: 'HOOK_CODE', ok: /(messages\.transform|tool\.execute\.before|system\.transform)/.test(fenceBlocks), demand: 'EVERY hook rewrite MUST include the FULL line-by-line function code inside a code fence — not a before/after table.' },
+                { id: 'INIT_DIFF', ok: /(createSession|constructor|initialize|initState)\(/.test(fenceBlocks), demand: 'EVERY changed state/init function MUST include the exact initialization diff inside a code fence.' },
+                { id: 'DATA_FLOW', ok: hasBoxDrawing || hasArrowFlow, demand: 'EVERY component MUST include an ASCII data-flow diagram.' },
+                { id: 'PEER_TABLE', ok: /^\|\s*[A-Z][A-Z0-9_]{2,}\s*\|\s*[A-Z][A-Z0-9_]{2,}\s*\|/m.test(specText), demand: 'A component×component PEER INTERACTION TABLE is REQUIRED.' },
+                { id: 'TEST_CODE', ok: /expect\(|assert\.|assert\(/.test(fenceBlocks), demand: 'Test specs MUST include test-code pseudocode with concrete expect() calls.' },
+                { id: 'TEST_PLAN_COMPONENTS', ok: (() => {
+                  // FIX (2026-08-02): componentsArg was referenced but NEVER
+                  // declared — the structural gate threw a ReferenceError (TDZ)
+                  // every time it ran. v1's line-gate `continue` masked it; the
+                  // single-round v2 flow exposed it as a crash AFTER ~12min of
+                  // parallel generation. Derive component names locally: parse
+                  // "### <Name>" headings from args.components, fall back to
+                  // the project name. The 0B test plan must name a real component.
+                  const raw = typeof args.components === 'string'
+                    ? args.components
+                    : JSON.stringify(args.components ?? '');
+                  const l2ComponentNames: string[] = [...raw.matchAll(/^###\s+([A-Za-z0-9_]+)/gm)].map(m => m[1]);
+                  const l2CheckNames = l2ComponentNames.length > 0 ? l2ComponentNames : [projectName];
+                  const plan = specText.split('## CONTAINER TEST PLAN')[1] || '';
+                  return l2CheckNames.some(c => plan.includes(c));
+                })(), demand: 'The ## CONTAINER TEST PLAN (0B) MUST reference the actual component names (not placeholders).' },
+                { id: 'TEST_PLAN_TOKENS', ok: /Pass token:/.test(specText) && /Fail token:/.test(specText) && /Max wait:/.test(specText), demand: 'The ## CONTAINER TEST PLAN MUST use the 7-field scenario format: Feature under test / Prompt / Pass token / Fail token / Max wait / Evidence capture.' },
+                { id: 'TEST_PLAN_ADVERSARIAL', ok: /## ADVERSARIAL/.test(specText) && /## TEST SCENARIOS/.test(specText) && /## PASS CRITERIA/.test(specText), demand: 'The ## CONTAINER TEST PLAN MUST include TEST SCENARIOS (5+), ADVERSARIAL (1+), EVIDENCE and PASS CRITERIA sections.' },
+              ];
+              const structuralMisses = structuralChecks.filter(c => !c.ok);
+              if (structuralMisses.length > 0) {
+                tridentLog('ERROR', 'trident-deep-planning',
+                  `L2 STRUCTURAL GAP: ${structuralMisses.map(m => m.id).join(', ')} — appending demands, saving best effort`);
+                unmetL2Demands.push(
+                  'STRUCTURE: the spec lacks CME-grade structure. SURGICALLY EXPAND — do NOT regenerate from scratch, keep ALL existing correct content. MISSING ELEMENTS (fix EACH):\n' +
+                  structuralMisses.map(m => `  - ${m.id}: ${m.demand}`).join('\n'),
+                );
+              } else {
+                tridentLog('INFO', 'trident-deep-planning', 'L2 structural gate PASSED: all 10 checks ok');
+              }
+
+              // ── FINALIZE ROUND (single-round policy) ──
+              if (unmetL2Demands.length > 0) {
+                const demandBlock = '\n\n---\n\n## GENERATION DEMANDS (UNMET — single-round policy)\n' +
+                  'This artifact was generated in ONE round; the v1 multi-round regeneration loop was removed because ' +
+                  'it multiplied generation time 2-4x on slow models (observed 2+ hour runs). The following gate demands ' +
+                  'were NOT met by the generated content. The build agent MUST satisfy every demand below when ' +
+                  'implementing from this spec:\n\n' +
+                  unmetL2Demands.map((d, i) => `${i + 1}. ${d}`).join('\n\n') + '\n';
+                generatedSpec += demandBlock;
+                tridentLog('ERROR', 'trident-deep-planning',
+                  `L2 saved WITH ${unmetL2Demands.length} UNMET DEMAND(S) appended (${generatedSpec.split('\n').length} lines total)`);
+              } else {
+                tridentLog('INFO', 'trident-deep-planning',
+                  `L2 ALL GATES PASSED in one round (${currentLines} lines)`);
+              }
+
+              // Single-round policy: no gate-triggered regeneration exists.
+              // Break unconditionally — the loop body always completes once.
               break;
             }
 
             // ── STEP 5: FINALIZE AND WRITE ──
-            const l2FinalDoc = generatedSpec; // No appendComplianceAndAppendix (no analysis data)
+            let l2FinalDoc = generatedSpec; // No appendComplianceAndAppendix (no analysis data)
+            // TEST-PLAN-FIRST (v2.0 mandate): append the exact scenario-level
+            // container test plan — the definition of done for build agents.
+            try {
+              const l2TpComponents = [{ name: projectName, description: targetPathForGen || args.targetPath || '' }];
+              const l2TpDefenses: string[] = [];
+              l2FinalDoc = l2FinalDoc + '\n' + generateExactTestPlanSection(l2TpComponents, l2TpDefenses, (args.requirements || '') + ' ' + (args.architecture || ''));
+              const l2TpError = validateEmbeddedTestPlan(l2FinalDoc);
+              if (l2TpError) {
+                tridentLog('WARN', 'trident-deep-planning', `L2 test plan validation: ${l2TpError}`);
+              }
+            } catch (l2TpErr: unknown) {
+              tridentLog('WARN', 'trident-tools', `L2 test-plan wiring failed (non-fatal): ${l2TpErr instanceof Error ? l2TpErr.message : String(l2TpErr)}`);
+            }
             let l2ArtifactPath: string;
             if (args.outputPath) {
-              // Respect user-specified output path
+              // outputPath contract:
+              //   - outputPath + fileName → outputPath is a DIRECTORY; write fileName.md inside it
+              //   - outputPath only + path exists as directory → semantic name inside (writeArtifactFile handles)
+              //   - outputPath only + path is a file or doesn't exist → write literally to outputPath
+              // Previously fileName was silently discarded when outputPath was set,
+              // causing "GENERATED_ARTIFACTS" to become a FILE instead of a directory.
               try {
-                const outDir = path.dirname(args.outputPath);
-                await fs.mkdir(outDir, { recursive: true });
-                await fs.writeFile(args.outputPath, l2FinalDoc, 'utf-8');
-                l2ArtifactPath = args.outputPath;
-                tridentLog('INFO', 'trident-tools', `Artifact saved to user-specified path: ${l2ArtifactPath}`);
+                if (args.fileName) {
+                  await fs.mkdir(args.outputPath, { recursive: true });
+                  l2ArtifactPath = path.join(args.outputPath, `${args.fileName.replace(/\.md$/i, '')}.md`);
+                  await fs.writeFile(l2ArtifactPath, l2FinalDoc, 'utf-8');
+                  tridentLog('INFO', 'trident-tools', `Artifact saved inside directory: ${l2ArtifactPath}`);
+                } else {
+                  const outDir = path.dirname(args.outputPath);
+                  await fs.mkdir(outDir, { recursive: true });
+                  // v2 (2026-08-06 — the CST1 dumb-bug fix): the outputPath is a DIRECTORY +
+                  // the fileName → the artifact INSIDE the dir (mkdir + join). The v1 wrote
+                  // the artifact AT the outputPath as the file path — REPLACING the
+                  // GENERATED_ARTIFACTS directory entry (the dir became a file, the
+                  // artifact lost its folder + its fileName).
+                  const l2OutPath = args.fileName
+                    ? path.join(args.outputPath, String(args.fileName).replace(/\.md$/i, '') + '.md')
+                    : args.outputPath;
+                  await fs.mkdir(path.dirname(l2OutPath), { recursive: true });
+                  await fs.writeFile(l2OutPath, l2FinalDoc, 'utf-8');
+                  l2ArtifactPath = args.outputPath;
+                  tridentLog('INFO', 'trident-tools', `Artifact saved to user-specified path: ${l2ArtifactPath}`);
+                }
               } catch (writeErr) {
                 tridentLog('WARN', 'trident-tools', `Failed to write to outputPath ${args.outputPath}: ${writeErr instanceof Error ? writeErr.message : String(writeErr)} — falling back to default`);
                 l2ArtifactPath = await writeArtifactFile('DP_L2_SPEC', l2FinalDoc, args.outputPath, args.outputName);
@@ -1269,165 +1721,199 @@ Code blocks: ${l2CodeBlocks}
           }
           }
 
-          // ═══ v4.4.2 L3 CONTEXT LIBRARY — PARALLEL SUBAGENT DISPATCH ═══
-          // L3 operates in 2 phases:
-          // Phase 1: Discover domains, return dispatch instructions (fast, deterministic)
-          // Agent: Dispatches parallel trident_planner subagents, each calls L2 for one domain
-          // Phase 2: Agent calls back with engineSpecs, tool assembles manifest + index + folder
+          // ═══ v4.4.2 L3 CONTEXT LIBRARY — INTERNAL PARALLEL GENERATION ═══
+          // L3 is a DIRECTED batch executor. The caller provides explicit domain
+          // definitions (name + context + files). For each domain, L3 internally
+          // calls the SAME brief builders and LLM functions as L2/L1, running
+          // all domains in parallel via Promise.allSettled. Each file writes to
+          // disk as its LLM call completes. No subagents. No agent cooperation.
+          // No domains = HARD FAIL. L3 is ALWAYS directed.
           if (layer === 3) {
           try {
-            // ── DOMAIN DETECTION (file-based, NOT code audit) ──
-            const l3SourceFiles = await collectSourceFiles(targetPathForGen);
-            if (l3SourceFiles.length === 0) throw new Error('Insufficient Context for L3. No source files found at targetPath.');
-            // Create lightweight construct objects from file paths for domain detection
-            const l3FakeAnalysis = { constructs: l3SourceFiles.map(f => ({ filePath: f, name: path.basename(f) })), threats: [] };
-            tridentLog('INFO', 'trident-deep-planning', `L3: Found ${l3SourceFiles.length} source files at ${targetPathForGen}`);
-
-            // ── PHASE 2 CHECK: Did the agent return completed engine specs? ──
-            if (args.engineSpecs && args.engineSpecs.length > 0 &&
-                (args.engineSpecs[0] === 'completed' || args.engineSpecs[0]?.includes('COMPLETE'))) {
-
-              tridentLog('INFO', 'trident-deep-planning', 'L3 Phase 2: Assembling context library from completed specs');
-
-              // Find all L2 spec artifacts written by subagents
-              const artifactsDir = path.join(ARTIFACTS_BASE, 'DP_L3_LIBRARY');
-              let specFiles: string[] = [];
+            // ── HARD GATE: domains are MANDATORY ──
+            // Accept domains as: (1) objects array, (2) JSON string, (3) flat name+context arrays
+            let l3Domains: Array<{ name: string; context: string; files?: string[] }> | undefined = args.domains;
+            if ((!l3Domains || l3Domains.length === 0) && args.domainsJson) {
               try {
-                const allFiles = await fs.readdir(artifactsDir);
-                specFiles = allFiles.filter(f => f.endsWith('.md')).map(f => path.join(artifactsDir, f));
-              } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
-
-              if (specFiles.length === 0) throw new Error('No L2 spec artifacts found for L3 assembly.');
-
-              // Read each spec, extract metadata
-              const specs: { name: string; path: string; lines: number; threats: string }[] = [];
-              for (const specPath of specFiles) {
-                try {
-                  const content = await fs.readFile(specPath, 'utf-8');
-                  const lines = content.split('\n').length;
-                  const name = path.basename(specPath, '.md');
-                  // Extract threat patterns from content
-                  const threatMatches = content.match(/DEAD_CODE|THEATRICAL|DUPLICATE/g) || [];
-                  const threats = [...new Set(threatMatches)].slice(0, 3).join(', ');
-                  specs.push({ name, path: specPath, lines, threats });
-                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+                l3Domains = JSON.parse(args.domainsJson) as Array<{ name: string; context: string; files?: string[] }>;
+                tridentLog('INFO', 'trident-deep-planning', `L3: Parsed ${l3Domains.length} domains from domainsJson`);
+              } catch (parseErr) {
+                throw new Error(`L3: Failed to parse domainsJson: ${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
               }
-
-              // Build the context library folder
-              const libDir = path.join(targetPathForGen || ARTIFACTS_BASE, 'context-library');
-              try { await fs.mkdir(libDir, { recursive: true }); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
-
-              // Write each spec to the context library
-              for (const spec of specs) {
-                const destPath = path.join(libDir, `${spec.name}.md`);
-                try {
-                  const content = await fs.readFile(spec.path, 'utf-8');
-                  await fs.writeFile(destPath, content, 'utf-8');
-                } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
-              }
-
-              // Assemble the master index — this is the "ship manifest using L1" concept
-              let index = `# Context Library — ${projectName}\n\n`;
-              index += `**Generated:** ${new Date().toISOString()}\n`;
-              index += `**Engine Specs:** ${specs.length}\n`;
-              index += `**Total Lines:** ${specs.reduce((s, sp) => s + sp.lines, 0)}\n`;
-              index += `**Location:** \`${libDir}\`\n\n`;
-              index += `## Engine Specs\n\n`;
-              index += `| Engine | Lines | Key Threats | File |\n`;
-              index += `|--------|-------|-------------|------|\n`;
-              for (const spec of specs) {
-                index += `| ${spec.name} | ${spec.lines} | ${spec.threats || 'none'} | \`${spec.name}.md\` |\n`;
-              }
-              index += `\n## How to Use This Library\n\n`;
-              index += `1. Read the MASTER_INDEX.md (this file) first for an overview.\n`;
-              index += `2. Read each engine spec for domain-specific architecture, threats, and defenses.\n`;
-              index += `3. Each spec is self-contained — can be read independently after compaction.\n\n`;
-              index += `## Cross-Reference Index\n\n`;
-              index += `Threats are addressed by defense rules in each engine spec. Cross-references below\n`;
-              index += `show which engine handles each threat pattern:\n\n`;
-              const allThreats = new Set<string>();
-              for (const spec of specs) {
-                if (spec.threats) spec.threats.split(', ').forEach(t => allThreats.add(t.trim()));
-              }
-              for (const threat of allThreats) {
-                const engines = specs.filter(s => s.threats?.includes(threat)).map(s => s.name);
-                index += `- **${threat}**: addressed in ${engines.join(', ')}\n`;
-              }
-
-              const indexPath = path.join(libDir, 'MASTER_INDEX.md');
-              await fs.writeFile(indexPath, index, 'utf-8');
-
-              // Also save to artifacts
-              const manifestArtifactPath = await writeArtifactFile('DP_L3_LIBRARY', index);
-              storeArtifacts({ 'layer': '3', 'output': index, 'mode': 'SUBAGENT_PARALLEL' });
-              try { machineActor.send({ type: 'SUBMIT_LAYER3', content: index }); orchestrator.completeLayer(); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
-
-              const totalLines = specs.reduce((sum, s) => sum + s.lines, 0);
-              tridentLog('INFO', 'trident-deep-planning', `L3 COMPLETE: ${specs.length} specs, ${totalLines} total lines, context library at ${libDir}`);
-              return `L3 CONTEXT LIBRARY COMPLETE
-
-Engine specs assembled: ${specs.length}
-Total lines: ${totalLines}
-Context library: ${libDir}
-
-Specs:
-${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})`).join('\n')}
-
-📄 Master Index: ${indexPath}
-📄 Manifest artifact: ${manifestArtifactPath}`;
             }
-
-            // ── PHASE 1: Discover domains, create folder, return dispatch manifest ──
-            tridentLog('INFO', 'trident-deep-planning', 'L3 Phase 1: Domain discovery + dispatch manifest');
-            const engineDomains = detectEngineDomains(l3FakeAnalysis);
-            tridentLog('INFO', 'trident-deep-planning', `L3: ${engineDomains.length} engine domains detected: ${engineDomains.map(d => d.name).join(', ')}`);
-
-            // Create context library folder for planner agents to write to
-            const libDir = path.join(targetPathForGen, 'context-library');
-            try { fsSync.mkdirSync(libDir, { recursive: true }); } catch (e: unknown) {
-              tridentLog('WARN', 'trident-deep-planning', `L3: Could not create context-library dir: ${e instanceof Error ? e.message : String(e)}`);
+            if ((!l3Domains || l3Domains.length === 0) && args.domainNames && args.domainNames.length > 0) {
+              const names = args.domainNames;
+              const contexts = args.domainContexts || [];
+              l3Domains = names.map((name, i) => ({
+                name,
+                context: contexts[i] || `Generate engineering spec for ${name}`,
+              }));
+              tridentLog('INFO', 'trident-deep-planning', `L3: Built ${l3Domains.length} domains from domainNames+domainContexts`);
             }
-            tridentLog('INFO', 'trident-deep-planning', `L3: Context library folder created at ${libDir}`);
+            if (!l3Domains || l3Domains.length === 0) {
+              throw new Error(
+                'L3 REQUIRES explicit domain definitions. Pass domainNames=["AUTH_ENGINE","RATE_LIMITER"] + domainContexts=["Design auth...","Design rate limiter..."]. ' +
+                'L3 is ALWAYS directed — no autonomous fallback. No domains = no generation.'
+              );
+            }
+            tridentLog('INFO', 'trident-deep-planning',
+              `L3: ${l3Domains.length} directed domains: ${l3Domains.map(d => d.name).join(', ')}`);
 
-            // Build per-domain dispatch prompts (file-based, NOT threat-based)
-            const domainBriefs: { name: string; files: number; constructs: number; threats: string; taskPrompt: string }[] = [];
-            for (const d of engineDomains) {
-              const domainFiles = [...d.filePaths].slice(0, 10);
-              const domainReqs = `Generate engineering spec for the ${d.name} domain. Focus on files: ${domainFiles.join(', ')}.`;
-              const escapedReqs = domainReqs.replace(/'/g, "\\'");
-              const taskPrompt = `Call trident-deep-planning with targetPath='${targetPathForGen}', layer=2, requirements='${escapedReqs}'. Do NOT write the spec yourself. Call the tool IMMEDIATELY.`;
+            // ── Create output folder ──
+            const libDir = args.outputPath || path.join(targetPathForGen, 'context-library');
+            await fs.mkdir(libDir, { recursive: true });
+            tridentLog('INFO', 'trident-deep-planning', `L3: Output folder: ${libDir}`);
 
-              domainBriefs.push({
+            // ── Build ALL jobs: L2 specs (one per domain) + L1 index doc ──
+            const jobs: Array<{
+              name: string;
+              type: 'L2' | 'L1';
+              brief: string;
+              useSplit: boolean;
+              systemOverride?: string;
+              fileName: string;
+            }> = [];
+
+            // L2 JOBS: one per domain — SAME brief builder as L2 tool
+            for (let i = 0; i < l3Domains.length; i++) {
+              const d = l3Domains[i];
+              const domainFiles = (d.files || []).slice(0, 15);
+              const sourceExtracts = domainFiles.length > 0
+                ? readSourceFiles(domainFiles)
+                : new Map<string, string>();
+
+              // If targetPath provided and no domain files, add project source as reference
+              if (targetPathForGen && targetPathForGen !== 'context-ingestion' && sourceExtracts.size === 0) {
+                const targetFiles = await collectSourceFiles(targetPathForGen);
+                for (const tf of targetFiles.slice(0, 10)) {
+                  try {
+                    const content = fsSync.readFileSync(tf, 'utf-8');
+                    sourceExtracts.set(tf, content);
+                  } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
+                }
+              }
+
+              // EXACT same brief builder as L2 uses
+              const domainArgs = {
+                ...args,
+                requirements: d.context,
+                contextFiles: domainFiles,
+              };
+              const strategy = getDefaultStrategy();
+              const brief = buildDesignBrief(domainArgs, sourceExtracts, strategy, projectName);
+
+              jobs.push({
                 name: d.name,
-                files: d.filePaths.size,
-                constructs: d.constructs.length,
-                threats: 'none',
-                taskPrompt,
+                type: 'L2',
+                brief,
+                useSplit: false,  // single call per domain — parallel ACROSS domains, no front+back split
+                systemOverride: undefined,  // default L2 anti-slop SYSTEM prompt
+                fileName: `${String(i).padStart(2, '0')}_${d.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.md`,
               });
             }
 
-            // Set pendingDispatch flag for hook enforcement
-            setPendingDispatch(engineDomains.length, 'default');
+            // L1 JOB: README/index doc — SAME brief builder as L1 tool
+            const l1IndexArgs = {
+              ...args,
+              requirements: `Generate a README.md for a context library containing ${l3Domains.length} engine specs: ` +
+                `${l3Domains.map(d => d.name).join(', ')}. Project: ${projectName}. ` +
+                `Include: table of contents, cross-reference index, how to use this library, ` +
+                `reading order, and a summary of each domain.`,
+              context: `Domains in this library:\n${l3Domains.map(d => `- ${d.name}: ${d.context.substring(0, 200)}`).join('\n')}`,
+            };
+            const l1IndexExtracts = new Map<string, string>();
+            const l1IndexBrief = buildL1ContentBrief(l1IndexArgs, l1IndexExtracts, projectName);
+            const L3_L1_SYSTEM = 'You are an elite technical writer generating a README for an engineering context library. ' +
+              'Write a comprehensive navigation document: table of contents, cross-reference index, reading order. ' +
+              'Reference EVERY domain spec by its exact filename. Output ONLY markdown. 200-400 lines.';
 
-            // Build compact dispatch manifest
-            let response = `L3 CONTEXT LIBRARY — DISPATCH REQUIRED\n\n`;
-            response += `📁 Folder: ${libDir}\n`;
-            response += `📊 ${engineDomains.length} domains: ${domainBriefs.map(d => d.name).join(', ')}\n\n`;
-            response += `DISPATCH ${engineDomains.length} trident_planner AGENTS NOW — ALL IN ONE RESPONSE.\n`;
-            response += `This is MECHANICALLY ENFORCED — your response will be blocked until you dispatch.\n\n`;
+            jobs.push({
+              name: 'README',
+              type: 'L1',
+              brief: l1IndexBrief,
+              useSplit: false,  // L1: single call, no split
+              systemOverride: L3_L1_SYSTEM,
+              fileName: 'README.md',
+            });
 
-            for (let i = 0; i < domainBriefs.length; i++) {
-              const d = domainBriefs[i];
-              response += `Agent ${i + 1} — ${d.name} (${d.files} files, ${d.constructs} constructs, ${d.threats}):\n`;
-              response += `  task(subagent_type="trident_planner", prompt="${d.taskPrompt}")\n\n`;
+            // ── EXECUTE ALL JOBS IN PARALLEL — write each file as it completes ──
+            tridentLog('INFO', 'trident-deep-planning',
+              `L3: Firing ${jobs.length} PARALLEL LLM generations (${jobs.filter(j => j.type === 'L2').length} L2 specs + ${jobs.filter(j => j.type === 'L1').length} L1 index)`);
+
+            const results = await Promise.allSettled(
+              jobs.map(async (job) => {
+                tridentLog('INFO', 'trident-deep-planning', `L3: [${job.name}] starting LLM call`);
+                const content = await generateSpecViaLLM(
+                  job.brief,
+                  undefined,
+                  job.useSplit,
+                  job.systemOverride,
+                  true,  // skipDelete — sessions cleaned up in batch after all jobs complete
+                );
+                const lines = content.split('\n').length;
+                tridentLog('INFO', 'trident-deep-planning', `L3: [${job.name}] LLM returned ${lines} lines`);
+                // Write to disk IMMEDIATELY as this job completes
+                const filePath = path.join(libDir, job.fileName);
+                await fs.writeFile(filePath, content, 'utf-8');
+                tridentLog('INFO', 'trident-deep-planning', `L3: [${job.name}] DONE — ${lines} lines → ${filePath}`);
+                return { name: job.name, type: job.type, path: filePath, lines };
+              })
+            );
+
+            // Batch cleanup — delete ALL sessions after all jobs complete
+            await drainPendingSessions();
+
+            // ── Collect results ──
+            const specs: Array<{ name: string; type: string; path: string; lines: number; status: string }> = [];
+            for (let i = 0; i < results.length; i++) {
+              const r = results[i];
+              if (r.status === 'fulfilled') {
+                specs.push({ ...r.value, status: 'OK' });
+              } else {
+                const errMsg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+                tridentLog('ERROR', 'trident-deep-planning', `L3: [${jobs[i].name}] FAILED: ${errMsg}`);
+                specs.push({ name: jobs[i].name, type: jobs[i].type, path: '', lines: 0, status: `FAILED: ${errMsg}` });
+              }
             }
 
-            response += `AFTER ALL ${engineDomains.length} RETURN:\n`;
-            response += `Call trident-deep-planning(layer=3, targetPath="${targetPathForGen}", engineSpecs=["completed"])\n`;
+            // ── Deterministic MASTER_INDEX.md (no LLM) ──
+            const okSpecs = specs.filter(s => s.status === 'OK');
+            const totalLines = okSpecs.reduce((sum, s) => sum + s.lines, 0);
+            let index = `# Context Library — ${projectName}\n\n`;
+            index += `**Generated:** ${new Date().toISOString()}\n`;
+            index += `**Domains:** ${okSpecs.length}/${specs.length} succeeded\n`;
+            index += `**Total Lines:** ${totalLines}\n`;
+            index += `**Location:** \`${libDir}\`\n\n`;
+            index += `## Specs\n\n`;
+            index += `| # | Domain | Type | Lines | Status | File |\n`;
+            index += `|---|--------|------|-------|--------|------|\n`;
+            for (let i = 0; i < specs.length; i++) {
+              const s = specs[i];
+              index += `| ${i} | ${s.name} | ${s.type} | ${s.lines} | ${s.status} | ${s.path ? `\`${path.basename(s.path)}\`` : '—'} |\n`;
+            }
+            const indexPath = path.join(libDir, 'MASTER_INDEX.md');
+            await fs.writeFile(indexPath, index, 'utf-8');
 
-            storeArtifacts({ 'layer': '3', 'phase': 'discovery', 'domains': String(engineDomains.length) });
+            // ── Store artifacts + advance state machine ──
+            const manifestArtifactPath = await writeArtifactFile('DP_L3_LIBRARY', index);
+            storeArtifacts({ 'layer': '3', 'output': index, 'mode': 'INTERNAL_PARALLEL' });
+            try { machineActor.send({ type: 'SUBMIT_LAYER3', content: index }); orchestrator.completeLayer(); }
+            catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
 
-            return response;
+            tridentLog('INFO', 'trident-deep-planning',
+              `L3 COMPLETE: ${okSpecs.length}/${specs.length} specs, ${totalLines} total lines, library at ${libDir}`);
+
+            return `L3 CONTEXT LIBRARY COMPLETE
+
+Domains: ${okSpecs.length}/${specs.length} succeeded
+Total lines: ${totalLines}
+Location: ${libDir}
+
+Specs:
+${specs.map(s => `  - ${s.name} [${s.type}]: ${s.lines} lines [${s.status}]`).join('\n')}
+
+📄 Master Index: ${indexPath}
+📄 Manifest: ${manifestArtifactPath}`;
 
           } catch (l3Err: unknown) {
             const l3Msg = l3Err instanceof Error ? l3Err.message : String(l3Err);
@@ -1585,6 +2071,7 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
               throw new Error('Missing required sections: ' + missing.join(', ') + '. Generate content from the context brief and call again.');
             }
 
+            const L2_ARTIFACT_MIN_LINES = 3000;
             output = generateLayer2DetailedWorkflow(
               targetPathForGen, projectName, inputParams, architecture, discovery,
               args.executiveSummary, args.architectureOverview, args.dataModel,
@@ -1598,12 +2085,34 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
             );
           }
 
+          // ── L2 ARTIFACT LINE GATE (operator mandate 3000+) ──
+          // The prompt demanded 3000+ but nothing enforced it — a 2320-line
+          // spec shipped. Below target -> append the EXPANSION DEMAND with
+          // thin-section work orders so the caller/next iteration expands.
+          var l2ArtLines = output.split('\n').length;
+          if (l2ArtLines < 3000) {
+            tridentLog('WARN', 'trident-deep-planning', `L2 artifact ${l2ArtLines} lines < 3000 — expansion demand appended`);
+            output = output + '\n\n## L2 LINE TARGET DEMAND\n' +
+              `This spec is ${l2ArtLines} lines; the mandate is 3000+. ` +
+              'Surgically EXPAND the thin sections below with full engineering detail ' +
+              '(interfaces, pseudocode, data flows, test specs) until the target is met:\n' +
+              '1. Expand every component design to full interface + algorithm + integration detail.\n' +
+              '2. Expand the test specification tables with concrete inputs and expected outputs.\n' +
+              '3. Expand the migration strategy and known gaps with exact file paths and schemas.\n';
+          }
           artifactPath = await writeArtifactFile('DP_L2_SPEC', output);
           if (args.outputPath) {
             try {
-              await fs.writeFile(args.outputPath, output, 'utf-8');
-              artifactPath = args.outputPath;
-              tridentLog('INFO', 'trident-deep-planning', `Artifact written to outputPath: ${args.outputPath}`);
+              // v2 (2026-08-06 — the CST1 dumb-bug fix): outputPath = the DIRECTORY +
+              // fileName = the artifact inside it (mkdir + join). v1 wrote the artifact
+              // AT the outputPath as the file path — replacing the directory entry.
+              const outPath = args.fileName
+                ? path.join(args.outputPath, String(args.fileName).replace(/\.md$/i, '') + '.md')
+                : args.outputPath;
+              await fs.mkdir(path.dirname(outPath), { recursive: true });
+              await fs.writeFile(outPath, output, 'utf-8');
+              artifactPath = outPath;
+              tridentLog('INFO', 'trident-deep-planning', `Artifact written to: ${outPath}`);
             } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
           }
 
@@ -1676,10 +2185,14 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
         targetPath: z.string().describe('Absolute path to the affected project'),
         outputPath: z.string().describe('MANDATORY: Absolute path where the diagnostic artifact must be written.'),
         outputName: z.string().optional().describe('Optional filename override. If omitted, auto-generated from first heading.'),
-        problem: z.string().describe('Problem statement — what is broken or wrong'),
+        problem: z.string().describe('MINIMUM 500+ CHARS. Problem statement — what is broken or wrong. Symptom + what breaks + expected vs actual.'),
         reasoning: z.array(z.string()).describe('Reasoning chain steps. Use "observation|hypothesis|evidence|conclusion" pipe format for best evidence output'),
         workingPlan: z.array(z.string()).describe('Working plan phases. Use "description|files|expected outcome|risk|rollback" pipe format for best recommendation output'),
         findings: z.array(z.string()).optional().describe('Findings discovered during investigation'),
+        // v4.4.2 structured context — APPENDED AT END
+        components: z.string().describe('MINIMUM 500+ CHARS. Affected components with file references.'),
+        knownGaps: z.string().describe('MINIMUM 500+ CHARS. Known bugs related to this problem.'),
+        context: z.string().describe('MINIMUM 2000+ CHARS. Session knowledge: what was tried, what was observed, relevant architecture.'),
       },
       execute: async (args: {
         targetPath: string;
@@ -1687,10 +2200,15 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
         reasoning: string[];
         workingPlan: string[];
         findings?: string[];
+        outputPath: string;
+        outputName?: string;
       }) => {
         if (!(await fileExists(args.targetPath))) {
           throw new Error('targetPath does not exist: ' + args.targetPath);
         }
+        // Per-tool input validation — problem-solving specific rules
+        const psValidationError = validateProblemSolvingInput(args as Record<string, unknown>);
+        if (psValidationError) return psValidationError;
         try {
           orchestrator.startProblemSolving();
 
@@ -1771,24 +2289,81 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
         projectName: z.string().describe('Agent/project name (used for plugin path and agent config)'),
         config: z.record(z.string(), z.any()).optional().describe('opencode.json config object (model, provider, plugin, agent) — used in T1 mode'),
         patterns: z.array(z.string()).optional().describe('Patterns to embed in the injectable / knowledge file'),
-        keyFacts: z.array(z.string()).optional().describe('Critical facts the agent must know'),
-        targetPath: z.string().optional().describe('Absolute path to the project root (used in T2 mode for architecture discovery)'),
+        keyFacts: z.array(z.string()).describe('Critical facts the agent must know. MANDATORY — provide 3-10 key facts.'),
+        sourcePath: z.string().optional().describe('Absolute path to the project root (used in T2 mode for architecture discovery)'),
         targetPaths: z.array(z.string()).optional().describe('File paths for trident_explore subagent dispatch (T2 mode only)'),
-        outputMode: z.enum(['T1', 'T2']).default('T1').describe('T1 (default) = lightweight injectable config. T2 = dense, bible-style standalone knowledge file written to disk.'),
-        targetLines: z.number().min(100).max(16000).default(1000).optional().describe('Target line count for T2 artifact. Controls how many patterns, failure modes, imports, etc. are sampled. Higher = more discovery data included.'),
+        targetPath: z.string().optional().describe('Single project-root path used for discovery and reference-file collection (mirrors sourcePath semantics).'),
+        outputMode: z.enum(['T1', 'T2']).describe('T1=injectable config. T2=dense bible. NO DEFAULT — caller MUST specify.'),
+        outputPath: z.string().describe('MANDATORY: Absolute directory path where the artifact .md file must be written.'),
+        fileName: z.string().optional().describe('Output filename WITHOUT extension. Example: "T2_BIBLE" → writes T2_BIBLE.md'),
+        outputName: z.string().optional().describe('Output filename override — passed through to writeArtifactFile as the outputName param.'),
+        targetLines: z.number().min(100).max(16000).default(800).optional().describe('Target line count — default 800 (operator T1 band 300-800 / max 1200, clamped in the T1 branch).'),
         executiveSummary: z.string().optional().describe('TWO-CALL PATTERN: Call 1 (empty) returns a data brief. Call 2 (provide >100 chars for T1, >200 chars for T2) saves the LLM-written content as the artifact.'),
+        inputFile: z.string().optional().describe('Path to a JSON file containing the structured fields (requirements, keyFacts, context, components, constraints, designDecisions, knownGaps, sourceLineage, fileInventory). REQUIRED for T2 when the function-calling payload limit or 2000-char read truncation prevents passing large fields inline. File fields override inline args. Same pattern as DP inputFile and SPG blocksFile.'),
+        // v4.4.2 structured context — APPENDED AT END (mid-insert breaks SDK)
+        components: z.string().describe('MINIMUM 1000+ CHARS for T2. Components to build. Name, purpose, file, interfaces.'),
+        constraints: z.string().describe('MINIMUM 1000+ CHARS for T2. Hard constraints with WHY for each.'),
+        designDecisions: z.string().describe('MINIMUM 1000+ CHARS for T2. Decisions with rationale + rejected alternatives.'),
+        knownGaps: z.string().describe('MINIMUM 1000+ CHARS for T2. Bugs, audit findings, open issues with status.'),
+        sourceLineage: z.string().describe('MINIMUM 1000+ CHARS for T2. Pattern attribution — where each pattern came from.'),
+        fileInventory: z.string().describe('File map of the project.'),
+        context: z.string().describe('MINIMUM 4000+ CHARS for T2. Full narrative context. PRIMARY source of truth — project state, architecture, decisions.'),
+        requirements: z.string().describe('MINIMUM 500+ CHARS for T2. What to synthesize — purpose and scope of this knowledge file.'),
       },
       execute: async (args: {
         projectName: string;
         config?: Record<string, unknown>;
         patterns?: string[];
-        keyFacts?: string[];
-        targetPath?: string;
+        keyFacts: string[];
+        sourcePath?: string;
         targetPaths?: string[];
+        targetPath?: string;
         outputMode: 'T1' | 'T2';
+        outputPath: string;
+        fileName?: string;
+        outputName?: string;
         targetLines?: number;
         executiveSummary?: string;
+        inputFile?: string;
+        context: string;
+        requirements: string;
+        components: string;
+        constraints: string;
+        designDecisions: string;
+        knownGaps: string;
+        sourceLineage: string;
+        fileInventory: string;
       }) => {
+        // inputFile merge: read structured fields from JSON file BEFORE validation.
+        // The 2000-char read truncation and payload limits make large T2 fields
+        // impossible to pass inline. File fields override inline args.
+        // Same pattern as DP inputFile and SPG blocksFile.
+        if (args.inputFile) {
+          try {
+            const fileContent = fsSync.readFileSync(args.inputFile, 'utf-8');
+            const fileFields = JSON.parse(fileContent);
+            const CS_MERGE_STRINGS = ['requirements', 'context', 'components', 'constraints', 'designDecisions', 'knownGaps', 'sourceLineage', 'fileInventory', 'outputMode', 'projectName'];
+            for (const f of CS_MERGE_STRINGS) {
+              if (typeof fileFields[f] === 'string' && fileFields[f].length > 0) {
+                (args as any)[f] = fileFields[f];
+              }
+            }
+            if (Array.isArray(fileFields.keyFacts) && fileFields.keyFacts.length > 0) {
+              (args as any).keyFacts = fileFields.keyFacts;
+            }
+            tridentLog('INFO', 'trident-context-synthesis', `inputFile: merged fields from ${args.inputFile}`);
+          } catch (fileErr) {
+            return `INPUT FILE ERROR: could not read/parse ${args.inputFile}: ${fileErr instanceof Error ? fileErr.message : String(fileErr)}`;
+          }
+        }
+
+        // Per-tool input validation — mode-conditional (T1 light, T2 dense grounding)
+        const csValidationError = validateContextSynthesisInput(args as Record<string, unknown>);
+        if (csValidationError) return csValidationError;
+        // Validate sourcePath if provided
+        if (args.sourcePath && !(await fileExists(args.sourcePath))) {
+          throw new Error('sourcePath does not exist: ' + args.sourcePath);
+        }
         try {
           orchestrator.startContextSynthesis();
           const csMachineActor = interpret(contextSynthesisMachine).start();
@@ -1834,11 +2409,31 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
                   try { t2SourceExtracts.set(tf, fsSync.readFileSync(tf, 'utf-8')); } catch (e) { tridentLog('WARN', 'trident-tools', 'Non-fatal error: ' + (e instanceof Error ? e.message : String(e))); }
                 }
               }
-              const t2Strategy = getDefaultStrategy();
-              const t2Brief = buildDesignBrief(args, t2SourceExtracts, t2Strategy, args.projectName);
-              const t2Output = await runInternalLLMLoop(t2Brief, null, t2Strategy, {
-                useSplit: true, maxIterations: 3,
-              });
+              const t2Brief = buildBibleBrief(args, t2SourceExtracts, args.projectName);
+              const CS_T2_SYSTEM = 'You are an elite knowledge synthesizer. Generate a comprehensive T2 knowledge bible. ' +
+                'Target 3000+ lines. Document EVERYTHING: architecture, decisions, bugs, fixes, constraints, file inventory. ' +
+                'Every fact grounded in provided context — NEVER fabricate from training data. ' +
+                'Reach density by EXPANDING provided facts: every component gets a full analytical deep-dive — purpose, mechanism, data flow, failure modes, rationale, cross-references to other provided facts. Synthesize; never copy-paste input text. ' +
+                'FORBIDDEN inventions: interface definitions not verbatim in context, error formats not in context, directory paths not in context, test evidence not described in context (if context does not describe a test, it DID NOT HAPPEN), versions/SHAs/line-counts not in context. ' +
+                'Unknown facts: CONTEXT NEEDED: [what is missing]. ' +
+                'Include Myth vs Reality section, decision registry, bug catalog, iron laws, compaction recovery guide. ' +
+                'Be PRECISE not CONCISE. DENSITY is the ONLY metric.';
+              const t2RawOutput = await generateBibleViaLLM(t2Brief, CS_T2_SYSTEM);
+
+              // ── GROUNDING AUDIT — mechanical fabrication detection ──
+              // Compares bible claims against input context. Invented interfaces
+              // and evidence claims are rewritten in place. Count is reported.
+              const t2SourceContext = [
+                args.context, args.components, args.constraints, args.designDecisions,
+                args.knownGaps, args.sourceLineage, args.fileInventory, args.requirements,
+                ...(args.keyFacts || []),
+              ].filter((x): x is string => typeof x === 'string').join('\n');
+              const groundingAudit = auditBibleGrounding(t2RawOutput, t2SourceContext);
+              const t2Output = groundingAudit.output;
+              if (groundingAudit.fabricationsFound > 0) {
+                tridentLog('WARN', 'trident-context-synthesis',
+                  `GROUNDING AUDIT: ${groundingAudit.fabricationsFound} fabrications rewritten: ${groundingAudit.details.slice(0, 5).join('; ')}`);
+              }
 
               // MANDATORY: Verify compaction-proof marking exists
               // The entire point of T2 is compaction-proof context synthesis
@@ -1855,16 +2450,16 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
                 const t2Path = await writeArtifactFile('CS_T2_KNOWLEDGE', t2FinalDoc, args.outputPath, args.outputName);
                 storeArtifacts({ 'output': t2FinalDoc, 'mode': 'LLM_GENERATED' });
                 try { csMachineActor.send({ type: 'FORMAT', sections: [t2FinalDoc] }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
-                tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2FinalDoc.split('\n').length} lines (compaction footer appended)`);
-                return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2FinalDoc.split('\n').length}\nCompaction-proof: YES (footer appended)\n\n📄 Artifact saved: ${t2Path}`;
+                tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2FinalDoc.split('\n').length} lines (compaction footer appended, ${groundingAudit.fabricationsFound} fabrications audited)`);
+                return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2FinalDoc.split('\n').length}\nCompaction-proof: YES (footer appended)\nGrounding audit: ${groundingAudit.fabricationsFound} fabrications rewritten\n\n📄 Artifact saved: ${t2Path}`;
               }
 
               // Compaction-proof marking present — save as-is
               const t2Path = await writeArtifactFile('CS_T2_KNOWLEDGE', t2Output, args.outputPath, args.outputName);
               storeArtifacts({ 'output': t2Output, 'mode': 'LLM_GENERATED' });
               try { csMachineActor.send({ type: 'FORMAT', sections: [t2Output] }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
-              tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2Output.split('\n').length} lines (compaction-proof verified)`);
-              return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2Output.split('\n').length}\nCompaction-proof: VERIFIED\n\n📄 Artifact saved: ${t2Path}`;
+              tridentLog('INFO', 'trident-context-synthesis', `T2 COMPLETE: ${t2Output.split('\n').length} lines (compaction-proof verified, ${groundingAudit.fabricationsFound} fabrications audited)`);
+              return `T2 KNOWLEDGE BIBLE COMPLETE\n\nLines: ${t2Output.split('\n').length}\nCompaction-proof: VERIFIED\nGrounding audit: ${groundingAudit.fabricationsFound} fabrications rewritten\n\n📄 Artifact saved: ${t2Path}`;
             } catch (t2Err: unknown) {
               const t2Msg = t2Err instanceof Error ? t2Err.message : String(t2Err);
               tridentLog('ERROR', 'trident-context-synthesis', `T2 FAILED: ${t2Msg}`);
@@ -1890,15 +2485,69 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
                 }
               }
               const t1Strategy = getDefaultStrategy();
+              // T4: T1 target band — operator's line-count law. Clamped [300, 1200], default 800.
+              const t1TargetLines = Math.min(1200, Math.max(300, args.targetLines ?? 800));
+              const CS_T1_SYSTEM = 'You are an elite context synthesizer. Generate a T1 injectable. ' +
+                `Target ${t1TargetLines} lines (operator's line-count band: TARGET 300-800, MAX 1200). ` +
+                'COMPACT but COMPLETE — every essential fact, decision, bug. ' +
+                'Dense reference material readable in under 2 minutes. No filler. No prose. ' +
+                'Maximum signal density. DENSITY is the only metric. Do NOT pad with whitespace — pad with CONTENT.';
               const t1Brief = buildT1InjectableBrief(args, t1SourceExtracts, args.projectName || 'agent');
-              const t1Output = await runInternalLLMLoop(t1Brief, null, t1Strategy, {
-                useSplit: false, maxIterations: 1, skipQualityChecks: true,
+              let t1Output = await runInternalLLMLoop(t1Brief, null, t1Strategy, {
+                useSplit: false, maxIterations: 1, skipQualityChecks: true, systemOverride: CS_T1_SYSTEM,
               });
+              let t1Lines = t1Output.split('\n').length;
+
+              // T4 LINE-STANDARD ENFORCEMENT (LINE-COUNT, not token-count).
+              // Floor: ONE bounded expansion pass if under 300 (single-round policy — never a loop).
+              if (t1Lines < 300) {
+                tridentLog('WARN', 'trident-context-synthesis',
+                  `T1 UNDER-DELIVERED: ${t1Lines} lines < 300 floor — running ONE bounded expansion pass`);
+                const t1ExpansionBrief = t1Brief + '\n\n---\n\n## CURRENT T1 OUTPUT\n\n' +
+                  t1Output + '\n\n---\n\n## EXPANSION REQUIRED\n\n' +
+                  `EXPANSION REQUIRED: the T1 is ${t1Lines} lines; the operator's floor is 300. ` +
+                  'SURGICALLY EXPAND every thin section to full engineering depth — interfaces, pseudocode, data flows, failure modes, evidence, rollback. ' +
+                  'Output the COMPLETE expanded T1.';
+                const t1Expanded = await runInternalLLMLoop(t1ExpansionBrief, null, t1Strategy, {
+                  useSplit: false, maxIterations: 1, skipQualityChecks: true, systemOverride: CS_T1_SYSTEM,
+                });
+                const t1ExpandedLines = t1Expanded.split('\n').length;
+                t1Output = t1ExpandedLines >= t1Lines ? t1Expanded : t1Output;
+                t1Lines = Math.max(t1Lines, t1ExpandedLines);
+                tridentLog('INFO', 'trident-context-synthesis',
+                  t1ExpandedLines >= 300
+                    ? `T1 expansion pass: ${t1ExpandedLines} lines (>= 300 floor)`
+                    : `T1 STILL UNDER FLOOR after expansion pass: ${t1ExpandedLines} lines — keeping best effort`);
+              }
+
+              // T4 FRONTMATTER: every T1 opens with the TRIPLE DUTY header + trigger line (if absent).
+              if (!/TRIPLE DUTY:/.test(t1Output)) {
+                const reqFirstLine = (args.requirements && args.requirements.trim().length > 0)
+                  ? args.requirements.trim().split('\n')[0].trim()
+                  : '';
+                const t1Trigger = (reqFirstLine.length > 0 && reqFirstLine.length <= 160)
+                  ? reqFirstLine
+                  : `When the agent needs orientation for ${args.projectName || 'agent'} — read this file fully before operating.`;
+                const t1Frontmatter = `# [T1: ${args.projectName || 'agent'}] — TRIPLE DUTY: ORIENTING\n` +
+                  `**Trigger:** ${t1Trigger} — **Duty:** ORIENTING (tooling/context orientation). **One-shot operational protocol. Read fully. Then operate.**\n`;
+                t1Output = t1Frontmatter + t1Output;
+                t1Lines = t1Output.split('\n').length;
+              }
+
+              // Ceiling: MAX 1200 — truncate gracefully, frontmatter preserved (it leads the doc).
+              if (t1Lines > 1200) {
+                const t1RawLines = t1Lines;
+                t1Output = t1Output.split('\n').slice(0, 1200).join('\n') +
+                  `\n-- truncated at the 1200-line max (was ${t1RawLines} lines)`;
+                t1Lines = t1Output.split('\n').length;
+                tridentLog('WARN', 'trident-context-synthesis', `T1 OVER 1200 MAX: truncated ${t1RawLines} -> ${t1Lines} lines`);
+              }
+
               const t1Path = await writeArtifactFile('CS_T1_INJECTABLE', t1Output, args.outputPath, args.outputName);
               storeArtifacts({ 'output': t1Output, 'mode': 'LLM_GENERATED' });
               try { csMachineActor.send({ type: 'COLLECT', context: t1Output }); } catch (e: unknown) { tridentLog('WARN', 'trident-tools', `Error: ${e instanceof Error ? e.message : String(e)}`); }
-              tridentLog('INFO', 'trident-context-synthesis', `T1 COMPLETE: ${t1Output.split('\n').length} lines`);
-              return `T1 INJECTABLE COMPLETE\n\nLines: ${t1Output.split('\n').length}\n\n📄 Artifact saved: ${t1Path}`;
+              tridentLog('INFO', 'trident-context-synthesis', `T1 COMPLETE: ${t1Lines} lines (target ${t1TargetLines}, band 300-800 / max 1200)`);
+              return `T1 INJECTABLE COMPLETE\n\nLines: ${t1Lines}\nTarget: ${t1TargetLines}\n\n📄 Artifact saved: ${t1Path}`;
             } catch (t1Err: unknown) {
               const t1Msg = t1Err instanceof Error ? t1Err.message : String(t1Err);
               tridentLog('ERROR', 'trident-context-synthesis', `T1 FAILED: ${t1Msg}`);
@@ -2083,5 +2732,37 @@ ${specs.map(s => `  - ${s.name}: ${s.lines} lines (${s.threats || 'no threats'})
 - ContextSynthesisModule: validates 4-layer compression + injection`;
       },
     }),
+
+    'trident-omni-vision': createOmniVisionTool(client),
+    'trident-container-test': createContainerTestTool(),
+    'trident-ship-package': createShipPackageTool(),
+    'trident-preflight': createPreflightTool(),
+    // THE WAVE GENERATOR (the WAVE_DISPATCH_OVERHAUL_SPEC Part 25.1 — the ONLY
+    // subagent dispatch path — the wave MANAGER (the generate + the resume — the
+    // shadow pipeline → the prompt files → the BATCH FORM / the RESUME BATCH
+    // FORM; the orchestrator dispatches the returned batch — the tool NEVER
+    // spawns). THE SINGLE TOOL — the legacy generator/dispatch names are NOT
+    // registered (the operator's mandate: ONE wave manager tool):
+    'trident-wave-manager': createWaveManagerTool(),
+    // THE WATCH INSTRUMENT (Part 23 — the orchestrator's control surface):
+    'trident-wave-status': createWaveStatusTool(),
+    // THE STEERING SURFACE (2026-08-12 — the orchestration overhaul): send any
+    // prompt into an EXISTING subagent session (the resume channel cloned + the
+    // input mechanism modified; queue by default, interrupt conditional):
+    'trident-wave-steer': createWaveSteerTool(),
+    // THE PHASE-0 PROBE TOOL (Part 8/18 — the temporary load-bearing verifications):
+    'trident-wave-probe': createWaveProbeTool(),
+    // THE TASK-PREFLIGHT TOOL REMOVED (2026-08-08 — the operator: "we should
+    // remove the TASK PREFLIGHT (not the args preflight) tool now that wave
+    // generator exists it is redundant and leads to confusion"). The module
+    // (trident-task-preflight.ts) REMAINS — it exports the SHARED MACHINERY
+    // (validateAgentSpec, mechanicallyRepair, extractTemplateSkeleton, etc.)
+    // the shadow backend consumes. Only the TOOL registration is gone.
+    // THE WAVE-DISPATCH → WAVE-GENERATOR ALIAS (2026-08-07 — the rename: the
+    // tool is GENERATOR-ONLY, the old "dispatch" name confused agents into
+    // believing it spawned; the old name resolves to the new tool for one
+    // release with a WARN, then removed):
+    // THE SINGLE TOOL (2026-08-11 — the operator's mandate: ONE wave manager
+    // tool — the legacy dispatch alias REMOVED, not registered):
   };
 }

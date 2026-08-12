@@ -62,6 +62,16 @@ const fallbackStore = {
 };
 
 export async function tridentLog(level: string, component: string, message: string): Promise<void> {
+  // v2 (2026-08-05 — the persistence fix, M6-followup): the EvidenceStore is
+  // MEMORY-ONLY (evidence-store.ts:12, zero persistence calls) — every append
+  // dies with the process and the "engine log" was never a log. The engine
+  // log file (/tmp/trident-engine.log) is written here SYNCHRONOUSLY so the
+  // diagnostics actually survive. The in-memory append remains (the merkle
+  // chain), the file write is the durable record.
+  try {
+    appendFileSync(TRIDENT_LOG_PATH,
+      `[${new Date().toISOString()}] [${level}] [${component}] ${message}\n`, 'utf-8');
+  } catch (fileErr) { /* the evidence-store path below is the fallback */ }
   try {
     const store = await getOrCreateEvidenceStore();
     await store.append('global', 'SYSTEM', 'R0', `log:${level}`, { source: component, message, timestamp: Date.now() });

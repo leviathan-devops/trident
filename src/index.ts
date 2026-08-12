@@ -11,6 +11,8 @@ import { registerWarheadHooks } from './shared/trident-warhead-synthesizer.js';
 import { TRIDENT_BUILD_T1 } from './subagents/trident-build/identity/t1-prompt.js';
 import { createTridentBuildHooks } from './subagents/trident-build/hooks/index.js';
 import { createBuildStatusTool } from './subagents/trident-build/tools/build-status.js';
+import { poseidonState } from './poseidon/poseidon-state.js';
+import { createTaskQueueTool } from './tools/trident-task-queue.js';
 
 // ============================================================================
 // CONSOLE SPILLOVER PREVENTION — redirect ALL console output to tridentLog
@@ -46,7 +48,7 @@ import * as path from 'node:path';
 const DEBUG_LOG_PATH = process.env.TRIDENT_DEBUG_LOG ?? path.join(os.tmpdir(), 'trident-hook-debug.log');
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
-function cast<T>(value: unknown): T { const r: T = value; return r; }
+function cast<T>(value: unknown): T { const r: T = value as unknown as T; return r; }
 
 // R16 FIX: Typed hook function signature — replaces unsafe type casts
 type HookHandler = (...args: unknown[]) => Promise<unknown> | unknown;
@@ -162,6 +164,9 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
   chainBeforeHook(hooks, buildHooks);
   chainAfterHook(hooks, buildHooks);
 
+  // Load Poseidon state from disk for session persistence across plugin reloads
+  try { poseidonState.loadFromDisk(); } catch (e) { tridentLog('WARN', 'plugin', `Poseidon state load failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`); }
+
   const tools = createTridentTools(input.client);
 
   // Wrap all hooks with debug logging
@@ -189,7 +194,8 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
     tool: {
       ...tools,
       'build-status': createBuildStatusTool(),
-    },
+      'trident-task-queue': createTaskQueueTool(),
+    } as unknown as Hooks['tool'],
 
     config: async (opencodeConfig: Record<string, unknown>): Promise<void> => {
       try {
@@ -222,47 +228,12 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
           },
         };
 
-        // Trident_Planner subagent — used by L3 for parallel L2 spec generation.
-        // Has ONLY trident-deep-planning + read tools. Cannot write/edit/bash.
-        // Forced to call the L2 tool (which handles everything internally).
-        configs['trident_planner'] = {
-          name: 'trident_planner',
-          description: 'Trident Planner — Generates L2 engineering specs by calling trident-deep-planning. Does NOT write specs manually. Calls the tool and reports the result.',
-          instructions: [
-            'You are a trident_planner subagent.',
-            '',
-            'YOUR ONLY JOB: Call trident-deep-planning with layer=2 to generate an engineering spec.',
-            '',
-            'You will receive a targetPath and domain-specific requirements.',
-            'Call the tool IMMEDIATELY with:',
-            '  trident-deep-planning(targetPath=<path>, layer=2, requirements=<requirements>)',
-            '',
-            'DO NOT:',
-            '- Write the spec yourself',
-            '- Write any files',
-            '- Use any tool other than trident-deep-planning',
-            '- Explain what you are going to do — just do it',
-            '',
-            'The tool handles EVERYTHING internally:',
-            '- Runs AST analysis on the target codebase',
-            '- Builds a comprehensive brief',
-            '- Calls the LLM to generate the full spec (3000+ lines)',
-            '- Runs 11 quality gates (deepening + cross-section audit)',
-            '- Writes the artifact to disk automatically',
-            '',
-            'After the tool returns its completion message, report that message back.',
-            'That is your ENTIRE job. Call the tool. Report the result. Done.',
-          ].join('\n'),
-          mode: 'subagent',
-          color: '#00CC99',
-          permission: { task: 'allow' },
-          tools: {
-            'trident-deep-planning': true,
-            'read': true,
-            'glob': true,
-            'grep': true,
-          },
-        };
+        // trident_planner DELETED (2026-08-03, the operator: "remove trident planner
+        // we dont need this anymore now that DP tools are fixed... deleted completely").
+        // The L3 parallel spec-generation subagent is retired — the DP L2 tool's
+        // chunked parallel generation (2026-08-02 fix) makes it unnecessary. The
+        // registration below was REMOVED so the agent does not even appear in the
+        // /agents picker. The firewall blocks any residual dispatch attempts.
 
         Object.assign(agentConfig, configs);
         debugLog('CONFIG_DONE');

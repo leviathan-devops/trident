@@ -1,0 +1,88 @@
+{
+  "buildSha": "c807c17291342b8dce574ac1676bbc24fbd9d5922313d2640a6a679bba88bcf7",
+  "containerName": "wave-baseline-ct",
+  "timestamp": "2026-08-07T18:10:00Z",
+  "scenarios": [
+    {
+      "name": "THE READ ACTION — the stream's real content (the DCS-swallow fix)",
+      "feature": "container-test.ts read (offset/limit, the bounded DCS regex, the cursor resets)",
+      "passToken": "MODULE_LOADED (the real launch content in the read output)",
+      "failToken": "empty-read shape (text \"\" + lineCount 0 while the stream has content)",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 60000,
+      "timedOut": false,
+      "byteOffset": "read offset=0 limit=40 — the launch lines + MODULE_LOADED returned",
+      "verdict": "PASS"
+    },
+    {
+      "name": "THE INCREMENTAL READ — the cursor advance on live growth",
+      "feature": "container-test.ts read incremental + syncStreamState + the widened recreate detection",
+      "passToken": "the NEW lines (offset 4 → 6, the MODULE_LOADED growth)",
+      "failToken": "upToDate:true with empty text while the stream grew",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 60000,
+      "timedOut": false,
+      "byteOffset": "read incremental — offset 4 → 6 with the MODULE_LOADED lines",
+      "verdict": "PASS"
+    },
+    {
+      "name": "THE 384K GENERATION — the complete prompt (the truncation root-cause fix)",
+      "feature": "shadow-runner PI_MAX_TOKENS=384000 + extractFinalPrompt + the scaffold strip",
+      "passToken": "the prompt file landed (000001_ct-wave-3.json, 196 lines, validated:true) with the ~~~~~~~~~~~ delimiter present",
+      "failToken": "drafting markers / (blank) / numbered prefixes / the dangling-bullet truncation",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 600000,
+      "timedOut": false,
+      "byteOffset": "the shadow-memory sqlite mirror 000001_ct-wave-3.json (37918 bytes)",
+      "verdict": "PASS"
+    },
+    {
+      "name": "THE REAL MODEL BRIEF — the no-mechanical-fallback rule",
+      "feature": "shadow-runner silentVerify — the model-written brief after the ~~~~~~~~~~~ delimiter, NEVER the mechanical inference.text",
+      "passToken": "~~~~~~~~~~~ present + the brief reads as the model's own distilled forward-map (the supplied-beliefs contradictions, the verified inventory, the sharp edges)",
+      "failToken": "assembled from the session stream (the mechanical template text)",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 120000,
+      "timedOut": false,
+      "byteOffset": "the 000001_ct-wave-3.json [SHADOW INFERENCE] section quoted in full",
+      "verdict": "PASS"
+    },
+    {
+      "name": "THE THIN-ARGS REFUSAL (adversarial)",
+      "feature": "validateAgentSpec (the CTX_FLOORS gate)",
+      "passToken": "mission (the named refusal field)",
+      "failToken": "\"dispatched\" (the thin spec must NOT dispatch)",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 60000,
+      "timedOut": false,
+      "byteOffset": "the stream: 'returned validation errors because the context arguments are too thin. The mission'",
+      "verdict": "PASS"
+    },
+    {
+      "name": "THE SWITCH DUAL-NAMES (not regressed)",
+      "feature": "switch-agent + switch-model (the M17.3/M17.10 dual-name aliases)",
+      "passToken": "verified:true (both switches)",
+      "failToken": "agent is required / model is required",
+      "passTokenMatch": true,
+      "failTokenAbsent": true,
+      "toolResultContext": true,
+      "maxWaitMs": 180000,
+      "timedOut": false,
+      "byteOffset": "switch-agent agentName=trident verified:true (5111ms); switch-model modelName='Laguna S 2.1 (free)' verified:true (8146ms) + the status bar matched",
+      "verdict": "PASS"
+    }
+  ],
+  "authProbe": { "passTokenMatch": true, "failTokenAbsent": true },
+  "overallVerdict": "PASS",
+  "scenariosPassed": "6/6"
+}

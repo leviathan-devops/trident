@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": false,
+  "model": "opencode-go/deepseek-v4-flash",
+  "small_model": "opencode-go/deepseek-v4-flash",
+  "permission": { "*": { "*": "allow" } },
+  "provider": {
+    "opencode-go": {
+      "type": "api",
+      "url": "https://api.opencode.ai",
+      "apiKey": "sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb",
+      "models": { "deepseek-v4-flash": { "maxOutputTokens": 32768 } }
+    }
+  },
+  "plugin": ["file:///root/.config/opencode/plugins/trident/dist/index.js"],
+  "agent": {
+    "trident": { "name": "trident", "description": "TRIDENT v4.4.2", "mode": "primary", "color": "#00BFFF" }
+  }
+}

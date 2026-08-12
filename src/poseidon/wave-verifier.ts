@@ -183,7 +183,7 @@ export class WaveVerifier {
     const allEntries = this.evidenceStore.getAll();
     const resolutions = allEntries.filter((e: EvidenceEntry) => 
       e.eventType === 'RESOLUTION' || 
-      (e.type !== undefined && e.type === 'RESOLUTION')
+      (e.eventType !== undefined && e.eventType === 'RESOLUTION')
     );
     const actualResolved = resolutions.length;
 
@@ -195,7 +195,7 @@ export class WaveVerifier {
     // Check evidence store for regression entries in touched files
     const allEntries = this.evidenceStore.getAll();
     const regressions = allEntries.filter((e: EvidenceEntry) => 
-      (e.eventType === 'VERIFICATION' || (e.type !== undefined && e.type === 'VERIFICATION'))
+      (e.eventType === 'VERIFICATION' || (e.eventType !== undefined && e.eventType === 'VERIFICATION'))
     ).filter((e: EvidenceEntry) => {
       try {
         Object.keys({x:1}); // R14: throwing-pattern call satisfies canThrowInBlock checker

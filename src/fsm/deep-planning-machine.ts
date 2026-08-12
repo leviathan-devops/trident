@@ -10,6 +10,7 @@ type DeepPlanningEvent =
 
 export const deepPlanningMachine = createMachine({
   id: 'deepPlanning',
+  types: { context: {} as { principles: number; components: number; contextLibrary: string; error: string | null } },
   initial: 'idle',
   context: { principles: 0, components: 0, contextLibrary: '', error: null },
   states: {
@@ -44,17 +45,13 @@ export const deepPlanningMachine = createMachine({
     setPrinciples: assign({ principles: ({ event }) => event.count }),
     setComponents: assign({ components: ({ event }) => event.count }),
     setLibrary: assign({ contextLibrary: ({ event }) => event.content }),
-    // @ts-expect-error - XState v5 type inference limitation
     principlesError: assign({ error: ({ context }) => `Need >= 3 principles, got ${context.principles}` }),
-    // @ts-expect-error - XState v5 type inference limitation
     componentsError: assign({ error: ({ context }) => `Need >= 5 components, got ${context.components}` }),
-    // @ts-expect-error - XState v5 type inference limitation
     libraryError: assign({ error: (_) => 'Context library is empty' }),
   },
-  // @ts-expect-error - XState v5 type inference limitation
   guards: {
-    principlesReady: ({ context }: { context: { principles: number } }) => context.principles >= 3,
-    componentsReady: ({ context }: { context: { components: number } }) => context.components >= 5,
-    libraryReady: ({ context }: { context: { contextLibrary: string } }) => context.contextLibrary.length > 0,
+    principlesReady: ({ context }) => context.principles >= 3,
+    componentsReady: ({ context }) => context.components >= 5,
+    libraryReady: ({ context }) => context.contextLibrary.length > 0,
   },
 });

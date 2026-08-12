@@ -2,7 +2,7 @@ import winkNLP from 'wink-nlp';
 import model from 'wink-eng-lite-web-model';
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
-function cast<T>(value: unknown): T { const r: T = value; return r; }
+function cast<T>(value: unknown): T { const r: T = value as unknown as T; return r; }
 
 const nlp = winkNLP(model);
 

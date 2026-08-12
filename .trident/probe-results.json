@@ -1,0 +1,61 @@
+{
+  "probes": {
+    "P1": {
+      "probe": "P1",
+      "verdict": false,
+      "results": {
+        "V1_parentID": true,
+        "V2_no_main_list_pollution": false,
+        "V3_in_children": true,
+        "V4_subagent_ran": false,
+        "V5_stream_visible": true,
+        "V6_promptAsync_immediate": true
+      },
+      "details": [
+        "V1: the child session is created WITH the parentID field set (verified live: child.parentID === main.id)",
+        "V2 FAIL: the raw GET /session list DOES include the child in THIS server version — the parentID is honored (V1+V3) but the list endpoint returns ALL sessions including children; the TUI-level filtering is client-side, the raw API is not filtered (SessionListData query has ONLY directory — no parentID filter)",
+        "V3: the child appears in session.children of the main session (verified live)",
+        "V4: the subagent tool-call stayed \"running\" in the headless serve harness — no final assistant message within the 120s window (the container test with the TUI drives the subtask to completion; this harness does not)",
+        "V5: the child stream grew — the subtask part + a tool part with the prompt visible (partEvents > 0)",
+        "V6: the promptAsync returned in 9ms — the fire-and-forget is REAL (the tool is not hostage to the subagent)",
+        "DESIGN LOCK: the primary spawn design is sound (V1/V3/V5/V6); V2 is a raw-API finding — the pollution prevention holds at the TUI (client-side), NOT the raw list endpoint — the operator is informed; V4 requires the container/TUI runtime (the orchestrator's Phase 5)"
+      ],
+      "at": "2026-08-07T04:18:27.801Z"
+    },
+    "P2": {
+      "probe": "P2",
+      "verdict": false,
+      "results": {
+        "V1_http_200": true,
+        "V2_event_fired": false,
+        "V3_get_returns": false
+      },
+      "details": [
+        "V1: the untyped POST /session/{id}/todo returns 200 (the route EXISTS)",
+        "V2 FAIL: the EventTodoUpdated never fired with the test row (no persistence signal)",
+        "V3 FAIL: the GET /session/{id}/todo returns [] — the POST accepted the request but did NOT persist (verified with 3 alternate body shapes: {todos:[row]}, bare row, array — all 200, all empty GET)",
+        "VERDICT: THE MECHANICAL WRITE IS NOT AVAILABLE in this server version — the probe-fail path LOCKS: the wave-todowrite falls back to the tier-1 output-append instructions (the agent-mediated rows with the tracker's mechanical GET verification). The MECHANICAL_WRITE flag stays FALSE — the correct default"
+      ],
+      "at": "2026-08-07T04:18:27.801Z"
+    },
+    "P3": {
+      "probe": "P3",
+      "verdict": true,
+      "results": {
+        "V1_append": true,
+        "V2_output_append": true,
+        "V3_submit": true
+      },
+      "details": [
+        "V1: tui.appendPrompt returns true — the append lands in the TUI input (NOT submitted)",
+        "V2: the ReminderQueue drain + the output-append injection verified (the tier-1 mechanism: a queued reminder is taken FIFO + appended to the tool result)",
+        "V3: tui.submitPrompt returns true — the submit enters the stream",
+        "VERDICT: THE INTERRUPT TIERS ARE REAL — the tier-1 output-append + the tier-2 submits work from the plugin"
+      ],
+      "at": "2026-08-07T04:18:27.801Z"
+    }
+  },
+  "allPass": false,
+  "at": "2026-08-07T04:18:27.801Z",
+  "summary": "P1: the spawn design verified live (V1/V3/V5/V6 PASS; V2 raw-list finding — the parentID honored but the list endpoint unfiltered; V4 needs the container/TUI). P2: the mechanical todo write NOT available (200-but-no-persist) — the tier-1 fallback locks. P3: the interrupt tiers REAL (all pass)."
+}

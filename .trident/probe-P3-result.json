@@ -1,0 +1,15 @@
+{
+  "probe": "P3",
+  "verdict": true,
+  "results": {
+    "V1_append": true,
+    "V3_submit": true,
+    "V2_output_append": true
+  },
+  "details": [
+    "append data=true",
+    "submit data=true",
+    "reminder drained=true"
+  ],
+  "at": "2026-08-07T04:12:41.154Z"
+}

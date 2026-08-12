@@ -2,382 +2,275 @@ import * as ts from 'typescript';
 import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType } from '../types.ts';
 
 /**
- * FIX 3b (v2): AST-based catch-clause detection — replaces the fragile
- * text-based brace matching in isReturnInsideCatchBlock().
+ * R14 Control Flow Graph — pure TypeScript AST analysis.
  *
- * The old text-based approach walked backwards through source lines counting
- * braces and looking for 'catch'. This generated ~47 false positives because:
- *  - It couldn't handle nested try/catch blocks
- *  - It couldn't handle arrow functions inside catch blocks
- *  - It counted braces incorrectly in multi-line blocks
- *  - It treated ANY return inside a catch block as exempt, even when the
- *    code after it WAS genuinely unreachable
+ * Every detection walks the compiler AST structurally:
+ *   - Empty catch blocks: TryStatement nodes whose CatchClause block has no statements.
+ *   - Constant conditions: IfStatement nodes whose expression is a boolean literal
+ *     (or its negation) — the AST naturally excludes compound || / && conditions.
+ *   - State-machine transitions: variable/property/call patterns resolved via AST.
+ *   - Unreachable code: block-level statement analysis — any statement following an
+ *     unconditional exit (return/throw/break/continue) within the same Block or
+ *     CaseClause can never execute.
+ *   - Missing return paths: functions with an explicit non-void return type whose
+ *     body falls off the end through a plain tail statement.
  *
- * The AST approach walks the TypeScript compiler's parent chain from each
- * ReturnStatement node, giving precise structural information about whether
- * a return is inside a catch clause and whether the "unreachable" code is
- * genuinely unreachable (same block after return) or reachable (after the
- * try/catch/finally — the try block may succeed without throwing).
+ * No source-text scanning, brace matching, or position regex is performed.
  */
 
-/**
- * Build a map of body-relative text positions → ReturnStatement AST nodes.
- *
- * The R14 scanner finds return statements via regex on construct.body text.
- * This map bridges text positions back to AST nodes so we can walk parent
- * chains for structural analysis.
- *
- * Position mapping: construct.body = node.getText(sf), which starts at
- * node.getStart(sf). So body-relative position = retNode.getStart(sf) -
- * funcNode.getStart(sf), which exactly matches the regex match index.
- */
-function buildReturnNodeMap(funcNode: ts.Node): Map<number, ts.ReturnStatement> {
-  const map = new Map<number, ts.ReturnStatement>();
-  const sf = funcNode.getSourceFile();
-  if (!sf) return map;
-  let bodyStart: number;
-  try {
-    if (sf) { void 0; }
-    bodyStart = funcNode.getStart(sf);
-  } catch (e) {
-    console.error('[R14ControlFlowGraph] error:', e);
-    return map;
-  }
+// ─── Core AST Helpers ──────────────────────────────────────────────────────────
 
-  function visit(node: ts.Node): void {
-    if (ts.isReturnStatement(node)) {
-      try {
-        const retStart = node.getStart(sf);
-        const bodyRelative = retStart - bodyStart;
-        map.set(bodyRelative, node);
-      } catch (e) {
-        console.error('[R14ControlFlowGraph] error:', e);
-        // Node may be synthetic/missing — skip
-      }
-    }
-    ts.forEachChild(node, visit);
-  }
-  ts.forEachChild(funcNode, visit);
-  return map;
+/** 1-based line number for an AST node within its source file. */
+function lineOf(sf: ts.SourceFile, node: ts.Node): number {
+  return sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1;
 }
 
+/** Safe getText that returns a fallback on synthetic/unparseable nodes. */
+function safeText(node: ts.Node, sf: ts.SourceFile, fallback: string): string {
+  try {
+    return node.getText(sf);
+  } catch (e) {
+    console.error('[R14ControlFlowGraph]', e instanceof Error ? e.message : String(e));
+    return fallback;
+  }
+}
+
+// ─── Empty Catch Detection ─────────────────────────────────────────────────────
+
 /**
- * Walk up the AST parent chain to find an enclosing CatchClause.
- * Stops at function-like boundaries — a catch clause outside the
- * containing function is structurally irrelevant.
- *
- * Returns null if the node is not inside a catch clause.
+ * Detect empty catch blocks via AST. A TryStatement whose CatchClause block has
+ * zero statements swallows errors silently. Replaces the old brace-matching
+ * try-block extractor and catch-body slicer.
  */
-function findEnclosingCatchClause(node: ts.Node): ts.CatchClause | null {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
-    if (ts.isCatchClause(current)) {
-      return current;
+function collectEmptyCatchBlocks(root: ts.Node, sf: ts.SourceFile): { line: number }[] {
+  const result: { line: number }[] = [];
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (ts.isTryStatement(n) && n.catchClause) {
+      if (n.catchClause.block.statements.length === 0) {
+        result.push({ line: lineOf(sf, n.catchClause) });
+      }
     }
-    if (ts.isFunctionDeclaration(current) ||
-        ts.isFunctionExpression(current) ||
-        ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current) ||
-        ts.isConstructorDeclaration(current) ||
-        ts.isGetAccessorDeclaration(current) ||
-        ts.isSetAccessorDeclaration(current)) {
-      return null;
-    }
-    current = current.parent;
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return result;
+}
+
+// ─── Constant-Condition Detection ──────────────────────────────────────────────
+
+/**
+ * Determine whether an if-condition is a constant boolean literal.
+ * Returns 'true' for `if (true)` / `if (!false)`, 'false' for `if (false)` /
+ * `if (!true)`, or null for any dynamic condition. Compound conditions (||, &&)
+ * are BinaryExpression nodes and therefore never match here.
+ */
+function constantConditionKind(expr: ts.Expression): 'true' | 'false' | null {
+  if (expr.kind === ts.SyntaxKind.TrueKeyword) return 'true';
+  if (expr.kind === ts.SyntaxKind.FalseKeyword) return 'false';
+  if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.ExclamationToken) {
+    if (expr.operand.kind === ts.SyntaxKind.FalseKeyword) return 'true'; // !false
+    if (expr.operand.kind === ts.SyntaxKind.TrueKeyword) return 'false'; // !true
   }
   return null;
 }
 
-/**
- * Walk up the AST parent chain to determine if a node is inside a
- * conditional construct (if/switch/for/while/ternary). Stops at
- * function-like boundaries — a conditional outside the containing
- * function is structurally irrelevant.
- *
- * Returns true if the node is lexically inside a conditional block,
- * meaning a return statement there does NOT make subsequent code
- * unreachable (the other branch of the conditional can still execute).
- */
-function findEnclosingConditional(node: ts.Node): boolean {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
+/** Collect IfStatement nodes whose condition is a constant boolean. */
+function collectConstantConditions(
+  root: ts.Node,
+  sf: ts.SourceFile,
+): { line: number; kind: 'true' | 'false'; text: string }[] {
+  const result: { line: number; kind: 'true' | 'false'; text: string }[] = [];
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (ts.isIfStatement(n)) {
+      const kind = constantConditionKind(n.expression);
+      if (kind !== null) {
+        result.push({ line: lineOf(sf, n), kind, text: safeText(n.expression, sf, 'condition') });
+      }
+    }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return result;
+}
+
+// ─── State Machine Analysis ────────────────────────────────────────────────────
+
+/** Detect whether the construct declares or constructs a state machine. */
+function hasStateMachine(root: ts.Node, sf: ts.SourceFile): boolean {
+  let found = false;
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0 && !found) {
+    const n = stack.pop()!;
+    // const x: StateMachine = ...
+    if (ts.isVariableDeclaration(n) && n.type && ts.isTypeReferenceNode(n.type)) {
+      if (safeText(n.type.typeName, sf, '') === 'StateMachine') { found = true; break; }
+    }
+    // const x = createStateMachine(...) / new StateMachine(...)
+    if (ts.isVariableDeclaration(n) && n.initializer) {
+      const init = n.initializer;
+      if (ts.isCallExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'createStateMachine') {
+        found = true; break;
+      }
+      if (ts.isNewExpression(init) && ts.isIdentifier(init.expression) && init.expression.text === 'StateMachine') {
+        found = true; break;
+      }
+    }
+    // { states: { ... } }
+    if (ts.isPropertyAssignment(n) && ts.isObjectLiteralExpression(n.initializer)) {
+      if (safeText(n.name, sf, '') === 'states') { found = true; break; }
+    }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return found;
+}
+
+const TRANSITION_DEF_KEYS = new Set('transition|on|event'.split('|'));
+
+/** Collect transition names DEFINED in the construct (transition:/on:/event: 'NAME'). */
+function collectDefinedTransitions(root: ts.Node, sf: ts.SourceFile): Set<string> {
+  const defined = new Set<string>();
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (ts.isPropertyAssignment(n) && ts.isStringLiteral(n.initializer)) {
+      const keyName = safeText(n.name, sf, '');
+      if (TRANSITION_DEF_KEYS.has(keyName)) {
+        defined.add(n.initializer.text);
+      }
+    }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return defined;
+}
+
+/** Collect transition names USED via .send('NAME') calls. */
+function collectUsedTransitions(root: ts.Node): Set<string> {
+  const used = new Set<string>();
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
     if (
-      ts.isIfStatement(current) ||
-      ts.isSwitchStatement(current) ||
-      ts.isForStatement(current) ||
-      ts.isWhileStatement(current) ||
-      ts.isConditionalExpression(current)
+      ts.isCallExpression(n) &&
+      ts.isPropertyAccessExpression(n.expression) &&
+      n.expression.name.text === 'send'
     ) {
-      return true;
+      const arg = n.arguments[0];
+      if (arg && ts.isStringLiteral(arg)) {
+        used.add(arg.text);
+      }
     }
-    if (ts.isFunctionDeclaration(current) ||
-        ts.isFunctionExpression(current) ||
-        ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current) ||
-        ts.isConstructorDeclaration(current) ||
-        ts.isGetAccessorDeclaration(current) ||
-        ts.isSetAccessorDeclaration(current)) {
-      return false;
-    }
-    current = current.parent;
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
   }
-  return false;
+  return used;
+}
+
+// ─── Unreachable Code (block-level statement analysis) ─────────────────────────
+
+/** True if a statement unconditionally transfers control flow out of its block. */
+function isExitStatement(stmt: ts.Statement): boolean {
+  return (
+    ts.isReturnStatement(stmt) ||
+    ts.isThrowStatement(stmt) ||
+    ts.isBreakStatement(stmt) ||
+    ts.isContinueStatement(stmt)
+  );
 }
 
 /**
- * Walk up the AST parent chain to find an enclosing TryStatement.
- * Stops at function-like boundaries.
- *
- * Returns null if the node is not inside a try statement.
+ * Detect unreachable code via block-level statement analysis. For every Block and
+ * CaseClause, scan its statement list; the first non-hoisted statement that follows
+ * an unconditional exit (return/throw/break/continue) within the same block can never
+ * execute. Function declarations are skipped as the "first unreachable" statement
+ * because they are hoisted. This replaces the regex return-position scanner and the
+ * text-based conditional / multi-line heuristics.
  */
-function findEnclosingTryStatement(node: ts.Node): ts.TryStatement | null {
-  let current: ts.Node | undefined = node.parent;
-  while (current) {
-    if (ts.isTryStatement(current)) {
-      return current;
+function collectUnreachableCode(root: ts.Node, sf: ts.SourceFile): { line: number; text: string }[] {
+  const result: { line: number; text: string }[] = [];
+  const seen = new Set<number>();
+
+  function scanStatements(statements: ts.NodeArray<ts.Statement>): void {
+    for (let i = 0; i < statements.length; i++) {
+      const stmt = statements[i];
+      if (!isExitStatement(stmt)) continue;
+      for (let j = i + 1; j < statements.length; j++) {
+        const next = statements[j];
+        if (ts.isFunctionDeclaration(next)) continue; // hoisted — not dead code
+        const line = lineOf(sf, next);
+        if (seen.has(line)) break;
+        seen.add(line);
+        const full = safeText(next, sf, 'statement');
+        const text = full.length > 60 ? full.substring(0, 60) : full;
+        result.push({ line, text });
+        break;
+      }
     }
-    if (ts.isFunctionDeclaration(current) ||
-        ts.isFunctionExpression(current) ||
-        ts.isArrowFunction(current) ||
-        ts.isMethodDeclaration(current) ||
-        ts.isConstructorDeclaration(current) ||
-        ts.isGetAccessorDeclaration(current) ||
-        ts.isSetAccessorDeclaration(current)) {
-      return null;
-    }
-    current = current.parent;
   }
-  return null;
+
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (ts.isBlock(n)) scanStatements(n.statements);
+    if (ts.isCaseClause(n)) scanStatements(n.statements);
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
+  }
+  return result;
+}
+
+// ─── Missing Return Path Detection ─────────────────────────────────────────────
+
+/** True if a return-type annotation denotes no value (void / undefined / never). */
+function isVoidReturnType(typeNode: ts.TypeNode, sf: ts.SourceFile): boolean {
+  if (typeNode.kind === ts.SyntaxKind.VoidKeyword) return true;
+  const text = safeText(typeNode, sf, '');
+  return text === 'void' || text === 'undefined' || text === 'never' || text === 'Promise<void>';
 }
 
 /**
- * AST-based analysis of a return statement's catch-clause context.
- *
- * Given a ReturnStatement node and the body-relative position of the next
- * code/return being checked for unreachability, determines:
- *
- *  - insideCatch: whether the return is lexically inside a catch clause
- *  - codeAfterIsReachable: if insideCatch, whether the "unreachable" code
- *    at nextBodyPos is genuinely unreachable (false) or reachable (true)
- *
- * Reachability rules:
- *  - Code AFTER the try/catch/finally block → reachable (try may succeed)
- *  - Code INSIDE the same catch clause after the return → genuinely unreachable
- *  - Code in the try block or finally block → reachable (different path)
+ * Detect missing return paths conservatively. For a function with an explicit
+ * non-void return type whose body block ends in a "plain" statement (expression or
+ * variable declaration) rather than an exit or branching construct, control falls off
+ * the end without returning a value. Branching tails (if/switch/try/loop/block) are
+ * skipped to avoid false positives — they may return on every path.
  */
-function analyzeReturnInCatchContext(
-  retNode: ts.ReturnStatement,
-  nextBodyPos: number,
-  funcNode: ts.Node,
-): { insideCatch: boolean; codeAfterIsReachable: boolean } {
-  const catchClause = findEnclosingCatchClause(retNode);
-  if (!catchClause) {
-    return { insideCatch: false, codeAfterIsReachable: false };
-  }
+function collectMissingReturns(root: ts.Node, sf: ts.SourceFile): { line: number; name: string }[] {
+  const result: { line: number; name: string }[] = [];
 
-  // Find the TryStatement enclosing this catch clause
-  const tryStmt = findEnclosingTryStatement(catchClause);
-  if (!tryStmt) {
-    // Catch clause not inside a try statement — unusual, be conservative
-    return { insideCatch: true, codeAfterIsReachable: false };
-  }
-
-  const sf = funcNode.getSourceFile();
-  if (!sf) {
-    return { insideCatch: true, codeAfterIsReachable: false };
-  }
-
-  let bodyStart: number;
-  try {
-    bodyStart = funcNode.getStart(sf);
-  } catch (e) {
-    console.error('[R14ControlFlowGraph] error:', e);
-    return { insideCatch: true, codeAfterIsReachable: false };
-  }
-
-  const tryEndBodyRelative = tryStmt.getEnd() - bodyStart;
-  const catchEndBodyRelative = catchClause.getEnd() - bodyStart;
-
-  // If the next code is after the entire try/catch/finally block,
-  // it IS reachable — the try block may complete without throwing.
-  if (nextBodyPos >= tryEndBodyRelative) {
-    return { insideCatch: true, codeAfterIsReachable: true };
-  }
-
-  // If the next code is inside the same catch clause (after the return),
-  // it IS genuinely unreachable — no conditional can skip the return.
-  if (nextBodyPos < catchEndBodyRelative) {
-    return { insideCatch: true, codeAfterIsReachable: false };
-  }
-
-  // Next code is in the try block, finally block, or a different catch —
-  // reachable via a different execution path
-  return { insideCatch: true, codeAfterIsReachable: true };
-}
-
-function extractTryBlocks(body: string): { tryStart: number; catchStart: number; finallyStart: number; tryEnd: number }[] {
-  const blocks: { tryStart: number; catchStart: number; finallyStart: number; tryEnd: number }[] = [];
-  const tryPattern = /\btry\s*\{/g;
-  let tryMatch: RegExpExecArray | null;
-
-  while ((tryMatch = tryPattern.exec(body)) !== null) {
-    let braceCount = 0;
-    let tryBodyEnd = -1;
-    let catchPos = -1;
-    let finallyPos = -1;
-    let endPos = -1;
-
-    for (let i = tryMatch.index + tryMatch[0].length - 1; i < body.length; i++) {
-      if (body[i] === '{') braceCount++;
-      else if (body[i] === '}') {
-        braceCount--;
-        if (braceCount === 0) {
-          if (tryBodyEnd === -1) {
-            tryBodyEnd = i;
-            const afterTry = body.substring(i + 1).trimStart();
-            const catchMatch = afterTry.match(/^catch\s*(?:\([^)]*\))?\s*\{/);
-            if (catchMatch) {
-              catchPos = i + 1 + body.substring(i + 1).indexOf(catchMatch[0]);
-            }
-            const finallyMatch = afterTry.match(/^finally\s*\{/);
-            if (finallyMatch) {
-              finallyPos = i + 1 + body.substring(i + 1).indexOf(finallyMatch[0]);
-            }
-            if (catchPos === -1 && finallyPos === -1) {
-              endPos = i;
-              break;
-            }
-
-            let searchFrom = catchPos > finallyPos ? catchPos : finallyPos;
-            if (catchPos > -1 && finallyPos > -1) {
-              searchFrom = Math.max(catchPos, finallyPos);
-            }
-
-            braceCount = 0;
-            for (let j = searchFrom; j < body.length; j++) {
-              if (body[j] === '{') braceCount++;
-              else if (body[j] === '}') {
-                braceCount--;
-                if (braceCount === 0) {
-                  const afterBlock = body.substring(j + 1).trimStart();
-                  const nextCatch = afterBlock.match(/^catch\s*(?:\([^)]*\))?\s*\{/);
-                  const nextFinally = afterBlock.match(/^finally\s*\{/);
-
-                  if (nextCatch) {
-                    catchPos = j + 1 + body.substring(j + 1).indexOf(nextCatch[0]);
-                    searchFrom = catchPos;
-                    continue;
-                  }
-                  if (nextFinally) {
-                    finallyPos = j + 1 + body.substring(j + 1).indexOf(nextFinally[0]);
-                    searchFrom = finallyPos;
-                    continue;
-                  }
-                  endPos = j;
-                  break;
-                }
-              }
-            }
-            break;
-          }
-        }
-      }
+  function checkFunction(
+    fn: ts.FunctionDeclaration | ts.MethodDeclaration,
+    name: string,
+  ): void {
+    const typeNode = fn.type;
+    if (!typeNode) return;
+    if (isVoidReturnType(typeNode, sf)) return;
+    const body = fn.body;
+    if (!body || !ts.isBlock(body)) return;
+    const stmts = body.statements;
+    if (stmts.length === 0) {
+      result.push({ line: lineOf(sf, fn), name });
+      return;
     }
-
-    if (tryBodyEnd > -1) {
-      blocks.push({
-        tryStart: tryMatch.index,
-        catchStart: catchPos,
-        finallyStart: finallyPos,
-        tryEnd: endPos > -1 ? endPos : tryBodyEnd,
-      });
+    const last = stmts[stmts.length - 1];
+    if (ts.isExpressionStatement(last) || ts.isVariableStatement(last)) {
+      result.push({ line: lineOf(sf, last), name });
     }
   }
 
-  return blocks;
-}
-
-function canThrowInBlock(blockBody: string): boolean {
-  const throwingPatterns = [
-    /\bthrow\b/,
-    /\.exec\s*\(/,
-    /JSON\.parse\s*\(/,
-    /parseInt\s*\(/,
-    /parseFloat\s*\(/,
-    /fs\.\w+\s*\(/,
-    /fetch\s*\(/,
-    /new\s+\w+\s*\(/,
-    /\w+\.\w+\s*\(/,
-    /await\s+/,
-    /\.shift\s*\(\)/,
-    /\.pop\s*\(\)/,
-    /\.access\s*\(/,
-  ];
-
-  for (const pattern of throwingPatterns) {
-    if (pattern.test(blockBody)) return true;
-  }
-  return false;
-}
-
-function isEmptyBlock(blockBody: string): boolean {
-  const stripped = blockBody.replace(/\{|\}/g, '').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '').trim();
-  return stripped.length === 0;
-}
-
-function extractCatchBody(body: string, catchStart: number): string {
-  if (catchStart < 0 || catchStart >= body.length) return '';
-  let braceCount = 0;
-  let started = false;
-  let startIdx = -1;
-  for (let i = catchStart; i < body.length; i++) {
-    if (body[i] === '{') {
-      braceCount++;
-      if (!started) {
-        started = true;
-        startIdx = i + 1;
-      }
-    } else if (body[i] === '}') {
-      braceCount--;
-      if (braceCount === 0 && started) {
-        return body.substring(startIdx, i);
-      }
+  const stack: ts.Node[] = [root];
+  while (stack.length > 0) {
+    const n = stack.pop()!;
+    if (ts.isFunctionDeclaration(n) && n.name) {
+      checkFunction(n, safeText(n.name, sf, 'function'));
+    } else if (ts.isMethodDeclaration(n) && n.name) {
+      checkFunction(n, safeText(n.name, sf, 'method'));
     }
+    ts.forEachChild(n, (c: ts.Node) => stack.push(c));
   }
-  return '';
+  return result;
 }
 
-function extractTryBody(body: string, tryStart: number): string {
-  let braceCount = 0;
-  let started = false;
-  let startIdx = -1;
-  for (let i = tryStart; i < body.length; i++) {
-    if (body[i] === '{') {
-      braceCount++;
-      if (!started) {
-        started = true;
-        startIdx = i + 1;
-      }
-    } else if (body[i] === '}') {
-      braceCount--;
-      if (braceCount === 0 && started) {
-        return body.substring(startIdx, i);
-      }
-    }
-  }
-  return '';
-}
-
-const ALWAYS_TRUE_CONDITIONS = [
-  /\btrue\b/,
-  /!\s*false/,
-  /typeof\s+\w+\s*===?\s*['"](\w+)['"]/,
-];
-
-const ALWAYS_FALSE_CONDITIONS = [
-  /\bfalse\b/,
-  /!\s*true/,
-];
+// ─── Layer Rule ────────────────────────────────────────────────────────────────
 
 export const R14_CONTROL_FLOW_GRAPH: LayerRule = {
   layer: 'R14',
@@ -390,140 +283,73 @@ export const R14_CONTROL_FLOW_GRAPH: LayerRule = {
   evaluate(construct: CodeConstruct | null, ctx: AnalysisContext): AuditFinding[] {
     if (!construct) return [];
     const findings: AuditFinding[] = [];
-    const body = construct.body;
+    const node = construct.node;
+    if (!node) return findings;
+    const sf = node.getSourceFile();
+    if (!sf) return findings;
 
-    const tryBlocks = extractTryBlocks(body);
+    // ── Detection 1: Empty catch blocks ──
+    for (const ec of collectEmptyCatchBlocks(node, sf)) {
+      findings.push({
+        layer: 'R14',
+        severity: 'MEDIUM',
+        category: 'CONTROL_FLOW',
+        file: construct.filePath,
+        line: ec.line,
+        evidence: 'empty catch block',
+        description: 'Empty catch block — error swallowed with no handling',
+        correction: 'Add error logging, recovery, or re-throw: console.error("[Context] failed:", err);',
+        runtimeImpact: 'Errors silently consumed — no evidence of failure, debugging impossible',
+        confidence: 0.95,
+        constructType: construct.type,
+        callGraphRef: null,
+        evidenceSuppressed: false,
+      });
+    }
 
-    for (const tryBlock of tryBlocks) {
-      const tryBody = extractTryBody(body, tryBlock.tryStart);
-      const tryCanThrow = canThrowInBlock(tryBody);
-
-      if (tryBlock.catchStart > -1 && !tryCanThrow) {
-        const catchBody = extractCatchBody(body, tryBlock.catchStart);
-        if (!isEmptyBlock(catchBody)) {
-          const lineOffset = body.substring(0, tryBlock.catchStart).split('\n').length - 1;
-          findings.push({
-            layer: 'R14',
-            severity: 'HIGH',
-            category: 'CONTROL_FLOW',
-            file: construct.filePath,
-            line: construct.line + lineOffset,
-            evidence: `catch block at offset ${tryBlock.catchStart} — try block cannot throw`,
-            description: 'Unreachable error handler — try block contains no operations that can throw, catch block is dead code',
-            correction: 'Remove the try/catch if the operations are truly safe, or add operations that can actually fail',
-            runtimeImpact: 'Dead catch block hides bugs — developer thinks errors are handled but the handler never executes',
-            confidence: 0.80,
-            constructType: construct.type,
-            callGraphRef: null,
-            evidenceSuppressed: false,
-          });
-        }
-      }
-
-      if (tryBlock.catchStart > -1) {
-        const catchBody = extractCatchBody(body, tryBlock.catchStart);
-        if (catchBody && isEmptyBlock(catchBody)) {
-          const lineOffset = body.substring(0, tryBlock.catchStart).split('\n').length - 1;
-          findings.push({
-            layer: 'R14',
-            severity: 'MEDIUM',
-            category: 'CONTROL_FLOW',
-            file: construct.filePath,
-            line: construct.line + lineOffset,
-            evidence: 'empty catch block',
-            description: 'Empty catch block — error swallowed with no handling',
-            correction: 'Add error logging, recovery, or re-throw: console.error("[Context] failed:", err);',
-            runtimeImpact: 'Errors silently consumed — no evidence of failure, debugging impossible',
-            confidence: 0.95,
-            constructType: construct.type,
-            callGraphRef: null,
-            evidenceSuppressed: false,
-          });
-        }
+    // ── Detection 2: Constant-boolean conditions ──
+    for (const cc of collectConstantConditions(node, sf)) {
+      if (cc.kind === 'true') {
+        findings.push({
+          layer: 'R14',
+          severity: 'MEDIUM',
+          category: 'CONTROL_FLOW',
+          file: construct.filePath,
+          line: cc.line,
+          evidence: `if (${cc.text})`,
+          description: `Always-true condition: "if (${cc.text})" — else branch is unreachable dead code`,
+          correction: 'Remove the condition if it is always true, or fix the logic if the condition should be dynamic',
+          runtimeImpact: 'Dead code in else branch — developer thinks both paths are tested but only one executes',
+          confidence: 0.85,
+          constructType: construct.type,
+          callGraphRef: null,
+          evidenceSuppressed: false,
+        });
+      } else {
+        findings.push({
+          layer: 'R14',
+          severity: 'MEDIUM',
+          category: 'CONTROL_FLOW',
+          file: construct.filePath,
+          line: cc.line,
+          evidence: `if (${cc.text})`,
+          description: `Always-false condition: "if (${cc.text})" — if branch is unreachable dead code`,
+          correction: 'Remove the condition if it is always false, or fix the logic if the condition should be dynamic',
+          runtimeImpact: 'Dead code in if branch — developer thinks both paths are tested but only else executes',
+          confidence: 0.85,
+          constructType: construct.type,
+          callGraphRef: null,
+          evidenceSuppressed: false,
+        });
       }
     }
 
-    const ifPattern = /\bif\s*\(([^)]+)\)\s*\{/g;
-    let ifMatch: RegExpExecArray | null;
-    while ((ifMatch = ifPattern.exec(body)) !== null) {
-      const condition = ifMatch[1].trim();
-
-      for (const alwaysTrue of ALWAYS_TRUE_CONDITIONS) {
-        if (alwaysTrue.test(condition) && !condition.includes('||') && !condition.includes('&&')) {
-          const lineOffset = body.substring(0, ifMatch.index).split('\n').length - 1;
-          findings.push({
-            layer: 'R14',
-            severity: 'MEDIUM',
-            category: 'CONTROL_FLOW',
-            file: construct.filePath,
-            line: construct.line + lineOffset,
-            evidence: `if (${condition})`,
-            description: `Always-true condition: "if (${condition})" — else branch is unreachable dead code`,
-            correction: 'Remove the condition if it is always true, or fix the logic if the condition should be dynamic',
-            runtimeImpact: 'Dead code in else branch — developer thinks both paths are tested but only one executes',
-            confidence: 0.85,
-            constructType: construct.type,
-            callGraphRef: null,
-            evidenceSuppressed: false,
-          });
-          break;
-        }
-      }
-
-      for (const alwaysFalse of ALWAYS_FALSE_CONDITIONS) {
-        if (alwaysFalse.test(condition) && !condition.includes('||') && !condition.includes('&&')) {
-          const lineOffset = body.substring(0, ifMatch.index).split('\n').length - 1;
-          findings.push({
-            layer: 'R14',
-            severity: 'MEDIUM',
-            category: 'CONTROL_FLOW',
-            file: construct.filePath,
-            line: construct.line + lineOffset,
-            evidence: `if (${condition})`,
-            description: `Always-false condition: "if (${condition})" — if branch is unreachable dead code`,
-            correction: 'Remove the condition if it is always false, or fix the logic if the condition should be dynamic',
-            runtimeImpact: 'Dead code in if branch — developer thinks both paths are tested but only else executes',
-            confidence: 0.85,
-            constructType: construct.type,
-            callGraphRef: null,
-            evidenceSuppressed: false,
-          });
-          break;
-        }
-      }
-    }
-
-    const stateMachinePatterns = [
-      /(?:const|let|var)\s+(\w+)\s*:\s*StateMachine/,
-      /(?:const|let|var)\s+(\w+)\s*=\s*createStateMachine/,
-      /(?:const|let|var)\s+(\w+)\s*=\s*new\s+StateMachine/,
-      /states\s*:\s*\{/,
-    ];
-
-    let hasStateMachine = false;
-    for (const smp of stateMachinePatterns) {
-      if (smp.test(body)) {
-        hasStateMachine = true;
-        break;
-      }
-    }
-
-    if (hasStateMachine) {
-      const transitionPattern = /(?:transition|on|event)\s*:\s*['"](\w+)['"]/g;
-      const definedTransitions = new Set<string>();
-      let transMatch: RegExpExecArray | null;
-      while ((transMatch = transitionPattern.exec(body)) !== null) {
-        definedTransitions.add(transMatch[1]);
-      }
-
-      const sendPattern = /\.send\s*\(\s*['"](\w+)['"]\s*\)/g;
-      const usedTransitions = new Set<string>();
-      while ((transMatch = sendPattern.exec(body)) !== null) {
-        usedTransitions.add(transMatch[1]);
-      }
-
-      for (const trans of definedTransitions) {
-        if (!usedTransitions.has(trans)) {
+    // ── Detection 3: Unreachable state-machine transitions ──
+    if (hasStateMachine(node, sf)) {
+      const defined = collectDefinedTransitions(node, sf);
+      const used = collectUsedTransitions(node);
+      for (const trans of defined) {
+        if (!used.has(trans)) {
           findings.push({
             layer: 'R14',
             severity: 'HIGH',
@@ -543,90 +369,42 @@ export const R14_CONTROL_FLOW_GRAPH: LayerRule = {
       }
     }
 
-    const returnPattern = /\breturn\b/g;
-    const returnPositions: number[] = [];
-    let retMatch: RegExpExecArray | null;
-    while ((retMatch = returnPattern.exec(body)) !== null) {
-      returnPositions.push(retMatch.index);
+    // ── Detection 4: Unreachable code after exit points ──
+    for (const ur of collectUnreachableCode(node, sf)) {
+      findings.push({
+        layer: 'R14',
+        severity: 'HIGH',
+        category: 'CONTROL_FLOW',
+        file: construct.filePath,
+        line: ur.line,
+        evidence: `code after exit: "${ur.text}"`,
+        description: 'Unreachable code after exit point — code will never execute',
+        correction: 'Remove the unreachable code or fix the control flow',
+        runtimeImpact: 'Dead code — developer thinks this code runs but it never executes',
+        confidence: 0.90,
+        constructType: construct.type,
+        callGraphRef: null,
+        evidenceSuppressed: false,
+      });
     }
 
-    // FIX 3b (v2): Build AST-based return node map for precise catch-clause
-    // analysis. Maps body-relative text positions to ReturnStatement AST nodes
-    // so we can walk parent chains instead of counting braces in text.
-    const returnNodeMap = construct.node
-      ? buildReturnNodeMap(construct.node)
-      : new Map<number, ts.ReturnStatement>();
-
-    if (returnPositions.length > 1) {
-      for (let i = 0; i < returnPositions.length - 1; i++) {
-        // FIX 3b (v2): AST-based catch-clause detection replaces text-based
-        // brace matching. If the return is inside a catch clause, determine
-        // whether the "unreachable" code is genuinely unreachable (inside the
-        // same catch block after the return) or reachable (after the
-        // try/catch/finally — the try block may succeed without throwing).
-        const retNode = returnNodeMap.get(returnPositions[i]);
-        if (retNode && construct.node) {
-          const analysis = analyzeReturnInCatchContext(
-            retNode,
-            returnPositions[i + 1],
-            construct.node,
-          );
-          if (analysis.insideCatch && analysis.codeAfterIsReachable) {
-            // Return inside catch, and code after try/catch IS reachable —
-            // this is a false positive, skip it
-            continue;
-          }
-          // If insideCatch && !codeAfterIsReachable: genuinely unreachable
-          // code in the same catch block — fall through to normal detection.
-          // If !insideCatch: return is NOT in a catch clause — fall through.
-
-          // FIX (conditional return): If the return is inside a conditional
-          // (if/switch/for/while/ternary), code after the enclosing block IS
-          // reachable — the other branch of the conditional can still execute.
-          // Only flag code after UNCONDITIONAL returns as unreachable.
-          if (findEnclosingConditional(retNode)) {
-            continue;
-          }
-        }
-
-        const betweenReturns = body.substring(returnPositions[i], returnPositions[i + 1]);
-        const linesBetween = betweenReturns.split('\n').length - 1;
-
-        if (linesBetween > 5) {
-          const afterReturn = body.substring(returnPositions[i]);
-          const ifBetween = /\bif\s*\(/.test(afterReturn.substring(0, returnPositions[i + 1] - returnPositions[i]));
-          if (!ifBetween) {
-            const lineOffset = body.substring(0, returnPositions[i]).split('\n').length - 1;
-            const codeAfter = afterReturn.split('\n')[1]?.trim() || '';
-            if (codeAfter && !codeAfter.startsWith('//') && !codeAfter.startsWith('/*')) {
-              // FIX (Phase 8 R14 switch-case): skip false positives for
-              // closing braces, switch-case labels, and hoisted declarations.
-              // These are structural or hoisted constructs — not unreachable code.
-              if (codeAfter === '}' ||
-                  /^case\b/.test(codeAfter) ||
-                  /^default\s*:/.test(codeAfter) ||
-                  /^function\b/.test(codeAfter)) {
-                continue;
-              }
-              findings.push({
-                layer: 'R14',
-                severity: 'HIGH',
-                category: 'CONTROL_FLOW',
-                file: construct.filePath,
-                line: construct.line + lineOffset + 1,
-                evidence: `code after exit: "${codeAfter}"`,
-                description: 'Unreachable code after exit point — code will never execute',
-                correction: 'Remove the unreachable code or fix the control flow',
-                runtimeImpact: 'Dead code — developer thinks this code runs but it never executes',
-                confidence: 0.90,
-                constructType: construct.type,
-                callGraphRef: null,
-                evidenceSuppressed: false,
-              });
-            }
-          }
-        }
-      }
+    // ── Detection 5: Missing return paths ──
+    for (const mr of collectMissingReturns(node, sf)) {
+      findings.push({
+        layer: 'R14',
+        severity: 'MEDIUM',
+        category: 'CONTROL_FLOW',
+        file: construct.filePath,
+        line: mr.line,
+        evidence: `function "${mr.name}" may not return a value`,
+        description: `Function '${mr.name}' has a non-void return type but a code path falls off the end without returning`,
+        correction: 'Add an explicit return on every code path, or annotate the return type as void',
+        runtimeImpact: 'Caller receives undefined where a value is expected — downstream property access may throw',
+        confidence: 0.70,
+        constructType: construct.type,
+        callGraphRef: null,
+        evidenceSuppressed: false,
+      });
     }
 
     return findings;

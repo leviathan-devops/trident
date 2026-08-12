@@ -9,6 +9,7 @@ const ALLOWED_TOOLS = new Set([
   'trident-deep-planning',
   'trident-problem-solving',
   'trident-context-synthesis',
+  'trident-ship-package',
   'trident-poseidon',
   'build-status',
   // trident-vision REMOVED — replaced by zai-vision_* and visual-cortex_* MCP tools
@@ -21,9 +22,17 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'webfetch',
   'question',
   'task',
+  'task_status', // ADD 2026-08-12 — the runtime's native background-task poll (the task tool's completion/result channel)
   'todowrite',
   'checkpoint',
   'skill',
+  // THE BATCH TOOL (2026-08-10 — the operator: "WHY IS THIS NOT IN YOUR
+  // FUCKING ALLOWLIST"): the runtime's native parallel-dispatch tool (the
+  // wave manager's batch form dispatches through it — the canonical subtask
+  // path). It was NEVER admitted to the plugin's allowlist — the wave
+  // dispatch deadlocked on the missing admission. 016_batch.md documents it:
+  // tool_calls array (max 25), parallel execution, partial failures.
+  'batch',
   // Hive Mind Plugin (2.2-hotfix) — underscore names only, matching actual plugin registration
   'hive_context',
   'hive_status',

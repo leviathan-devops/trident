@@ -1,0 +1,18 @@
+{
+  "probe": "P1",
+  "verdict": false,
+  "results": {
+    "V1_parentID": true,
+    "V6_promptAsync_immediate": true,
+    "V2_no_main_list_pollution": false,
+    "V3_in_children": true,
+    "V4_subagent_ran": false,
+    "V5_stream_visible": true
+  },
+  "details": [
+    "childId=ses_025959254ffeXIJHFmzFN3AwX6 parentID=ses_02595925fffes9bYChQlw0nB9U",
+    "promptAsync latency=9ms",
+    "final=false partEvents=118"
+  ],
+  "at": "2026-08-07T04:12:36.109Z"
+}

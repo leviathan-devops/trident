@@ -1,4 +1,4 @@
-import { tool } from '@opencode-ai/plugin';
+import { tool } from '../shared/tool-schema.js';
 import { z } from 'zod';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -7,7 +7,7 @@ import { tridentLog } from '../utils.js';
 import { godLoopOrchestrator } from '../poseidon/god-loop.js';
 
 // R16 FIX: Module-level type assertion utility — single assertion point per file
-function cast<T>(value: unknown): T { const r: T = value; return r; }
+function cast<T>(value: unknown): T { const r: T = value as unknown as T; return r; }
 
 export const tridentPoseidonTool = tool({
   description: 'POSEIDON MODE: God Orchestrator for quality-enforced build execution. Dispatches work to Trident_Build subagent, audits output, loops until 96%+ runtime grade. AUTO-LOCKS on completion. ALL POSEIDON OUTPUT MUST BE DISPLAYED TO THE USER — THE USER MUST SEE EVERY CYCLE PLAN, SCORE, AND NEXT STEP.',
@@ -71,26 +71,27 @@ export const tridentPoseidonTool = tool({
           displayFooter;
       }
 
-      // ABORT action
+      // ABORT action — stops the God LOOP only. Does NOT deactivate Poseidon Mode.
+      // Mode state is controlled exclusively by user chat messages (poseidonDetector).
       if (args.action === 'abort') {
         poseidonState.setAbortFlag(sessionId, true);
-        poseidonState.autoDeactivate(sessionId);
-        return '## POSEIDON MODE: ABORTED\n\nGod Loop has been aborted. State saved for recovery.' + displayFooter;
+        return '## POSEIDON GOD LOOP: ABORTED\n\nGod Loop aborted. State saved for recovery.\n\nPoseidon Mode remains ACTIVE (tools unlocked). Mode changes only via user chat ("poseidon deactivate").' + displayFooter;
       }
 
-      // DEACTIVATE action — clean exit from Poseidon Mode
+      // DEACTIVATE action — REMOVED as a tool action. Mode state changes ONLY
+      // via explicit user chat messages. Returns guidance instead of mutating state.
       if (args.action === 'deactivate') {
-        poseidonState.deactivate(sessionId);
-        return '## POSEIDON MODE: DEACTIVATED\n\n' +
-          'Poseidon Mode has been deactivated. bash/write/edit tools are now re-blocked. ' +
-          'God Loop state preserved on disk for future resumption.' + displayFooter;
+        return '## POSEIDON MODE: STATE UNCHANGED\n\n' +
+          'Tool-based deactivation was removed. Poseidon Mode activates/deactivates ONLY on explicit user chat messages.\n\n' +
+          'To deactivate, the USER must say: "poseidon deactivate" or "deactivate poseidon".\n' +
+          'The agent cannot and should not change mode state. Continue your task.' + displayFooter;
       }
 
-      // REVOKE action — full reset of all Poseidon state
+      // REVOKE action — full reset is also a mode state change → user-chat only.
       if (args.action === 'revoke') {
-        poseidonState.clear(sessionId);
-        return '## POSEIDON MODE: REVOKED\n\n' +
-          'All Poseidon state has been cleared. Fresh start required.' + displayFooter;
+        return '## POSEIDON MODE: STATE UNCHANGED\n\n' +
+          'Tool-based revoke was removed. Poseidon Mode state changes ONLY on explicit user chat messages.\n\n' +
+          'To reset, the USER must say "poseidon deactivate" then re-activate as needed.' + displayFooter;
       }
 
       // START / VERIFY / PHASE — all advance the God Loop one phase
@@ -114,11 +115,11 @@ export const tridentPoseidonTool = tool({
       const stateDir = path.join(args.targetPath, '.trident', 'god-loop');
       const shortLine = '🔄 POSEIDON CYCLE ' + result.cycle + ' | Score: ' + result.score + '/100 | Wave: ' + result.wave + ' | Phase: ' + result.phase + ' → ' + result.nextPhase;
 
-      // Check for terminal states
+      // Check for terminal states — the LOOP ends, but the MODE stays active.
+      // Mode deactivation happens ONLY via explicit user chat message.
       if (result.nextPhase === 'LOCKED' || result.nextPhase === 'FAILED') {
-        poseidonState.autoDeactivate(sessionId);
         // Terminal states are short enough to show inline
-        return shortLine + '\n\n' + result.instructions.substring(0, 500) + '\n\nPoseidon Mode has been deactivated.';
+        return shortLine + '\n\n' + result.instructions.substring(0, 500) + '\n\nGod Loop ended (' + result.nextPhase + '). Poseidon Mode remains ACTIVE — mode changes only via user chat ("poseidon deactivate").';
       }
 
       // DISPATCH phase — full specs written to disk, short instruction returned

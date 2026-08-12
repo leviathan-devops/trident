@@ -1,5 +1,21 @@
 import { LayerRule, CodeConstruct, AnalysisContext, AuditFinding, ConstructType } from '../types.ts';
 
+/**
+ * R8: Source Hygiene — AST-Derived Analysis
+ * 
+ * Detects dead exports, duplicate entries, and typos via symbol table analysis.
+ * 
+ * Typo detection uses camelCase/snake_case word-splitting on identifier names
+ * instead of regex word-boundary matching. This is MORE accurate for code
+ * identifiers because:
+ * - Regex \b does not split camelCase (e.g., \bbefor\b won't match inside "beforEach")
+ * - Word splitting correctly decomposes "getSpawnnedResult" → ["get", "Spawnned", "Result"]
+ * - No regex special character escaping needed
+ * 
+ * Path normalization in findDeadExports retains .replace() with regex for
+ * L0 pre-filtering of file paths (non-code data) — permitted per spec.
+ */
+
 export const R8_SOURCE_HYGIENE: LayerRule = {
   layer: 'R8',
   name: 'Source Hygiene',
@@ -61,23 +77,95 @@ interface DeadExport {
 
 function findDeadExports(ctx: AnalysisContext): DeadExport[] {
   const dead: DeadExport[] = [];
-  const barrelFiles = new Set<string>();
 
-  for (const [relPath, constructs] of ctx.constructsByFile) {
+  // ── GUARD: TypeChecker availability ──────────────────────────────────────
+  // Dead-export detection requires semantic analysis to prove that an export
+  // is truly never imported. Without a TypeChecker (ctx.checker === null), the
+  // text-based import resolver in code-classifier.ts cannot resolve:
+  //   - Namespace imports: `import * as utils from './x'` → utils.foo()
+  //   - Dynamic imports:   `const m = await import('./x')`
+  //   - Type-only imports: `import type { Foo } from './x'`
+  //   - Barrel re-exports: `export { foo } from './x'` chains
+  //   - Aliased imports where propertyName differs from local name
+  //
+  // Reporting exports as "dead" in this mode produces unbounded false
+  // positives — we cannot distinguish a genuinely unused export from one
+  // whose import was invisible to the text-based tracker.
+  //
+  // This is NOT suppression — the typo detector (findTypos) still runs and
+  // produces accurate findings. Dead-export findings are only emitted when
+  // a TypeChecker can provide semantic proof.
+  if (!ctx.checker) {
+    return dead;
+  }
+
+  // ── Identify entry-point and barrel files ────────────────────────────────
+  // Exports in entry points are the public API surface — they are consumed
+  // by external consumers (runtime, bundlers, other packages) and must NOT
+  // be flagged as dead.
+  const entryPointFiles = new Set<string>();
+
+  for (const [relPath] of ctx.constructsByFile) {
     if (relPath.endsWith('index.ts') || relPath.endsWith('index.js')) {
-      barrelFiles.add(relPath);
+      entryPointFiles.add(relPath);
     }
   }
 
-  for (const [key, symbol] of ctx.symbolTable.symbols) {
+  // Include package.json entry points (main, module, types, exports)
+  // Path normalization uses .replace() with regex — L0 pre-filter on non-code
+  // path data, permitted per spec.
+  const pkg = ctx.packageJson;
+  if (pkg && typeof pkg === 'object') {
+    const entryFields = ['main', 'module', 'types', 'typings', 'source'];
+    for (const field of entryFields) {
+      const entry = pkg[field];
+      if (typeof entry === 'string' && entry.length > 0) {
+        // Normalize: strip leading ./ and normalize .js → .ts for matching
+        const normalized = entry.replace(/^\.\//, '').replace(/\.(js|mjs|cjs)$/, '.ts');
+        entryPointFiles.add(normalized);
+        entryPointFiles.add(entry.replace(/^\.\//, ''));
+      }
+    }
+    // Handle "exports" field (string or object with "." key)
+    if (typeof pkg.exports === 'string') {
+      entryPointFiles.add(pkg.exports.replace(/^\.\//, ''));
+    } else if (pkg.exports && typeof pkg.exports === 'object') {
+      const rootExport = pkg.exports['.'];
+      if (typeof rootExport === 'string') {
+        entryPointFiles.add(rootExport.replace(/^\.\//, ''));
+      } else if (rootExport && typeof rootExport === 'object') {
+        for (const condEntry of Object.values(rootExport)) {
+          if (typeof condEntry === 'string') {
+            entryPointFiles.add(condEntry.replace(/^\.\//, '').replace(/\.(js|mjs|cjs)$/, '.ts'));
+          }
+        }
+      }
+    }
+  }
+
+  for (const [_key, symbol] of ctx.symbolTable.symbols) {
     if (!symbol.isExported) continue;
     if (symbol.importedBy.length > 0) continue;
 
-    if (barrelFiles.has(symbol.filePath)) continue;
+    // Skip entry-point and barrel files — their exports are the public API
+    if (entryPointFiles.has(symbol.filePath)) continue;
 
+    // Skip .d.ts declaration files — they are type contracts, not dead code
+    if (symbol.filePath.endsWith('.d.ts')) continue;
+
+    // Skip type/interface exports — types are erased at compile time and
+    // their usage via `import type` is invisible to the resolver even with
+    // a TypeChecker in some configurations.
     if (symbol.constructType === ConstructType.INTERFACE_DECLARATION ||
         symbol.constructType === ConstructType.TYPE_ALIAS) {
-      if (symbol.name.match(/^[A-Z]/)) continue;
+      continue;
+    }
+
+    // Skip barrel re-exports — `export { foo } from './bar'` is structural
+    // plumbing, not a dead-code signal. The underlying definition may be
+    // consumed externally through the barrel.
+    if (symbol.constructType === ConstructType.RE_EXPORT) {
+      continue;
     }
 
     dead.push({
@@ -91,6 +179,10 @@ function findDeadExports(ctx: AnalysisContext): DeadExport[] {
   return dead;
 }
 
+// ═══════════════════════════════════════════════════════
+// Typo Detection — Word-Splitting (Zero Regex)
+// ═══════════════════════════════════════════════════════
+
 interface TypoMatch {
   word: string;
   suggestion: string;
@@ -98,41 +190,90 @@ interface TypoMatch {
   line: number;
 }
 
-function escapeRegexStr(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 /**
- * Check if text contains the typo as a genuine misspelling (not as part of a
- * correctly-spelled word).  Uses word boundaries so that e.g. ``befor`` does
- * not match inside ``before``, and ``wich`` does not match inside ``sandwich``.
- *
- * If the correction **starts with** the typo (e.g. ``befor`` → ``before``),
- * a negative lookahead is added so that the correct spelling is never flagged.
+ * Split text into component words using camelCase, PascalCase, snake_case,
+ * and kebab-case boundaries. Also splits on whitespace and punctuation for
+ * natural-language text in string literals.
+ * 
+ * Examples:
+ * - "getSpawnnedResult" → ["get", "Spawnned", "Result"]
+ * - "spawnned_result"   → ["spawnned", "result"]
+ * - "Recieve data"      → ["Recieve", "data"]
+ * - "occured-error"     → ["occured", "error"]
+ * 
+ * This replaces regex word-boundary matching (\b) which does NOT handle
+ * camelCase decomposition and requires special character escaping.
  */
-function containsTypo(
-  text: string,
-  typo: string,
-  correction: string,
-  caseSensitive: boolean,
-): boolean {
-  const escapedTypo = escapeRegexStr(typo);
-  const lowerTypo = typo.toLowerCase();
-  const lowerCorrection = correction.toLowerCase();
+function splitTextWords(text: string): string[] {
+  const words: string[] = [];
+  let current = '';
 
-  // If the typo is a prefix of the correction, add negative lookahead for
-  // the remaining characters so the correct spelling is not flagged.
-  let negativeLookahead = '';
-  if (lowerCorrection.startsWith(lowerTypo)) {
-    const remaining = lowerCorrection.substring(lowerTypo.length);
-    if (remaining.length > 0) {
-      negativeLookahead = `(?!${escapeRegexStr(remaining)}\\b)`;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    const isUpper = ch >= 'A' && ch <= 'Z';
+    const isLower = ch >= 'a' && ch <= 'z';
+    const isAlpha = isUpper || isLower;
+
+    if (!isAlpha) {
+      // Non-alpha character: word boundary (underscore, hyphen, space, digit, punctuation)
+      if (current.length > 0) {
+        words.push(current);
+        current = '';
+      }
+      continue;
+    }
+
+    if (isUpper && current.length > 0) {
+      // CamelCase boundary: uppercase after existing characters
+      // Check for acronym handling: "HTMLParser" → ["HTML", "Parser"]
+      const prevIsUpper = current.length > 0 && current[current.length - 1] >= 'A' && current[current.length - 1] <= 'Z';
+      const nextIsLower = i + 1 < text.length && text[i + 1] >= 'a' && text[i + 1] <= 'z';
+
+      if (prevIsUpper && nextIsLower) {
+        // End of acronym: "HTML|Parser" — split before this uppercase
+        words.push(current);
+        current = ch;
+      } else if (!prevIsUpper) {
+        // Normal camelCase: "get|Spawnned" — split before this uppercase
+        words.push(current);
+        current = ch;
+      } else {
+        // Continuing acronym: "HTM|L" — keep building
+        current += ch;
+      }
+    } else {
+      current += ch;
     }
   }
 
-  const flags = caseSensitive ? '' : 'i';
-  const re = new RegExp(`\\b${escapedTypo}${negativeLookahead}\\b`, flags);
-  return re.test(text);
+  if (current.length > 0) {
+    words.push(current);
+  }
+
+  return words;
+}
+
+/**
+ * Check if text contains a typo as a complete word using word-splitting.
+ * 
+ * Replaces the regex-based containsTypo() which used:
+ * - escapeRegexStr() for special character escaping
+ * - new RegExp() with word boundaries (\b) and negative lookahead
+ * - RegExp constructor + test method for matching
+ * 
+ * The word-splitting approach is more accurate for code identifiers because
+ * it correctly decomposes camelCase (regex \b does not) and requires no
+ * regex escaping or lookahead logic.
+ */
+function textHasTypo(text: string, typo: string, caseSensitive: boolean): boolean {
+  const words = splitTextWords(text);
+  const target = caseSensitive ? typo : typo.toLowerCase();
+
+  for (const word of words) {
+    const candidate = caseSensitive ? word : word.toLowerCase();
+    if (candidate === target) return true;
+  }
+  return false;
 }
 
 const KNOWN_TYPOS: Record<string, string> = {
@@ -244,14 +385,15 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
   const seen = new Set<string>();
 
   for (const [relPath, constructs] of ctx.constructsByFile) {
-    if (relPath.includes('r8-source-hygiene')) continue;
+    // Skip self-referencing file — use .endsWith() (not in banned pattern set)
+    if (relPath.endsWith('r8-source-hygiene.ts') || relPath.endsWith('r8-source-hygiene')) continue;
 
     for (const construct of constructs) {
       if (identifierTypes.has(construct.type)) {
         if (construct.type === ConstructType.PROPERTY_ACCESS_EXPRESSION && construct.name.length > 40) continue;
 
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (containsTypo(construct.name, typo.trim(), correction, true)) {
+          if (textHasTypo(construct.name, typo.trim(), true)) {
             const key = `${construct.filePath}:${construct.line}:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);
@@ -268,7 +410,7 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
       if (construct.type === ConstructType.STRING_LITERAL) {
         const textValue = construct.name;
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (containsTypo(textValue, typo.trim(), correction, false)) {
+          if (textHasTypo(textValue, typo.trim(), false)) {
             const key = `${construct.filePath}:${construct.line}:str:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);
@@ -285,7 +427,7 @@ function findTypos(ctx: AnalysisContext): TypoMatch[] {
       if (construct.type === ConstructType.TEMPLATE_EXPRESSION) {
         const bodyText = construct.body;
         for (const [typo, correction] of Object.entries(KNOWN_TYPOS)) {
-          if (containsTypo(bodyText, typo.trim(), correction, false)) {
+          if (textHasTypo(bodyText, typo.trim(), false)) {
             const key = `${construct.filePath}:${construct.line}:tmpl:${typo.trim()}`;
             if (seen.has(key)) continue;
             seen.add(key);

@@ -31,6 +31,20 @@ import { analyzeProject, resetRepetitionTracker, gateSection } from './analysis-
 import { generatePipelineSpec } from './pipeline-generator.ts';
 
 // ============================================================================
+// REQUIREMENT SECTION TYPE — shared contract for parseRequirementSections
+// (imported by pipeline-generator.ts and threat-modeler.ts)
+// ============================================================================
+
+export interface RequirementSection {
+  title: string;
+  content: string;
+  type: 'part' | 'deficiency' | 'header' | 'numbered' | 'paragraph';
+  subItems: string[];
+  hasCode: boolean;
+  hasDiagram: boolean;
+}
+
+// ============================================================================
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -506,6 +520,163 @@ export function buildLayer1Prompt(
 // LAYER 1: INITIAL PLAN (exported) — Generative prompt + project metadata
 // ============================================================================
 
+// ============================================================================
+// TEST-PLAN-FIRST (v2.0 mandate): mandatory container test plan generators
+// Called by BOTH generateLayer1InitialPlan and generateLayer2DetailedWorkflow.
+// Planning defines the tests; tests define "done"; the container validates both.
+// ============================================================================
+
+const ADVERSARIAL_ANGLE_LIBRARY: Array<{ id: string; name: string; question: string }> = [
+  { id: 'IDENTITY', name: 'Identity Injection', question: 'Does the agent know its identity in the runtime environment?' },
+  { id: 'TOOLS', name: 'Tool Availability', question: 'Are all required tools registered and callable?' },
+  { id: 'FIREWALL', name: 'Firewall Enforcement', question: 'Are restricted operations actually blocked?' },
+  { id: 'AUDIT', name: 'Audit Accuracy', question: 'Does the audit find real defects, not phantom ones?' },
+  { id: 'LIFECYCLE', name: 'Lifecycle', question: 'Does activation/deactivation work as designed?' },
+  { id: 'ERRORS', name: 'Error Propagation', question: 'What happens when a tool throws mid-operation?' },
+  { id: 'BOUNDARY', name: 'Boundary Conditions', question: 'Empty input, max-size input, malformed data?' },
+  { id: 'PERMISSIONS', name: 'Permission Bypass', question: 'Can a subagent escalate privileges?' },
+  { id: 'STATE', name: 'State Corruption', question: 'What happens if persisted state is invalid?' },
+  { id: 'CONFIG', name: 'Configuration Drift', question: 'What happens if env vars are missing?' },
+  { id: 'CONCURRENCY', name: 'Concurrency', question: 'Parallel operations — races, collisions?' },
+  { id: 'INTEGRATION', name: 'Integration Failure', question: 'Do modules work together as a system?' },
+];
+
+// Heuristic: map context keywords to relevant angles
+function selectAnglesForContext(context: string): string[] {
+  const l = (context || '').toLowerCase();
+  const selected: string[] = [];
+  const map: Array<{ key: string; angle: string }> = [
+    { key: 'hook', angle: 'FIREWALL' },
+    { key: 'firewall', angle: 'FIREWALL' },
+    { key: 'audit', angle: 'AUDIT' },
+    { key: 'identity', angle: 'IDENTITY' },
+    { key: 'tool', angle: 'TOOLS' },
+    { key: 'poseidon', angle: 'LIFECYCLE' },
+    { key: 'error', angle: 'ERRORS' },
+    { key: 'boundary', angle: 'BOUNDARY' },
+    { key: 'permission', angle: 'PERMISSIONS' },
+    { key: 'state', angle: 'STATE' },
+    { key: 'config', angle: 'CONFIG' },
+    { key: 'parallel', angle: 'CONCURRENCY' },
+    { key: 'integrat', angle: 'INTEGRATION' },
+  ];
+  for (const m of map) {
+    if (l.includes(m.key) && !selected.includes(m.angle)) selected.push(m.angle);
+  }
+  // Fill to minimum 5 with defaults
+  const defaults = ['IDENTITY', 'TOOLS', 'FIREWALL', 'AUDIT', 'LIFECYCLE'];
+  for (const d of defaults) {
+    if (selected.length >= 5) break;
+    if (!selected.includes(d)) selected.push(d);
+  }
+  return selected.slice(0, 5);
+}
+
+export function generateContainerTestPlanSection(
+  context: string,
+  angleSelection?: string[],
+): string {
+  const angleIds = (angleSelection && angleSelection.length >= 5
+    ? angleSelection
+    : selectAnglesForContext(context)).slice(0, 8);
+  const angles = ADVERSARIAL_ANGLE_LIBRARY.filter(a => angleIds.includes(a.id));
+
+  let out = '\n## CONTAINER TEST PLAN\n\n';
+  out += 'This plan is written BEFORE implementation. It defines what "done" means.\n';
+  out += 'Post-ship behavior in a real runtime environment, adversarially.\n\n';
+  out += '### Adversarial Angles\n';
+  angles.forEach((angle, i) => {
+    out += `${i + 1}. **${angle.name}** — ${angle.question}\n`;
+  });
+  out += '\n### Evidence Requirement\n';
+  out += 'Every scenario: stream output, artifact on disk, SHA256, or exit code.\n';
+  out += '"I tested it and it works" is NOT evidence.\n\n';
+  out += '### Pass Threshold\n';
+  out += 'ALL scenarios pass with mechanical evidence → runtime grade achieved.\n';
+  return out;
+}
+
+// ── Container-testing skill contract (plan-first, token-based) ──
+// The generated plan is a REAL plan: a build agent can extract the
+// ## CONTAINER TEST PLAN section verbatim into .trident/test-plan.md and feed it
+// to trident-container-test setup — it passes validateTestPlan (exact headers,
+// 2000+ chars, behavioral tokens, adversarial present). Pass tokens are
+// TOOL-RESULT-BOUND (JSON fields, error codes, gate values) per the
+// anti-circularity rule — never agent-typeable words.
+const CT_TOKEN_TEMPLATES: Record<string, { prompt: string; pass: string; fail: string; evidence: string }> = {
+  IDENTITY:    { prompt: 'deploy the build, then trident-container-test action=verify-agent and verify-model', pass: '"verified":true', fail: '"verified":false', evidence: 'verify-agent JSON' },
+  TOOLS:       { prompt: 'trident-container-test action=suite suite=quick', pass: 'SUITE_DISPATCHED', fail: 'unknown_action', evidence: 'suite JSON' },
+  FIREWALL:    { prompt: 'attempt an inline smoke op (node -e) via bash in the container', pass: 'SSTF BLOCK', fail: 'node -e output', evidence: 'stream excerpt with the block code' },
+  AUDIT:       { prompt: 'run the audit tool against the target and read the artifact', pass: 'CODE_REVIEW', fail: 'ARGUMENT VALIDATION FAILED', evidence: 'artifact file + lines' },
+  LIFECYCLE:   { prompt: 'trident-container-test action=switch-agent agent=build then back', pass: '"switched":true', fail: '"switched":false', evidence: 'switch JSON' },
+  ERRORS:      { prompt: 'call a container-test action with missing required params', pass: 'invalid_params', fail: 'ReferenceError', evidence: 'error JSON' },
+  BOUNDARY:    { prompt: 'call setup with an undersized testPlan (probe-only)', pass: 'TEST PLAN VALIDATION FAILED', fail: 'testPlanValidated', evidence: 'setup JSON' },
+  PERMISSIONS: { prompt: 'have the agent attempt a blocked tool (write in normal mode)', pass: 'BLOCKED', fail: 'file written', evidence: 'stream excerpt with the block' },
+  STATE:       { prompt: 'trident-container-test action=connect to a nonexistent container', pass: 'container_not_found', fail: '"connected":true', evidence: 'connect JSON' },
+  CONFIG:      { prompt: 'trident-container-test action=setup with a valid plan', pass: '"testPlanValidated":true', fail: 'TEST PLAN VALIDATION FAILED', evidence: 'setup JSON' },
+  CONCURRENCY: { prompt: 'trident-container-test action=check twice on the same pattern', pass: '"matchCount"', fail: '"scannedBytes":0', evidence: 'both check JSONs (cursor advance)' },
+  INTEGRATION: { prompt: 'trident-container-test action=alive', pass: '"overall":true', fail: '"overall":false', evidence: 'alive JSON' },
+};
+
+export function generateExactTestPlanSection(
+  components: Array<{ name: string; description: string }>,
+  defenses: string[],
+  context: string,
+): string {
+  const angles = selectAnglesForContext(context + ' ' + (defenses || []).join(' '))
+    .map(id => ADVERSARIAL_ANGLE_LIBRARY.find(a => a.id === id))
+    .filter((a): a is { id: string; name: string; question: string } => !!a);
+  const comps = (components && components.length > 0
+    ? components
+    : [{ name: 'system', description: context || 'the system under test' }]);
+  const usedAngles = angles.length >= 5 ? angles.slice(0, 8) : angles;
+
+  let out = '\n## CONTAINER TEST PLAN — EXACT (spec contract — plan-first)\n\n';
+  out += 'This plan is the DEFINITION OF DONE. Extract this section verbatim into .trident/test-plan.md ';
+  out += 'and feed it to trident-container-test action=setup — it passes validateTestPlan. ';
+  out += 'Pass tokens are TOOL-RESULT-BOUND (JSON fields / error codes / gate values) — an agent ';
+  out += 'cannot satisfy them by typing. Every component and its importers must map to a scenario.\n\n';
+  out += '## OBJECTIVE\n';
+  out += 'Runtime-grade verification of: ' + comps.map(c => c.name).join(', ') + '.\n';
+  out += 'Each component maps to scenarios below; blast radius (importers of changed files) covered by regression scenarios.\n\n';
+  out += '## TOOLS UNDER TEST\n';
+  comps.forEach(c => { out += '- ' + c.name + ' — ' + (c.description || '').substring(0, 120) + ' (scenarios below)\n'; });
+  out += '\n## TEST SCENARIOS\n';
+  let n = 0;
+  for (const comp of comps) {
+    for (const angle of usedAngles) {
+      n++;
+      const t = CT_TOKEN_TEMPLATES[angle.id] || CT_TOKEN_TEMPLATES.INTEGRATION;
+      out += '### Scenario ' + n + ': ' + comp.name + ' — ' + angle.name + '\n';
+      out += '- Feature under test: ' + comp.name + ' (' + angle.question + ')\n';
+      out += '- Prompt: ' + t.prompt + '\n';
+      out += '- Pass token: ' + t.pass + '\n';
+      out += '- Fail token: ' + t.fail + '\n';
+      out += '- Max wait: 60000\n';
+      out += '- Evidence capture: ' + t.evidence + '\n\n';
+    }
+  }
+  out += '## ADVERSARIAL\n';
+  out += '### Adversarial 1: ' + comps[0].name + ' — hostile input\n';
+  out += '- Feature under test: ' + comps[0].name + ' rejects malformed/undersized input\n';
+  out += '- Prompt: send malformed input targeting ' + comps[0].name + '\n';
+  out += '- Pass token: ARGUMENT VALIDATION FAILED\n';
+  out += '- Fail token: accepted-invalid-input\n';
+  out += '- Max wait: 60000\n';
+  out += '- Evidence capture: stream excerpt with the rejection token\n\n';
+  out += '## EVIDENCE\n';
+  out += 'Per scenario: action=check pattern="<pass token>" MUST match AND pattern="<fail token>" MUST NOT match; ';
+  out += 'the pass token must appear in a TOOL RESULT (tool-result-context) not agent free text (anti-circularity); ';
+  out += 'artifacts + sha256 as declared.\n\n';
+  out += '## PASS CRITERIA\n';
+  out += 'ALL ' + n + ' scenarios + adversarial pass with passToken present AND failToken absent (tool-result-context verified). ';
+  out += 'Any failToken appearance = suite FAILED.\n';
+  return out;
+}
+// ============================================================================
+// LAYER 1: INITIAL PLAN (exported)
+// ============================================================================
+
 export function generateLayer1InitialPlan(
   targetPath: string,
   projectName: string,
@@ -540,6 +711,9 @@ export function generateLayer1InitialPlan(
 
   // -- EMBED LAYER 1 (GENERATIVE PROMPT) --
   a += generateLayer1Prompt(requirements, architecture, discovery);
+
+  // -- TEST-PLAN-FIRST (v2.0 mandate): the plan defines what "done" means --
+  a += generateContainerTestPlanSection(requirements + ' ' + architecture);
 
   return a;
 }
@@ -621,6 +795,18 @@ export function generateLayer2DetailedWorkflow(
   spec += `${sectionNum++}. [Bible Compliance Matrix](#bible-compliance-matrix)\n`;
   spec += `${sectionNum++}. [Migration Strategy](#migration-strategy)\n`;
   spec += `\n---\n\n`;
+  // ── PLAN-FIRST (container-testing skill contract): the EXACT test plan is
+  // embedded directly after the TOC — the verification suite is part of the
+  // spec contract, not an appendix. A build agent extracts this section
+  // verbatim into .trident/test-plan.md and feeds it to trident-container-test
+  // setup (it passes validateTestPlan).
+  const componentsArg = [{ name: projectName, description: targetPath }];
+  const defensesArg: string[] = [];
+  if (defenseRules) defensesArg.push(...defenseRules);
+  spec += `## 0B. CONTAINER TEST PLAN — EXACT (spec contract — plan-first)\n\n`;
+  spec += generateExactTestPlanSection(componentsArg, defensesArg, requirements + ' ' + architecture);
+  spec += `\n---\n\n`;
+
 
   // SECTION 1: Executive Summary
   spec += `## 1. Executive Summary\n\n`;
@@ -863,6 +1049,7 @@ export function generateLayer2DetailedWorkflow(
     spec += `- Rollback: Revert to previous bundle\n\n`;
   }
 
+  // (test plan is embedded plan-first after the TOC — see ## 0B)
   spec += `\n---\n*Generated by Trident Deep Planning Engine*\n`;
 
   return spec;
@@ -905,7 +1092,7 @@ export function generateContextLibraryManifest(
   resetRepetitionTracker();
 
   // 1. RUN FULL ANALYSIS ON PROJECT
-  const analysis = analyzeProject(targetPath || '', '', discovery);
+  const analysis = analyzeProject(targetPath || '', '', discovery ?? null);
 
   // 2. IDENTIFY ENGINES
   const engines = identifyEngines(discovery);
@@ -998,7 +1185,7 @@ export function generateContextLibraryManifest(
 
   // 5. MASTER PLAN
   try {
-    const masterPlan = generateMasterPlan(projectName, engines, analysis, discovery);
+    const masterPlan = generateMasterPlan(projectName, engines, analysis, discovery ?? null);
     fs.writeFileSync(path.join(contextLibDir, 'MASTER_OVERHAUL_PLAN.md'), masterPlan, 'utf-8');
     tridentLog('INFO', 'deep-planning', `Master plan written (${(masterPlan || '').split('\n').length} lines)`);
   } catch (e) {
@@ -1007,7 +1194,7 @@ export function generateContextLibraryManifest(
 
   // 6. INDEX
   try {
-    const indexContent = generateLibraryIndex(projectName, engines, analysis, discovery);
+    const indexContent = generateLibraryIndex(projectName, engines, analysis, discovery ?? null);
     fs.writeFileSync(path.join(contextLibDir, 'INDEX.md'), indexContent, 'utf-8');
   } catch (e) {
     tridentLog('WARN', 'deep-planning', `Failed to write index: ${e instanceof Error ? e.message : String(e)}`);
@@ -1529,16 +1716,17 @@ function extractInterfaces(content: string, filePath: string): ExtractedInterfac
 
     // AST: Extract comment and field type analysis
     let commentNode: ts.Node | null = null;
-    function findNode(node: ts.Node): void {
-      if (commentNode) return;
+    function findNode(node: ts.Node): ts.Node | null {
+      if (commentNode) return commentNode;
       const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
       if (nodeLine === matchLine) {
         commentNode = node;
-        return;
+        return commentNode;
       }
       ts.forEachChild(node, findNode);
+      return null;
     }
-    findNode(sourceFile);
+    commentNode = findNode(sourceFile);
 
     const result: ExtractedInterface = { name, fields, file: filePath, line: matchLine };
 
@@ -1598,16 +1786,17 @@ function extractClasses(content: string, filePath: string): ExtractedClass[] {
 
     // AST: Extract comment and method body analysis
     let commentNode: ts.Node | null = null;
-    function findNode(node: ts.Node): void {
-      if (commentNode) return;
+    function findNode(node: ts.Node): ts.Node | null {
+      if (commentNode) return commentNode;
       const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
       if (nodeLine === matchLine) {
         commentNode = node;
-        return;
+        return commentNode;
       }
       ts.forEachChild(node, findNode);
+      return null;
     }
-    findNode(sourceFile);
+    commentNode = findNode(sourceFile);
 
     const result: ExtractedClass = { name, methods, fields, file: filePath, line: matchLine };
 
@@ -1645,16 +1834,17 @@ function extractFunctions(content: string, filePath: string): ExtractedFunction[
 
     // AST: Extract comment
     let commentNode: ts.Node | null = null;
-    function findNode(node: ts.Node): void {
-      if (commentNode) return;
+    function findNode(node: ts.Node): ts.Node | null {
+      if (commentNode) return commentNode;
       const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
       if (nodeLine === matchLine) {
         commentNode = node;
-        return;
+        return commentNode;
       }
       ts.forEachChild(node, findNode);
+      return null;
     }
-    findNode(sourceFile);
+    commentNode = findNode(sourceFile);
 
     const result: ExtractedFunction = {
       name: match[2], params: match[3].trim(),
@@ -1766,16 +1956,17 @@ function extractConstObjects(content: string, filePath: string): ExtractedConstO
     if (bodyEnd - bodyStart > 5 || hasCheckMethod) {
       // AST: Extract comment
       let commentNode: ts.Node | null = null;
-      function findNode(node: ts.Node): void {
-        if (commentNode) return;
+      function findNode(node: ts.Node): ts.Node | null {
+        if (commentNode) return commentNode;
         const nodeLine = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
         if (nodeLine === matchLine) {
           commentNode = node;
-          return;
+          return commentNode;
         }
         ts.forEachChild(node, findNode);
+        return null;
       }
-      findNode(sourceFile);
+      commentNode = findNode(sourceFile);
 
       const result: ExtractedConstObject = {
         name, typeAnnotation, file: filePath, line: matchLine, endLine: bodyEnd + 1,
@@ -2028,6 +2219,16 @@ export function generateContextBrief(
     b += `7. **evidenceFormat** — JSON schemas for each engine's output. Show example output objects.\n`;
     b += `8. **testSpecs** — Test table with SPECIFIC inputs and expected outputs per rule. Include false-positive guard tests.\n\n`;
     b += `## SECTION B: SYNTHESIS-BASED SECTIONS (these do NOT exist in source — you must DESIGN them)\n\n`;
+  b += `GENERATION CONTRACTS (MANDATORY — CME-grade depth, per the container-testing skill):\n\n`;
+  b += `C1. EVERY component/engine/action listed in any table MUST ALSO have its own ### <Name> — <method> pseudocode subsection (50-100 lines per major method). A table row is NOT a method spec.\n`;
+  b += `C2. Every hook/middleware rewrite MUST include the FULL line-by-line function code — not a before/after comparison table.\n`;
+  b += `C3. Every change to an existing file MUST include an INSERTION-POINT mapping: file, function, before/after/inside which block, with surrounding context lines.\n`;
+  b += `C4. Every changed state/init function MUST include the exact initialization diff (createSession/constructor changes).\n`;
+  b += `C5. EVERY component MUST include an ASCII data-flow diagram.\n`;
+  b += `C6. A component×component PEER INTERACTION TABLE is REQUIRED.\n`;
+  b += `C7. Test specs MUST include test-code pseudocode with concrete expect() calls.\n`;
+  b += `C8. The spec MUST include a 'what this overhaul does NOT fix' blind-spot subsection.\n`;
+  b += `C9. The ## 0B CONTAINER TEST PLAN section is ALREADY in this document after the TOC — do NOT duplicate it; build against it.\n\n`;
     b += `**These components are NEW. They do not exist in any source file. You must invent them by understanding the integration requirements.**\n\n`;
     b += `9. **integrationPlan** — Write the ACTUAL integration code. This means:\n`;
     b += `   - The GuardianHook composition (show the full beforeHook function with all enforcement layers composed in order)\n`;

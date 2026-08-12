@@ -10,8 +10,9 @@ type ContextSynthesisEvent =
 
 export const contextSynthesisMachine = createMachine({
   id: 'contextSynthesis',
+  types: { context: {} as { rawContext: string; compressed: string; tokenBudget: number; currentTokens: number; error: string | null; sections: string[] } },
   initial: 'idle',
-  context: { rawContext: '', compressed: '', tokenBudget: 4000, currentTokens: 0, error: null },
+  context: { rawContext: '', compressed: '', tokenBudget: 4000, currentTokens: 0, error: null, sections: [] },
   states: {
     idle: { on: { COLLECT: { target: 't1_collection', actions: 'setRawContext' } } },
     t1_collection: { on: { SCORE: { target: 't2_scoring' } } },
@@ -30,13 +31,10 @@ export const contextSynthesisMachine = createMachine({
   actions: {
     setRawContext: assign({ rawContext: ({ event }) => event.context }),
     setCompressed: assign({ compressed: ({ event }) => event.compressed }),
-    // @ts-expect-error - XState v5 type inference limitation
     setSections: assign({ sections: ({ event }) => event.sections }),
-    // @ts-expect-error - XState v5 type inference limitation
     overBudget: assign({ error: ({ context }) => `Token budget exceeded: ${context.currentTokens}/${context.tokenBudget}` }),
   },
-  // @ts-expect-error - XState v5 type inference limitation
   guards: {
-    budgetReady: ({ context }: { context: { currentTokens: number; tokenBudget: number } }) => context.currentTokens <= context.tokenBudget,
+    budgetReady: ({ context }) => context.currentTokens <= context.tokenBudget,
   },
 });

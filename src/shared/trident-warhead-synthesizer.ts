@@ -509,6 +509,49 @@ function safeGetT0(w: Warhead): string | null {
   }
 }
 
+// ── WARHEAD SKILL SYNTHESIS (BEAST_MODE_OVERHAUL_SPEC Part 26 — cache-safe delivery) ──
+// The operative warheads are ALSO delivered as a skills file (trident-warheads/SKILL.md).
+// Skill content loads as a TOOL RESULT (message history) — ZERO system-prompt cache
+// impact. Regenerating at session boundaries = consume-on-read freshness, no stale
+// warheads. Non-fatal: a failure must never break the session.
+
+export async function synthesizeWarheads(
+  identityDir: string,
+  outPath: string,
+): Promise<{ ok: boolean; warheads: number; path: string }> {
+  try {
+    let warheadsSource = path.join(identityDir, 'WARHEADS.md');
+    if (!fs.existsSync(warheadsSource)) {
+      // identityDir may be the identity ROOT (src/identity) — try trident/WARHEADS.md
+      const alt = path.join(identityDir, 'trident', 'WARHEADS.md');
+      if (fs.existsSync(alt)) warheadsSource = alt;
+      else {
+        tridentLog('WARN', 'warhead-synthesizer', `WARHEADS.md not found at ${identityDir}`);
+        return { ok: false, warheads: 0, path: outPath };
+      }
+    }
+
+    const body = fs.readFileSync(warheadsSource, 'utf-8');
+    const frontmatter = '---\n'
+      + 'name: trident-warheads\n'
+      + "description: 'The operative warhead payload — load when you detect scope-shrink, approval-gating, theatrical claims, or gate entries in your own reasoning or the task at hand.'\n"
+      + '---\n\n';
+    const skill = frontmatter + body + '\n';
+
+    fs.mkdirSync(path.dirname(outPath), { recursive: true });
+    fs.writeFileSync(outPath, skill, 'utf-8');
+
+    const warheadCount = (body.match(/WARHEAD\s+\d+/gi) || []).length;
+    tridentLog('INFO', 'warhead-synthesizer',
+      `SKILL.md synthesized: ${outPath} (${warheadCount} warheads)`);
+    return { ok: true, warheads: warheadCount, path: outPath };
+  } catch (e: unknown) {
+    tridentLog('WARN', 'warhead-synthesizer',
+      `SKILL synthesis failed: ${e instanceof Error ? e.message : String(e)}`);
+    return { ok: false, warheads: 0, path: outPath };
+  }
+}
+
 // ── Public API ──
 
 

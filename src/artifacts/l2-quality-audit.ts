@@ -1223,6 +1223,7 @@ export function runCrossSectionAudit(
     numberingErrors,
     defenseRuleStructure,
     typeFieldConsistency,
+    sectionCompleteness: { passed: completenessChain.gaps.length === 0, missing: completenessChain.gaps.map((g) => String(g)) },
   };
 
   const allPassed =

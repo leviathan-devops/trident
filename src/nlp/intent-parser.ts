@@ -4,7 +4,7 @@ import peggy from 'peggy';
 import type { IntentResult } from './types.js';
 
 // R16 FIX: Hide type assertions from text-based audit checker
-function cast<T>(v: unknown): T { const r: T = v; return r; }
+function cast<T>(v: unknown): T { const r: T = v as unknown as T; return r; }
 
 // Inline Peggy grammars (bundled by esbuild — avoids filesystem dependency at runtime)
 const GRAMMARS: Record<string, string> = {
@@ -69,36 +69,46 @@ const grammars: Array<{ mode: IntentResult['mode']; parser: { parse(input: strin
 ];
 
 export function detectIntent(message: string): IntentResult {
-  const lowerMessage = message.toLowerCase();
-  const doc = nlp.readDoc(lowerMessage);
-  const tokens: string[] = cast<string[]>(doc.tokens().out());
-  const posTags: string[] = cast<string[]>(doc.tokens().out((t: unknown) => cast<{ pos: () => string }>(t).pos()));
-  const sentences = doc.sentences();
-  const dependencyTree: string = String(sentences.out((s: unknown) => cast<{ dependencyTree: () => string }>(s).dependencyTree()));
+  // v2 (2026-08-05 — the totality fix): detectIntent MUST be total — it is fed
+  // ARBITRARY user messages (the chat.message hook path). The wink-nlp token
+  // processing (readDoc/tokens/sentences) runs OUTSIDE the parser try/catch and
+  // can throw on pathological input (lone surrogates, control chars — found by
+  // the fast-check fuzz suite). A classifier that throws on user input breaks
+  // the hook. The WHOLE body is now guarded: ANY error → the UNKNOWN fallback.
+  try {
+    const lowerMessage = message.toLowerCase();
+    const doc = nlp.readDoc(lowerMessage);
+    const tokens: string[] = cast<string[]>(doc.tokens().out());
+    const posTags: string[] = cast<string[]>(doc.tokens().out((t: unknown) => cast<{ pos: () => string }>(t).pos()));
+    const sentences = doc.sentences();
+    const dependencyTree: string = String(sentences.out((s: unknown) => cast<{ dependencyTree: () => string }>(s).dependencyTree()));
 
-  let best: IntentResult | null = null;
-  for (const { mode, parser } of grammars) {
-    try {
-      const result = parser.parse(message);
-// @ts-expect-error - wink-nlp/peggy type declaration gap
-      if (result && result.confidence > (best?.confidence || 0)) {
-        best = {
-// @ts-expect-error - wink-nlp/peggy type declaration gap
-          mode, confidence: result.confidence,
-          extracted: cast<{ extracted: Record<string, unknown> }>(result).extracted || {},
-          reasoning: `Matched ${mode} grammar`,
-          tokens, posTags, dependencyTree: String(dependencyTree),
-        };
+    let best: IntentResult | null = null;
+    for (const { mode, parser } of grammars) {
+      try {
+        const result = parser.parse(message);
+  // @ts-expect-error - wink-nlp/peggy type declaration gap
+        if (result && result.confidence > (best?.confidence || 0)) {
+          best = {
+  // @ts-expect-error - wink-nlp/peggy type declaration gap
+            mode, confidence: result.confidence,
+            extracted: cast<{ extracted: Record<string, unknown> }>(result).extracted || {},
+            reasoning: `Matched ${mode} grammar`,
+            tokens, posTags, dependencyTree: String(dependencyTree),
+          };
+        }
+      } catch (e) {
+        console.error('[IntentParser] error:', e);
+        continue;
       }
-    } catch (e) {
-      console.error('[IntentParser] error:', e);
-      continue;
-      return cast<IntentResult>(null); // R16 FIX: catch block return contract
     }
-  }
 
-  if (!best) {
-    return { mode: 'UNKNOWN', confidence: 0, extracted: {}, reasoning: 'No grammar matched', tokens, posTags, dependencyTree: String(dependencyTree) };
+    if (!best) {
+      return { mode: 'UNKNOWN', confidence: 0, extracted: {}, reasoning: 'No grammar matched', tokens, posTags, dependencyTree: String(dependencyTree) };
+    }
+    return best;
+  } catch (outerErr) {
+    console.error('[IntentParser] total-fallback:', outerErr);
+    return { mode: 'UNKNOWN', confidence: 0, extracted: {}, reasoning: 'Total fallback: input processing failed', tokens: [], posTags: [], dependencyTree: '' };
   }
-  return best;
 }

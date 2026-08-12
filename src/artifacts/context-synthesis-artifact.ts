@@ -5,6 +5,8 @@ import type { DiscoveryResult, DiscoveredPattern, DiscoveredFailure } from '../s
 import type { AnalysisResult } from './analysis-engine.ts';
 import { identifyEngines } from './deep-planning-artifact.ts';
 import type { EngineInfo } from './deep-planning-artifact.ts';
+import { getClient } from './llm-generator.ts';
+import { tridentLog } from '../utils.js';
 
 interface ProviderConfig {
   npm?: string;
@@ -1600,4 +1602,419 @@ export async function generateT2Artifact(
   const preview = content.substring(0, 500);
 
   return { content, path: artifactPath, preview, lineCount, sizeKB, sections };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// T2 BIBLE GENERATION PIPELINE
+// Self-contained. Does NOT use L2's buildDesignBrief, FRONT_SECTIONS,
+// BACK_SECTIONS, or SYSTEM prompt. Has its own system prompt, section
+// constants, brief builder, and split generation.
+// Uses getClient() from llm-generator.ts to access the opencode client.
+// ═══════════════════════════════════════════════════════════════════
+
+const T2_BIBLE_SYSTEM =
+  'You are an elite knowledge engineer writing a compaction-proof context bible. ' +
+  'PROSE IS KING — 80%+ narrative documentation, decision records, architectural explanations. ' +
+  'Code blocks are REFERENCE ONLY — include when they clarify a decision or gotcha, not as implementations. ' +
+  'You NEVER abbreviate. NEVER summarize. NEVER use template phrases. NEVER fabricate. ' +
+  'Output ONLY markdown. Do NOT call tools. Do NOT write files.\n\n' +
+  '## 11-SECTION BIBLE TEMPLATE — FOLLOW EXACTLY\n' +
+  '1. Status Banner — version, authority (BINDING), scope, effective date, "Supersedes all prior documentation"\n' +
+  '2. Table of Contents — full, numbered, every section listed\n' +
+  '3. The Red Pill — myth-bust: "What you think this system is (WRONG)" vs "What it actually is (CORRECT)". Contrast table.\n' +
+  '4. Architecture Map — ONE ASCII diagram + component-role table. Every component: name, role, inputs, outputs, runtime.\n' +
+  '5. Design Principles and Key Decisions — every decision: Decision → Chosen → Rejected Alternative → Why rejected → Cost of reversal.\n' +
+  '6. Technical Deep-Dives — numbered per-component exhaustive sections. Each self-contained. WHAT, HOW, WHERE, WHY.\n' +
+  '7. Registries — dense tables: all decisions (D001-DNNN), all constants with values, complete file manifest with line counts.\n' +
+  '8. Failure Modes — every bug. Per bug: Symptom → Root Cause → Fix → Prevention. "What Is Broken vs Working RIGHT NOW".\n' +
+  '9. Appendices — exhaustive reference: templates, message types, decision matrices.\n' +
+  '10. Iron Laws — numbered, terse, inviolable rules earned by regression. Each states consequence of violation.\n' +
+  '11. Conclusion and Compaction Recovery Guide — "Read this first after context loss." Recovery checklist. Key facts restated.\n\n' +
+  '## ANTI-SLOP RULES — ZERO TOLERANCE\n' +
+  '1. NEVER fabricate history, decisions, or bugs. Missing context → "CONTEXT NEEDED: [what is missing]".\n' +
+  '2. NEVER write "see above" or "as mentioned earlier". Every section is self-contained.\n' +
+  '3. NEVER put critical knowledge ONLY in code blocks. Prose carries knowledge; code is supplementary.\n' +
+  '4. EVERY decision includes the rejected alternative and WHY it was rejected.\n' +
+  '5. EVERY failure mode includes root cause, not just symptom.\n' +
+  '6. Include fractal cross-references: name related documentation by exact filenames.\n' +
+  '7. Target 3000-5000 lines. Dense. No padding. Every line carries information.';
+
+const T2_FRONT_SECTIONS = `## 1. Status Banner
+## 2. Table of Contents
+## 3. The Red Pill — What You Think This System Is (WRONG) vs What It Actually Is (CORRECT)
+## 4. Architecture Map
+## 5. Design Principles and Key Decisions
+## 6. Technical Deep-Dives (Part 1)`;
+
+const T2_BACK_SECTIONS = `## 6. Technical Deep-Dives (Part 2 — continued)
+## 7. Registries — Decisions, Constants, File Manifests
+## 8. Failure Modes — Every Bug, Every Gotcha, What Is Broken vs Working
+## 9. Appendices
+## 10. Iron Laws
+## 11. Conclusion and Compaction Recovery Guide`;
+
+const T2_TOOLS_DISABLED: Record<string, boolean> = {
+  'trident-deep-planning': false, 'trident-code-audit': false,
+  'trident-poseidon': false, 'trident-problem-solving': false,
+  'trident-context-synthesis': false, 'trident-build-status': false,
+  'read': false, 'write': false, 'edit': false, 'bash': false,
+  'task': false, 'glob': false, 'grep': false, 'webfetch': false,
+  'question': false, 'ls': false, 'todowrite': false,
+};
+
+/**
+ * Build the T2 Bible brief. Structures the prompt for knowledge bible generation.
+ */
+export function buildBibleBrief(
+  args: Record<string, any>,
+  sourceExtracts: Map<string, string>,
+  projectName: string,
+): string {
+  const L: string[] = [];
+
+  L.push(`# KNOWLEDGE BIBLE: ${projectName}`);
+  L.push('');
+  L.push('## STATUS BANNER');
+  L.push(`**Version:** 1.0 | **Authority:** BINDING — Supersedes all prior documentation for ${projectName}`);
+  L.push(`**Scope:** Complete system knowledge. Read this after context loss.`);
+  L.push(`**Generated:** ${new Date().toISOString()}`);
+  L.push('');
+
+  // ═══ CRITICAL FIX: Inject context — PRIMARY SOURCE OF TRUTH ═══
+  if (args.context && typeof args.context === 'string' && args.context.length > 10) {
+    L.push('## AGENT CONTEXT — PRIMARY SOURCE OF TRUTH');
+    L.push('');
+    L.push('The following is first-hand knowledge from the agent that called this tool.');
+    L.push('EVERY name, file, component, decision, and bug mentioned below is REAL and ACTUAL.');
+    L.push('You MUST use ONLY these names and structures in your output.');
+    L.push('NEVER invent alternatives. NEVER fabricate. This IS the bible content.');
+    L.push('');
+    L.push(args.context);
+    L.push('');
+  }
+
+  // ═══ Structured context args — flat string injection ═══
+  if (args.components && typeof args.components === 'string' && args.components.length > 10) {
+    L.push('## COMPONENTS IN THIS SYSTEM');
+    L.push(args.components);
+    L.push('');
+  }
+  if (args.constraints && typeof args.constraints === 'string' && args.constraints.length > 10) {
+    L.push('## HARD CONSTRAINTS');
+    L.push(args.constraints);
+    L.push('');
+  }
+  if (args.designDecisions && typeof args.designDecisions === 'string' && args.designDecisions.length > 10) {
+    L.push('## DESIGN DECISIONS');
+    L.push(args.designDecisions);
+    L.push('');
+  }
+  if (args.knownGaps && typeof args.knownGaps === 'string' && args.knownGaps.length > 10) {
+    L.push('## KNOWN GAPS AND BUGS');
+    L.push(args.knownGaps);
+    L.push('');
+  }
+  if (args.sourceLineage && typeof args.sourceLineage === 'string' && args.sourceLineage.length > 10) {
+    L.push('## SOURCE LINEAGE');
+    L.push(args.sourceLineage);
+    L.push('');
+  }
+  if (args.fileInventory && typeof args.fileInventory === 'string' && args.fileInventory.length > 10) {
+    L.push('## FILE INVENTORY');
+    L.push(args.fileInventory);
+    L.push('');
+  }
+  if (args.mergePlan && typeof args.mergePlan === 'string' && args.mergePlan.length > 10) {
+    L.push('## MERGE PLAN');
+    L.push(args.mergePlan);
+    L.push('');
+  }
+
+  if (args.keyFacts && args.keyFacts.length > 0) {
+    L.push('## PRIMARY CONTEXT — Key Facts');
+    L.push('');
+    for (const fact of args.keyFacts) {
+      const text = typeof fact === 'string' ? fact : (fact as any).fact || (fact as any).text || String(fact);
+      L.push(`- ${text}`);
+    }
+    L.push('');
+  }
+
+  if (args.patterns && args.patterns.length > 0) {
+    L.push('## BEHAVIORAL PATTERNS');
+    L.push('');
+    for (const p of args.patterns) { L.push(`- ${p}`); }
+    L.push('');
+  }
+
+  if (args.requirements && args.requirements.length > 20) {
+    L.push('## REQUIREMENTS / DIRECTIVE');
+    L.push('');
+    L.push(args.requirements);
+    L.push('');
+  }
+
+  if (sourceExtracts.size > 0) {
+    L.push('## REFERENCE MATERIAL — Source Files');
+    L.push('');
+    for (const [filePath, content] of sourceExtracts) {
+      L.push(`### ${filePath.split('/').pop()}`);
+      L.push('```');
+      L.push(content.length > 3000 ? content.substring(0, 3000) + '\n... (truncated)' : content);
+      L.push('```');
+      L.push('');
+    }
+  }
+
+  L.push('## GENERATION INSTRUCTIONS');
+  L.push('');
+  L.push(`Write a COMPACTION-PROOF CONTEXT BIBLE for ${projectName} following the 11-section template exactly.`);
+  L.push('80%+ prose. <10% code blocks. Every claim needs file:line or artifact evidence.');
+  L.push('Include decision records with rationale + rejected alternatives.');
+  L.push('Include failure mode catalog with root causes and fixes.');
+  L.push('Include Iron Laws earned by regression.');
+  L.push('Include compaction recovery checklist in section 11.');
+  L.push('Target 3000-5000 lines. Every section self-contained. No forward references.');
+  L.push('');
+
+  // Grounding contract
+  L.push('## GROUNDING CONTRACT');
+  L.push('');
+  L.push('Every file path, name, version, SHA, and technical detail in your output');
+  L.push('MUST come from the provided agent context above.');
+  L.push('If a value is not in the provided context: write CONTEXT NEEDED: [what is missing].');
+  L.push('NEVER fabricate values from training data. They are wrong for this project.');
+  L.push('');
+  L.push('DENSITY COMES FROM EXPANSION: every provided fact spawns a full analytical');
+  L.push('section — purpose, mechanism, data flow, failure modes, rationale,');
+  L.push('cross-references to other provided facts. Synthesize; never copy-paste input.');
+  L.push('');
+  L.push('FORBIDDEN INVENTIONS:');
+  L.push('1. Interface/type definitions not verbatim in context.');
+  L.push('2. Error message formats not in context.');
+  L.push('3. Directory paths not in context.');
+  L.push('4. Test evidence not described in context — if context does not describe');
+  L.push('   a test, it DID NOT HAPPEN.');
+  L.push('5. Versions, SHAs, line counts not in context.');
+  L.push('');
+  L.push('Every decision must have rationale. Every bug must have root cause.');
+  L.push('Target 3000+ lines. DENSITY is the ONLY metric.');
+
+  return L.join('\n');
+}
+
+// ═══ GROUNDING AUDIT — mechanical post-generation fabrication detection ═══
+// Runs AFTER LLM generation, BEFORE write to disk. Compares bible claims
+// against the provided input context. Fabrications are rewritten in place:
+// invented interface blocks → CONTEXT NEEDED markers; invented evidence
+// claims → [FABRICATED] flagged lines. Count is returned for the tool result.
+
+export interface GroundingAuditResult {
+  output: string;
+  fabricationsFound: number;
+  details: string[];
+}
+
+export function auditBibleGrounding(
+  bible: string,
+  sourceContext: string,
+): GroundingAuditResult {
+  const source = sourceContext.toLowerCase();
+  const details: string[] = [];
+  let out = bible;
+
+  // ── CHECK 1: Interface/type blocks with invented fields ──
+  // An interface block is fabricated if <50% of its field names appear in
+  // the source context. The FieldRule{field,min,hint} fabrication pattern.
+  out = out.replace(
+    /```(?:typescript|ts)?\n([\s\S]*?)(?:export\s+)?interface\s+(\w+)\s*\{([^}]*)\}([\s\S]*?)```/g,
+    (match, pre, name, body, post) => {
+      const fieldMatches = body.match(/^\s*(?:readonly\s+)?(\w+)\s*[?]?\s*:/gm) || [];
+      const fields = fieldMatches
+        .map((f: string) => f.replace(/(?:readonly|\s|:|\?).*$/g, '').trim())
+        .filter((f: string) => f.length > 1);
+      if (fields.length === 0) return match;
+      const found = fields.filter((f: string) => source.includes(f.toLowerCase()));
+      if (found.length / fields.length < 0.5) {
+        details.push(
+          `interface ${name}: ${fields.length - found.length}/${fields.length} fields invented`,
+        );
+        return `\`${name}\` — definition not provided in context. CONTEXT NEEDED: exact definition of ${name}.`;
+      }
+      return match;
+    },
+  );
+
+  // ── CHECK 2: Test-evidence claims not described in context ──
+  // Patterns: "sent N-char", "→ REJECTED/ACCEPTED/PASS/FAIL", 'Message: "..."',
+  // "Result: PASS/FAIL". Distinctive tokens (quoted strings, N-char phrases)
+  // must appear in source context. If they don't, the claim is fabricated.
+  const lines = out.split('\n');
+  const audited = lines.map((line) => {
+    const hasOutcome =
+      /(sent\s+\d+[- ]char|→\s*(REJECTED|ACCEPTED|PASS|FAIL)|Result:\s*(PASS|FAIL)|Message:\s*["'])/i.test(line);
+    if (!hasOutcome) return line;
+
+    // Quoted strings must appear verbatim in source
+    const quotes = line.match(/["']([^"']{4,80})["']/g) || [];
+    const quotesOk = quotes.every((q) =>
+      source.includes(q.slice(1, -1).toLowerCase()),
+    );
+    // N-char / Nc claims: the full phrase must appear in source
+    const charClaims = line.match(/\d+[- ]char(?:acter)?s?|\d+c\s/gi) || [];
+    const charsOk = charClaims.every((c) =>
+      source.includes(c.trim().toLowerCase().replace(/\s+/g, '')) ||
+      source.includes(c.trim().toLowerCase()),
+    );
+    if (!quotesOk || !charsOk) {
+      details.push(`evidence claim fabricated: ${line.trim().substring(0, 70)}`);
+      const indent = line.match(/^\s*/)?.[0] || '';
+      return `${indent}[FABRICATED — not in provided context] ~~${line.trim()}~~`;
+    }
+    return line;
+  });
+  out = audited.join('\n');
+
+  // ── CHECK 3: Invented classification terms (paraphrase-level fabrication) ──
+  // The CONTINUATION-intent failure mode: the model invents category names in
+  // classification contexts (e.g., "CONTINUATION intent" when the classifier
+  // only has GOD_LOOP/PERMISSIONS/NONE). Detect CAPS_TERM + classification-word
+  // pairs where the CAPS term does not appear in source context.
+  const classPattern = /\b([A-Z][A-Z_]{2,})\s+(intent|type|mode|category|phase|gate|layer|rule|state|signal|frame)\b/g;
+  let classMatch: RegExpExecArray | null;
+  const seenTerms = new Set<string>();
+  while ((classMatch = classPattern.exec(bible)) !== null) {
+    const term = classMatch[1];
+    if (seenTerms.has(term)) continue;
+    seenTerms.add(term);
+    // Skip common structural words and markdown keywords
+    if (['NOTE', 'WARNING', 'ERROR', 'INFO', 'TODO', 'FIXME', 'IMPORTANT'].includes(term)) continue;
+    if (!source.includes(term.toLowerCase())) {
+      details.push(`invented classification: "${term} ${classMatch[2]}" — term not in context`);
+      // Flag the line containing the first occurrence
+      const lines2 = out.split('\n');
+      const audited2 = lines2.map((line) => {
+        if (line.includes(`${term} ${classMatch![2]}`) && !line.includes('[FABRICATED') && !line.includes('[POTENTIAL FABRICATION')) {
+          const indent = line.match(/^\s*/)?.[0] || '';
+          return `${indent}[POTENTIAL FABRICATION — "${term}" not in provided context] ~~${line.trim()}~~`;
+        }
+        return line;
+      });
+      out = audited2.join('\n');
+    }
+  }
+
+  return { output: out, fabricationsFound: details.length, details };
+}
+
+/** Extract all interface/type names from text (cloned from llm-generator.ts) */
+function extractBibleTypeNames(text: string): string[] {
+  const names = new Set<string>();
+  const pattern = /(?:interface|type)\s+(\w+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = pattern.exec(text)) !== null) {
+    names.add(m[1]);
+  }
+  return [...names];
+}
+
+/** Extract all section headings from text (cloned from llm-generator.ts) */
+function extractBibleSectionHeadings(text: string): string[] {
+  const headings: string[] = [];
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (/^##\s+\d+\./.test(line.trim())) {
+      headings.push(line.trim());
+    }
+  }
+  return headings;
+}
+
+/**
+ * Generate a T2 Knowledge Bible via LLM.
+ * CLONED from generateSpecViaLLM in llm-generator.ts.
+ * Modified: T2 sections, T2 system prompt, T2 tools, bible-style prompts.
+ * Same session management, same split logic, same text extraction.
+ */
+export async function generateBibleViaLLM(brief: string, systemOverride?: string): Promise<string> {
+  const clientGetter = getClient();
+  if (!clientGetter) throw new Error('T2 Bible: Client getter not set');
+  const client = clientGetter();
+  if (!client) throw new Error('T2 Bible: Opencode client not available');
+
+  async function callBibleLLM(prompt: string): Promise<string> {
+    const sessionResult = await client.session.create({ body: { title: 'T2 Bible Gen' } });
+    const sid = sessionResult?.data?.id;
+    if (!sid) throw new Error('T2 Bible: Failed to create LLM session');
+    try {
+      tridentLog('INFO', 'cs-t2-bible', `LLM call: ${prompt.split('\n').length} lines prompt`);
+      const response = await client.session.prompt({
+        body: {
+          parts: [{ type: 'text', text: prompt }],
+          system: systemOverride || T2_BIBLE_SYSTEM,
+          tools: T2_TOOLS_DISABLED,
+          max_tokens: 384000,
+        },
+        path: { id: sid },
+      });
+      const parts = response?.data?.parts || response?.parts || [];
+      const text = (Array.isArray(parts) ? parts : [])
+        .filter((p: any) => p?.type === 'text' && p?.text?.length > 10)
+        .map((p: any) => p.text).join('\n');
+      tridentLog('INFO', 'cs-t2-bible', `Response: ${text.split('\n').length} lines, ${text.length} chars`);
+      if (!text || text.trim().length < 200) {
+        throw new Error(`T2 Bible LLM returned ${text?.length || 0} chars — insufficient`);
+      }
+      return text;
+    } finally {
+      try { await client.session.delete({ path: { id: sid } }); } catch (e) { tridentLog('WARN', 'cs-t2-bible', 'Session cleanup failed (non-fatal): ' + (e instanceof Error ? e.message : String(e))); }
+    }
+  }
+
+  // CALL 1 + CONTINUATION LOOP: a single LLM call naturally yields 500-700
+  // lines. A BIBLE needs 3000+. Loop continuations (fresh session each, tail
+  // excerpt for coherence) until target or convergence.
+  tridentLog('INFO', 'cs-t2-bible', '=== CALL 1: Initial bible ===');
+  let content = await callBibleLLM(brief);
+  let lines = content.split('\n').length;
+  tridentLog('INFO', 'cs-t2-bible', `Call 1: ${lines} lines`);
+
+  const TARGET_LINES = 3000;
+  const MAX_CONTINUATIONS = 6;
+  for (let i = 0; i < MAX_CONTINUATIONS && lines < TARGET_LINES; i++) {
+    const tail = content.split('\n').slice(-60).join('\n');
+    const continuationPrompt =
+      'You are writing a T2 knowledge bible. Below are the LAST 60 LINES of what you have written so far.\n\n' +
+      '=== LAST 60 LINES ===\n' + tail + '\n=== END ===\n\n' +
+      'CONTINUE the bible from exactly where you stopped. Rules:\n' +
+      '- Do NOT repeat any content already written. Do NOT write a new introduction or title.\n' +
+      '- Continue the current section numbering and analytical style.\n' +
+      '- Expand each remaining component with the same depth pattern: purpose, mechanism, data flow, failure modes, rationale, cross-references.\n' +
+      '- Same grounding rules: no invented interfaces, error formats, paths, versions, or test outcomes. Unknown → CONTEXT NEEDED.\n' +
+      '- Write AT LEAST 600 more lines.';
+    const before = lines;
+    const more = await callBibleLLM(continuationPrompt);
+    // RESTART DEDUP: if the continuation restarted the document (new title +
+    // executive summary) and is substantial, replace instead of concatenating
+    // a dead partial draft before the clean full version.
+    const nextHead = more.slice(0, 3000);
+    const isRestart = /^#{1,2}\s+/m.test(nextHead) &&
+      /executive summary|system overview|knowledge bible|compaction-proof/i.test(nextHead);
+    const accLines = content.split('\n').length;
+    const moreLines = more.split('\n').length;
+    if (isRestart && moreLines >= accLines * 0.8) {
+      tridentLog('INFO', 'cs-t2-bible', `Continuation ${i + 1}: RESTART detected (${moreLines} lines) — replacing ${accLines}-line partial draft`);
+      content = more;
+    } else {
+      content += '\n\n' + more;
+    }
+    lines = content.split('\n').length;
+    tridentLog('INFO', 'cs-t2-bible', `Continuation ${i + 1}: +${lines - before} lines (total ${lines})`);
+    if (lines - before < 120) {
+      tridentLog('INFO', 'cs-t2-bible', 'Continuation converged (<120 new lines) — stopping');
+      break;
+    }
+  }
+  tridentLog('INFO', 'cs-t2-bible', `=== COMPLETE: ${lines} lines ===`);
+  return content;
 }

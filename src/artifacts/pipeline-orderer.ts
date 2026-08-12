@@ -46,6 +46,10 @@ export interface PipelinePhase {
 export interface OrderedPipeline {
   phases: PipelinePhase[];
   dependencies: PipelineDependency[];
+  /** THE 2026-08-10 FIX: the analysis-engine's orderPipeline fallback assigns
+   *  totalRules: 0 (analysis-engine.ts:175) — the field was missing from the
+   *  interface (TS2353). The orderer's real outputs carry it. */
+  totalRules: number;
 }
 
 // --- Internal helpers ---
@@ -190,5 +194,5 @@ export function orderPipeline(defenses: DefenseSpec[]): OrderedPipeline {
     };
   });
 
-  return { phases, dependencies: crossDeps };
+  return { phases, dependencies: crossDeps, totalRules: phases.reduce((n: number, ph) => n + ph.defenses.length, 0) };
 }
