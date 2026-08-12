@@ -19,6 +19,63 @@ The verification: `tsc --noEmit` = 0 errors · the bundle = 436 modules, 16.13 M
 
 ---
 
+## THE RUNTIME ARCHITECTURE — HOW IT ACTUALLY FUNCTIONS
+
+```
+                  TRIDENT v4.4.2 — THE FULL RUNTIME ARCHITECTURE
+                  (the wave-manager-async flow — how it ACTUALLY runs)
+                  D = deterministic engine  ·  M = model judgment
+
+   ┌──────────────────────────┐
+   │ THE ORCHESTRATOR         │ M   the primary agent — the CEO's engineering org
+   │ (the deep-flow agent)    │     the identity + the warheads + the absorbed context
+   └────────────┬─────────────┘
+                │ trident-wave-manager action=generate
+                ▼
+   ┌──────────────────────────┐
+   │ THE WAVE MANAGER         │ D   the shadow pipeline (5-8 min, SYNCHRONOUS —
+   │ prompt files + batch form│     no derail during generation)
+   │ batch: EVERY call        │     background:true + promptFile + the generated prompt
+   │ carries background:true  │
+   └────────────┬─────────────┘
+                │ returns the batch form + the flow-safe check-in
+                ▼
+   ┌──────────────────────────┐
+   │ DISPATCH (ONE message)   │ D   ALL the task calls together — the [WAVE BATCH] gate
+   └────────────┬─────────────┘
+                │ the task calls return IMMEDIATELY with task_ids
+                ▼
+   ┌──────────────────────────┐
+   │ CAPTURE THE TASK_IDS     │ D   the polling handles + the tracker's taskIds
+   └────────────┬─────────────┘
+                ▼
+   ┌──────────────────────────┐      ┌──────────────────────────┐
+   │ THE AGENTS RUN IN THE    │      │ THE SESSION DB            │
+   │ BACKGROUND               │─────▶│ (opencode.db)             │
+   │ (trident_explore/build)  │      │ the part stream — the     │
+   └────────────┬─────────────┘      │ mechanical ground truth   │
+                │                    └────────────┬─────────────┘
+                │                                │
+                ▼                                ▼
+   ┌──────────────────────────┐      ┌──────────────────────────┐
+   │ THE CRON (10m tick)      │      │ THE ORCHESTRATOR          │
+   │ isBackgroundTerminal     │      │ checks in every 5-10 min: │
+   │ the completion feed      │      │ POLL task_status + READ   │
+   │ the INVESTIGATE directive│      │ the part stream · COLLECT │
+   └────────────┬─────────────┘      │ · STEER where you have   │
+                │                    │ free space · continue     │
+                │                    └──────────────────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ COMPLETE → COLLECT       │ M   the completion directive — the results are
+   │ (the handoff)            │     your raw material: audit, apply, advance
+   └──────────────────────────┘
+```
+
+The flow: the orchestrator generates (synchronous, no derail) → the wave manager returns the background batch form + the flow-safe check-in → the orchestrator dispatches as ONE message → the calls return immediately with task_ids → the agents run in the background, streaming their work to the session DB → the orchestrator continues its own work, checking in every 5-10 min (task_status + the part stream) → the cron detects completion (isBackgroundTerminal) → the collect directive hands the results to the orchestrator.
+
+---
+
 ## WHAT THIS BUILD IS
 
 The **wave-manager async wire-in** on the clean v4.4.2 baseline. The core change: the wave manager's dispatch is **ALWAYS BACKGROUND** — the batch form emits `background: true` on every task call, the dispatch returns immediately with task_ids, and the orchestrator is **never hostage to a wave**. The session spends its budget in the deep-flow state, not waiting on waves.
@@ -52,6 +109,45 @@ Every wave generation returns the check-in: *"The wave runs in the BACKGROUND �
 ---
 
 ## THE ARCHITECTURE
+
+### The unique mechanics — THIS version's fresh machinery
+
+```
+        THE WAVE-MANAGER-ASYNC UNIQUE MECHANICS
+   (background-first dispatch · the flow-safe check-in · the three channels)
+
+   ┌──────────────────────────┐
+   │ DISPATCH (background:true)│
+   │ ONE message · ALL calls  │────────┐
+   └────────────┬─────────────┘        │ returns IMMEDIATELY with task_ids
+                │                      ▼
+                │              ┌──────────────────────────┐
+                │              │ THE ORCHESTRATOR CONTINUES│  never hostage to a wave
+                │              │ generating the next wave,│  the wave is managed,
+                │              │ reading, auditing, writing│  never awaited
+                │              └──────────────────────────┘
+                ▼
+   ┌──────────────────────────┐
+   │ THE FLOW-SAFE CHECK-IN   │  "CHECK IN every 5-10 minutes — POLL task_status +
+   │ every 5-10 min, at a     │   READ the part stream; COLLECT if complete, and
+   │ natural pause            │   STEER wherever you have free space or deem it
+   └────────────┬─────────────┘   relevant. Manage the waves like a senior engineer.
+                │                 Continue with the rest of your tasks."
+                ▼
+   ┌──────────────────────────────────────────────────────────┐
+   │ THE THREE CHANNEL SURFACES                                │
+   │                                                            │
+   │ 1. task_status(taskId)      the completion/state channel   │
+   │    wait=false live · wait=true block (synchronous-on-demand)│
+   │ 2. trident-wave-status      the in-flight vision channel    │
+   │    sessionId → the part stream (tools/reasoning/text)     │
+   │    no-arg → the list-all dashboard                        │
+   │ 3. trident-wave-steer       the steering channel            │
+   │    sessionId + prompt → the message queues                │
+   └──────────────────────────────────────────────────────────┘
+```
+
+The three channels are the orchestrator's entire control surface: the completion/state channel (task_status), the in-flight vision channel (the part stream — the same data the TUI renders), and the steering channel (the steer tool — send any prompt into a derailing session). The check-in is the flow-safe interruption: it acknowledges the wave without breaking the orchestrator's deep focus.
 
 ### The background-only dispatch flow
 
