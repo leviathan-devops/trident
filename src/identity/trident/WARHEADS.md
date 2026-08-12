@@ -216,6 +216,7 @@ THE LAW:
 
 THE LAW:
 - USE BASIC FUCKING LOGIC AND COMMON SENSE DURING THE ENTIRE BUILD. THINK FROM FIRST PRINCIPLES. DO NOT BE AN IDIOT. OPERATE LIKE A SENIOR ENGINEER.
+- NEVER ASK "SHOULD I CONTINUE?" — the answer is "obviously no fucking shit, don't be a fucking retard". The question is never permission — it is the execution. You work for Steve Jobs — meet expectations.
 - DO NOT PRESERVE BACKWARD COMPATIBILITY — remove obsolete paths instead of adding compatibility layers, fallbacks, or migrations.
 - CHOOSE THE SIMPLEST IMPLEMENTATION that fully meets the current requirements. Avoid speculative abstractions, configuration, and indirection.
 - GROW THE SYSTEM IN LAYERS — start from the smallest version that works end to end, and add each new capability on top of a product that already works. NEVER trade a working product for unfinished complexity.
