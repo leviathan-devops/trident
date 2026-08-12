@@ -3,7 +3,7 @@
 **Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER ASYNC
 **Bundle:** ~16.13 MB (ESM, bun-built — 436 modules)
 **Runtime:** opencode 1.14.51+
-**Source:** 161 .ts files
+**Source:** 222 .ts files
 
 > **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
 
@@ -178,19 +178,21 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 - **Recursive→Iterative Conversions** — `auto-discover.ts` and `code-classifier.ts` converted from recursion to queue-based traversal. Stack overflows eliminated on 157+ file codebases.
 - **Fail-Closed Semantics** — VERIFY gate, CONTAINER_TEST, and Poseidon gates all default to `false`. No more rubber-stamped approvals.
 - **Version Purge** — Zero references to v4.3.3 remain. Zero "Trident Brain" references. Agent identity is simply "Trident Agent."
-- **trident-vision Purge** — Removed from all functional code. Tool count reduced from 10 to 8.
-- **Build System: esbuild → bun** — 402 modules (bun tree-shakes more aggressively). Both `package.json` files use `bun build`.
+- **trident-vision Purge** — Removed from all functional code. The tool suite is now **18 tools** (the wave-manager async family + the infrastructure tools added to the 8-tool base).
+- **Build System: esbuild → bun** — 436 modules (bun tree-shakes more aggressively). Both `package.json` files use `bun build`.
 - **Poseidon God Loop (AUDIT → PLAN → BUILD → VERIFY):** 11-phase closed-loop quality enforcement — Trident audits, generates remediation plans, dispatches Trident_Build, re-audits, and loops until 96%+ runtime grade, then runs container validation
 - **Semantic activation system:** PoseidonDetector uses regex first-pass + signal-word scoring second-pass. No single-string activation. The agent CANNOT activate Poseidon Mode — only the user can
 - **Poseidon Tool Differentiation:** "Poseidon mode activate" from user ONLY unlocks bash/write/edit permissions. Agent does NOT call trident-poseidon tool. Agent ONLY calls trident-poseidon action=start when user explicitly requests the God Loop or when advancing an already-running God Loop.
 - **Trident_Build subagent:** 8+ file harness with CODE-enforced quality gates, Merkle chain evidence tracking, AST analysis, theatrical detection, and runtime grade enforcement
 - **Auto-lock on completion:** The `trident-poseidon` tool locks itself after execution — human must re-activate
 - **Evidence archival:** Full audit trail per cycle, per session — `.trident/poseidon-audits/{sessionId}/cycle_{N}/`
-- **18-layer audit engine (R0-R16 + preflight + R17):** From build chain integrity through runtime grade bible enforcement
+- **18-layer audit engine (R0-R16 + the preflight):** From build chain integrity through runtime grade bible enforcement
 - **Headless Execution Firewall:** `opencode run` is mechanically blocked in both `tool.execute.before` (bash handler) and `command.execute.before` (command handler). Headless execution bypasses the TUI — no hooks fire, no identity is injected, no evidence is produced. The TUI is the only valid execution path.
 - **Container Skill Enforcement:** Docker/container testing commands blocked via bash unless `container-testing` skill is loaded first. Prevents ad-hoc testing that bypasses quality gates.
 - **R4 Source-File Firewall:** `PARSEABLE_EXTENSIONS` filter prevents non-code files (`.md`, `.json`, `.py`) from entering the AST pipeline. Only `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs` analyzed as source.
-- **L1 Direct-to-Disk:** Deep planning L1 writes directly to `outputPath/fileName.md`, returns `L1_CONTENT_WRITTEN` JSON confirmation (path, lines, sha256, preview) — NOT full content. Prevents agent truncation/summarization of generated output.
+- **Deep-Planning contracts (L1/L2/L3):** `layer` is REQUIRED — no default, no auto-detect (1=Initial Plan, 2=Detailed Workflow — the 3000+ line implementation spec, 3=Context Library). L1 writes directly to disk (`L1_CONTENT_WRITTEN` — path, lines, sha256, preview). The L2 floors: requirements 4000+ chars, context 16000+ chars. The 8-field `inputFile` JSON (requirements, context, components, constraints, designDecisions, knownGaps, sourceLineage, fileInventory) carries the L2 payload when the inline limit blocks 68K+ chars. Every call preflights the args mechanically.
+- **Context-Synthesis T2 bible mode:** `outputMode=T2` produces a dense, bible-style standalone knowledge file written to disk (the full project context for the deep-flow state); `T1` produces the lightweight injectable. The T2 requires 5+ keyFacts + the structured fields at 1000+ chars each.
+- **The infrastructure tools:** `trident-container-test` (the ONLY sanctioned container path — plan-first runtime-grade testing), `trident-ship-package` (the manifest-driven ship generator), `trident-preflight` (the mechanical arg validator for the LLM tools + the task dispatches), `trident-task-queue` (the SQLite-backed idea queue).
 - **Adversarial Testing Mandate:** Happy path testing explicitly forbidden. Every test must probe failure paths, edge cases, boundaries. Minimum 3 adversarial scenarios required.
 - **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
 - **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
@@ -279,7 +281,7 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 
 | Agent | Type | Mode | Color | Description |
 |-------|------|------|-------|-------------|
-| **trident** | Primary | primary | `#8B5CF6` | God Loop orchestrator — 17-layer audit engine, Poseidon Mode, all 10 tools |
+| **trident** | Primary | primary | `#8B5CF6` | God Loop orchestrator — 17-layer audit engine, Poseidon Mode, all 18 tools |
 | **trident_explore** | Subagent | subagent | — | Read-only context ingestion scout for parallel information gathering |
 | **trident_build** | Subagent | subagent | `#0066CC` | Runtime-grade build engineer — executes remediation plans verbatim |
 
@@ -292,9 +294,9 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 | Tool | Description | Output |
 |------|-------------|--------|
 | `trident-code-audit` | 17-layer AST-powered audit (R0-R16) with confidence scoring | CODE_REVIEW artifact |
-| `trident-deep-planning` | 3-layer plans (L1 first-principles, L2 workflow, L3 context-lib) | BUILD_SPEC + CONTEXT_LIBRARY |
-| `trident-problem-solving` | 6-layer reasoning with 6 frameworks (Five Whys, Fault Tree, Systems Thinking, Pareto, First Principles, Hypothesis-Driven) — [see below](#problem-solving-engine) | PLAN artifact |
-| `trident-context-synthesis` | 4-layer synthesis (collect→score→compress→inject) | T1_INJECTABLE / T2_KNOWLEDGE |
+| `trident-deep-planning` | 3-layer plans — `layer` REQUIRED (1=Initial Plan, 2=Detailed Workflow — the 3000+ line spec, 3=Context Library); the L2 floors (requirements 4000+ / context 16000+ chars); the 8-field `inputFile` JSON for the 68K+ payloads; every call preflighted | BUILD_SPEC + CONTEXT_LIBRARY |
+| `trident-problem-solving` | problem-solving loop: Triviality Gate → Classify → Define Done → Gather Evidence → Decide (the 6 frameworks are selectable TOOLS within Decide, not mandatory stages) → Act (intent gate) → Verify → Report — the outcome-first artifact, no layer scaffolding | PLAN artifact |
+| `trident-context-synthesis` | 4-layer synthesis (collect→score→compress→inject); `outputMode=T2` → the dense bible-style knowledge file written to disk, `T1` → the lightweight injectable; 5+ keyFacts + the structured fields at 1000+ chars each | T1_INJECTABLE / T2_KNOWLEDGE |
 | **`trident-poseidon`** | **God Loop orchestrator — quality-enforced build execution with auto-lock** | **BUILD REPORT** |
 
 ### The Wave-Manager Async Tools (4 — the v4.4.2 async wire-in):
@@ -329,22 +331,24 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 
 ## Problem-Solving Engine
 
-The `trident-problem-solving` tool provides structured diagnostic reasoning through a 6-layer pipeline with 6 selectable analytical frameworks. Different problems require different analytical approaches — the tool selects the right framework rather than applying one-size-fits-all reasoning.
+The `trident-problem-solving` tool provides structured diagnostic reasoning through a loop: Triviality Gate → Classify → Define Done → Gather Evidence → Decide (with framework selection) → Act (intent gate) → Verify → Report. The 6 analytical frameworks (Five Whys, Fault Tree, Systems Thinking, Pareto, First Principles, Hypothesis-Driven) are **selectable TOOLS within the Decide step — NOT mandatory stages**; the tool picks the right framework for the problem rather than forcing one-size-fits-all reasoning. The output is the **outcome-first artifact with no layer scaffolding** — the finding, the decision, the action — never the pipeline machinery.
 
-### The 6 Layers
+### The Loop Steps
 
-| Layer | Name | Purpose |
+| Step | Name | Purpose |
 |-------|------|---------|
 | 1 | **Triviality Gate** | Is this problem even worth deep analysis? If the answer is obvious, act on it and skip the pipeline. Prevents over-engineering simple fixes. |
 | 2 | **Classify** | What type of problem is this? Bug? Design flaw? Integration failure? Performance? The classification determines which frameworks are applicable. |
 | 3 | **Define Done** | What does "solved" look like? Establishes the acceptance criteria before analysis begins. Prevents scope drift during investigation. |
 | 4 | **Gather Evidence** | Collect facts — not opinions, not theories. File contents, test results, error messages, stack traces, git diffs. The evidence layer enforces that conclusions are grounded in measurable reality. |
-| 5 | **Decide** | Apply the selected framework (see below) to the evidence. Produce a structured conclusion with root cause, contributing factors, and recommended action. |
-| 6 | **Verify** | Confirm the proposed solution against reality. Does it actually fix the problem? Does it introduce regressions? The verification layer closes the loop — unverified solutions are rejected. |
+| 5 | **Decide** | Apply the selected framework (the 6 frameworks are selectable TOOLS within this step — not mandatory stages) to the evidence. Produce a structured conclusion with root cause, contributing factors, and recommended action. |
+| 6 | **Act (intent gate)** | The action passes the intent gate — the decision is executed (the plan is produced / the fix is dispatched), never just recommended. |
+| 7 | **Verify** | Confirm the proposed solution against reality. Does it actually fix the problem? Does it introduce regressions? The verification layer closes the loop — unverified solutions are rejected. |
+| 8 | **Report** | The outcome-first artifact — the finding, the decision, the action, the evidence. NO layer scaffolding: the pipeline machinery never appears in the output. |
 
 ### The 6 Frameworks
 
-Each framework is a structured method for analyzing evidence and reaching conclusions. The tool (or user) selects the appropriate framework based on problem type.
+Each framework is a structured method for analyzing evidence and reaching conclusions. The frameworks are **selectable tools within the Decide step** — the tool (or user) picks the appropriate framework based on the problem type; none is a mandatory stage.
 
 #### Five Whys
 
@@ -722,14 +726,16 @@ Say "Poseidon Mode Activate" when ready to build again.
 - compactingHook guard runs BEFORE identity injection
 - `output.args` read at all tool.execute.before enforcement points
 - Trident_Build has its OWN identity system: `isTridentBuildAgent()`, separate T1 prompt, separate hooks
+- **The behavioral layer — WARHEADS 1-19:** the identity carries 19 warheads (disk + inline + bundle) — the scope/execution/standards laws, the wave-dispatch law (background reality), the host-pipeline law, the basic-fucking-logic law, and **WARHEAD 19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW** (the deep-focus operating condition).
 
 ---
 
 ## Bundle Integrity
 
 ```bash
-md5sum dist/index.js
-# 8c3522b3c2de5ae97795f9c5ee3936ac
+sha256sum dist/index.js
+# dce7ca40063757a392296cf5017ef3db5148dfde5ec527a89f622b0d6440f488
+# (the current record lives in dist/sha256.txt — the wave-manager async build)
 ```
 
 ---
