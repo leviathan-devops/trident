@@ -114,4 +114,16 @@
   "toolResultContext": "container trident-prune-direct: 53 records → 20 after the prune; fake-21..25 present 5/5 (the newest kept); fake-1..8 present 0/8 (the over-age removed); the prune log + the engine log's WAVE-RECORD PRUNE entries",
   "timedOut": false,
   "verdict": "PASS"
+},
+{
+  "scenario": "THE ONE-TOOL CONSOLIDATION + THE COMPACT CONTEXT (dist b2ed69d8)",
+  "prompt": "generate (waveId one-tool-demo + projectToken trident-test) → status via the one tool → pause via the one tool → the old tools gone",
+  "passToken": "the named id (wave-one-tool-demo-<epoch>) + the alias + the projectToken on the tracker row + the compact status + the pause state",
+  "passTokenMatch": true,
+  "failToken": "the old trident-wave-status / trident-wave-steer still available (the clean break failed)",
+  "failTokenAbsent": true,
+  "toolResultContext": "container trident-one-tool: the tracker row = wave-one-tool-demo-1786630524368 | alias one-tool-demo | token trident-test | status paused (after the pause action); the old tools removed; the check-in compact",
+  "timedOut": false,
+  "verdict": "PASS"
 }
+

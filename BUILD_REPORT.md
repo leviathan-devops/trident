@@ -643,5 +643,5 @@ THE POOL: the wave generation runs CONCURRENT_GENERATIONS = 15 as a CAP (splice(
 - **The pause:** the non-destructive interrupt (the steer-interrupt/abort composite) + the 'paused' tracker state + the resume path — container-verified.
 - **The compact context:** the two-line check-in + the compact status default (the wave + the alias + the projectToken + the per-agent one-liners) + the verbose flag — the anti-context-bloat + the anti-derailment.
 - **The sqlite tracker:** trident-waves.sqlite (WAL + busy-timeout + the row-keyed upserts + the write-retry + the stale prune + the projectToken) — the 8-parallel-session hardening, container-verified (both concurrent rows survive).
-- **Verification:** 411/411 unit, tsc 0, the container (the named id + the alias + the token + the pause).
+- **Verification:** 410/410 unit, tsc 0, the container (the named id + the alias + the token + the pause).
 - **Dist:** b2ed69d8d946929d4c2ce4e09b4d6be15c4342cc9a84a60c67e009112fc85cc5.
