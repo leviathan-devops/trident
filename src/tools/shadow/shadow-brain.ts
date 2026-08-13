@@ -49,7 +49,7 @@ export const SHADOW_BASE_URL = 'https://opencode.ai/zen/go/v1'; // the operator:
  *  (SHADOW_FETCH_STALL_MS, re-armed per event) is the PRIMARY stall guard; the
  *  total ceiling is now a 10-MIN hard safety net that must NEVER kill a
  *  healthy streaming generation — the operator: "this should never stall"). */
-export const SHADOW_TIMEOUT_MS = 600_000;
+export const SHADOW_TIMEOUT_MS = 900_000;   // 15m (2026-08-13 — the operator: "what if we are generating a 12 agent wave? this should be 15")
 
 /** THE FETCH STALL WINDOW (2026-08-08 — the fast-fail layer): the provider
  *  must DELIVER a response within 45s of the request or the fetch aborts +
@@ -460,8 +460,13 @@ export async function callShadow(
   // failure names BOTH transports — the loud-fail law, never a silent pass.
   const fallbackBaseUrl = resolveShadowFallbackBaseUrl();
   const fallbackApiKey = resolveShadowFallbackApiKey();
-  // the official API's V4 Flash model name (CONFIGURABLE — verified at deploy)
-  const fallbackModel = process.env.SHADOW_FALLBACK_MODEL || 'deepseek-chat';
+  // THE FALLBACK MODEL — HARDCODED (2026-08-13 — the operator: "make sure the
+  // model is hardcoded to deepseek v4 flash - never pro or any other model. on
+  // both providers. double checking this"). The D-SH-2 discipline holds on the
+  // official-API transport too: DeepSeek V4 Flash ONLY — the same frozen model
+  // as the primary, only the endpoint + key differ. NO env override (a config
+  // surface is a way to reach another model — the ruling removes it).
+  const fallbackModel = 'deepseek-v4-flash';
 
   const retryable = (sr: ShadowStreamResult): boolean =>
     sr.stopReason === 'error' &&
@@ -515,38 +520,60 @@ export async function callShadow(
     }
   };
 
-  // THE PRIMARY PATH (attempt 0 + the retry 1 — the stall/overload class):
+  // THE RETRY LOOP + THE OFFICIAL-API FALLBACK (2026-08-09 + 2026-08-12 +
+  // 2026-08-13 — the operator's ruling: "up to 3 retries before hard failing.
+  // same backoff length not increasing"): a transport's FIRST result is
+  // followed by UP TO MAX_RETRIES (=3) re-attempts — each after the SAME
+  // retryBackoffMs (never exponential — the ruling) — but ONLY for the
+  // retryable class (HTTP_500 + SHADOW_BRAIN_TIMEOUT — the provider stall/
+  // overload, container-proven: the identical wave input failed at 180s then
+  // succeeded on retry in 361s). The retry produces what the primary produces,
+  // never a substitute (the loud-fail law). After the primary's retries are
+  // exhausted, the OFFICIAL DeepSeek API transport (api.deepseek.com/v1 + the
+  // DEEPSEEK_API_KEY secret) runs the SAME up-to-3-retry pattern. A final
+  // failure names BOTH transports' error trails — never a silent pass.
+  const MAX_RETRIES = 3;   // the operator's ruling 2026-08-13
+  const isCompletion = (sr: ShadowStreamResult): boolean =>
+    sr.stopReason !== 'error' && sr.stopReason !== 'aborted';
+  const retryTransport = async (
+    initial: ShadowStreamResult,
+    transport: () => Promise<ShadowStreamResult>,
+  ): Promise<{ ok: boolean; result: ShadowStreamResult; errors: string[] }> => {
+    const errors: string[] = [initial.errorMessage || 'failed'];
+    let current = initial;
+    let retries = 0;
+    while (retryable(current) && retries < MAX_RETRIES) {
+      await new Promise((r) => setTimeout(r, retryBackoffMs));
+      current = await transport();
+      errors.push(current.errorMessage || 'failed');
+      retries++;
+    }
+    return { ok: isCompletion(current), result: current, errors };
+  };
+
+  // THE PRIMARY PATH (attempt 0 + the up-to-3 retries — the stall/overload class):
   const primaryResult = await attempt();
   if (primaryResult.stopReason === 'error' && retryable(primaryResult)) {
     const cls = (primaryResult.errorMessage || '').startsWith('SHADOW_BRAIN_TIMEOUT') ? 'SHADOW_BRAIN_TIMEOUT' : 'SHADOW_BRAIN_HTTP_500';
-    void tridentLog('WARN', 'shadow-brain', cls + ' — ONE retry after ' + retryBackoffMs + 'ms (the provider stall/overload class — the retry produces what the primary produces, never a substitute)');
-    await new Promise((r) => setTimeout(r, retryBackoffMs));
-    const primaryRetry = await attempt();
-    if (primaryRetry.stopReason !== 'error') {
-      return primaryRetry.stopReason === 'aborted'
-        ? { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' }
-        : { content: primaryRetry.content, model: SHADOW_MODEL, ok: true };
+    void tridentLog('WARN', 'shadow-brain', cls + ' — up to ' + MAX_RETRIES + ' retries after ' + retryBackoffMs + 'ms each (the provider stall/overload class — the operator\'s ruling: the same backoff, never increasing)');
+    const primary = await retryTransport(primaryResult, attempt);
+    if (primary.ok) {
+      return { content: primary.result.content, model: SHADOW_MODEL, ok: true };
     }
     // THE PRIMARY IS EXHAUSTED — THE OFFICIAL-API FALLBACK (the ruling 2026-08-12):
-    void tridentLog('WARN', 'shadow-brain', 'the primary transport exhausted — switching to the OFFICIAL DeepSeek API fallback (' + fallbackBaseUrl + ')' + (fallbackApiKey.length === 0 ? ' — NO KEY (the fallback will refuse loudly)' : ''));
-    const fb1 = await fallbackAttempt();
-    if (fb1.stopReason !== 'error') {
-      return fb1.stopReason === 'aborted'
-        ? { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' }
-        : { content: fb1.content, model: SHADOW_MODEL, ok: true };
+    void tridentLog('WARN', 'shadow-brain', 'the primary transport exhausted (' + primary.errors.join('; ') + ') — switching to the OFFICIAL DeepSeek API fallback (' + fallbackBaseUrl + ')' + (fallbackApiKey.length === 0 ? ' — NO KEY (the fallback will refuse loudly)' : ''));
+    const fbInitial = await fallbackAttempt();
+    if (fbInitial.stopReason === 'aborted') {
+      return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' };
     }
-    if (retryable(fb1)) {
-      void tridentLog('WARN', 'shadow-brain', 'the fallback stalled — ONE retry after ' + retryBackoffMs + 'ms');
-      await new Promise((r) => setTimeout(r, retryBackoffMs));
-      const fb2 = await fallbackAttempt();
-      if (fb2.stopReason !== 'error') {
-        return fb2.stopReason === 'aborted'
-          ? { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' }
-          : { content: fb2.content, model: SHADOW_MODEL, ok: true };
-      }
-      return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_FAIL: primary (opencode.ai zen/go) ' + (primaryRetry.errorMessage || 'failed') + '; fallback (api.deepseek.com) ' + (fb2.errorMessage || 'failed') };
+    if (fbInitial.stopReason !== 'error') {
+      return { content: fbInitial.content, model: SHADOW_MODEL, ok: true };
     }
-    return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_FAIL: primary (opencode.ai zen/go) ' + (primaryRetry.errorMessage || 'failed') + '; fallback (api.deepseek.com) ' + (fb1.errorMessage || 'failed') };
+    const fb = await retryTransport(fbInitial, fallbackAttempt);
+    if (fb.ok) {
+      return { content: fb.result.content, model: SHADOW_MODEL, ok: true };
+    }
+    return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_FAIL: primary (opencode.ai zen/go) ' + primary.errors.join('; ') + '; fallback (api.deepseek.com) ' + fb.errors.join('; ') };
   }
   if (primaryResult.stopReason === 'aborted') {
     return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' };

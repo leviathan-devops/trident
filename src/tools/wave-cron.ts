@@ -17,6 +17,9 @@ import {
 } from './wave-todowrite.ts';
 import { getOpencodeClient } from './trident-tools.ts';
 import { readSessionStream } from './wave-status.ts';
+import {
+  detectDroppedMainGeneration, kickMainSession, type HealClient,
+} from './main-session-heal.ts';
 // @ts-ignore — bun:sqlite ships no type package under tsc (the same convention as wave-dispatch.ts:11-12)
 import { Database } from 'bun:sqlite';
 import * as fs from 'node:fs';
@@ -58,6 +61,13 @@ export interface WaveCronClient {
   status(opts: { query?: Record<string, unknown> }): Promise<{ data?: { status?: string } | null }>;
   messages(opts: { path: { id: string }; query?: Record<string, unknown> }): Promise<{ data?: unknown[] | null }>;
   todo(opts: { path: { id: string } }): Promise<{ data?: unknown[] | null }>;
+  // THE KICK CHANNEL (2026-08-13 — the main-session self-heal): the TUI input
+  // (appendPrompt + submitPrompt — the same channel the human typing in the
+  // TUI uses). The live client exposes it (the wave-probe's P3 verified it).
+  tui?: {
+    appendPrompt(opts: { body: { text: string } }): Promise<{ data?: unknown }>;
+    submitPrompt(opts: Record<string, unknown>): Promise<{ data?: unknown }>;
+  };
 }
 
 export function startWaveCron(): void {
@@ -158,6 +168,7 @@ async function tickAgent(
 
   const evidence: StuckEvidence = {
     agent, wave,
+    name,                                // the REAL agent name key (2026-08-13 — the directive names the exact agent)
     sessionStatus: status,
     statusReadFailed,
     lastTickBytes: agent.lastBytes,
@@ -232,6 +243,37 @@ async function secondaryChecks(
   mainSessionId: string | null,
   opts: { openQueueCount?: number; todoTarget?: TodoReadTarget | null } = {},
 ): Promise<void> {
+  // ═══ THE MAIN-SESSION SELF-HEAL (2026-08-13 — the operator's design) ═══
+  // The main agent's generation can DROP mid-sentence (the provider cuts the
+  // stream; the runtime FINALIZES the partial — the ▣ timestamp renders, the
+  // agent goes IDLE with the work stuck). The detector reads the main
+  // session's part stream: the LAST assistant text is OBVIOUSLY incomplete
+  // (the incompletion lexicon) AND the message is FINALIZED (no pending
+  // step-start — the agent idle, NOT processing — the slow-vs-frozen
+  // discriminator). THE KICK: the minimal 'continue' chat message via the TUI
+  // input (appendPrompt + submitPrompt) — literally a space+Enter to
+  // reactivate it. NO interrupt path, NO model switch (the operator's rulings
+  // 2026-08-13 — both removed). The cooldown (10m — the cron interval) bounds
+  // the kick rate. The fail-safe: a detection failure NEVER kicks.
+  if (mainSessionId && client && typeof client.tui?.appendPrompt === 'function') {
+    try {
+      const heal = detectDroppedMainGeneration(mainSessionId);
+      tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL: session=' + mainSessionId + ' dropped=' + heal.dropped + ' reason=' + (heal.reason ?? 'none') + ' newest=' + (heal.newestPartType ?? 'none') + ' tail=' + JSON.stringify(heal.tail.slice(0, 60)));
+      if (heal.dropped) {
+        void kickMainSession(client as unknown as HealClient, mainSessionId).then((kr) => {
+          if (!kr.kicked && kr.error !== 'cooldown') {
+            tridentLog('WARN', 'wave-cron', 'the main-session kick did not land: ' + (kr.error ?? 'unknown'));
+          }
+        }).catch((healErr) => {
+          tridentLog('WARN', 'wave-cron', 'the main-session kick threw (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
+        });
+      }
+    } catch (healErr) {
+      tridentLog('WARN', 'wave-cron', 'the main-session heal check failed (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
+    }
+  } else {
+    tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL SKIPPED: mainSessionId=' + String(mainSessionId) + ' client=' + (client ? 'yes' : 'no') + ' tui=' + (client && typeof client.tui?.appendPrompt === 'function' ? 'yes' : 'no'));
+  }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {
       const res = await client.todo({ path: { id: mainSessionId ?? '' } });

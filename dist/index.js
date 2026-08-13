@@ -221898,7 +221898,7 @@ function generateContainerTestPlan(findings, pluginName, agentName) {
 `;
   script += `{
 `;
-  script += `  "model": "deepseek/deepseek-chat",
+  script += `  "model": "deepseek/deepseek-v4-flash",
 `;
   script += `  "provider": {
 `;
@@ -222104,7 +222104,7 @@ function generateDeploymentManifest(result, projectName, agentName, binPath) {
 `;
   manifest += `{
 `;
-  manifest += `  "model": "deepseek/deepseek-chat",
+  manifest += `  "model": "deepseek/deepseek-v4-flash",
 `;
   manifest += `  "provider": {
 `;
@@ -222179,7 +222179,7 @@ function generateDeploymentManifest(result, projectName, agentName, binPath) {
 `;
   manifest += `{
 `;
-  manifest += `  "model": "deepseek/deepseek-chat",
+  manifest += `  "model": "deepseek/deepseek-v4-flash",
 `;
   manifest += `  "provider": {
 `;
@@ -231856,7 +231856,7 @@ function resolveShadowApiKey() {
 // src/tools/shadow/shadow-brain.ts
 var SHADOW_MODEL = "deepseek-v4-flash";
 var SHADOW_BASE_URL = "https://opencode.ai/zen/go/v1";
-var SHADOW_TIMEOUT_MS = 600000;
+var SHADOW_TIMEOUT_MS = 900000;
 var SHADOW_FETCH_STALL_MS = 45000;
 function mapFinishReason(finish) {
   if (finish === "tool_calls")
@@ -255324,7 +255324,7 @@ async function executeWaveDispatch(args, mainSessionId, opts = {}) {
     generatedAt: new Date().toISOString(),
     agents: []
   };
-  const CONCURRENT_GENERATIONS = 3;
+  const CONCURRENT_GENERATIONS = 15;
   const generated = [];
   const generationFailures = [];
   const runOne = async (spec) => {
@@ -255705,7 +255705,10 @@ var PATTERNS = [
   }
 ];
 function buildDirective(p, e) {
-  const agent = e.agent.sessionIds.length > 0 ? e.agent.sessionIds[e.agent.sessionIds.length - 1] : "<unknown>";
+  const name = e.name || "<unknown-agent>";
+  const sids = e.agent.sessionIds.length > 0 ? e.agent.sessionIds.join(",") : "none";
+  const tids = e.agent.taskIds && e.agent.taskIds.length > 0 ? e.agent.taskIds.join(",") : "none";
+  const agentRef = name + " (sessions: " + sids + "; taskIds: " + tids + ")";
   const ageMin = Math.round(e.lastActivityAgeMs / 60000);
   let evidence = "";
   if (p.id === "STUCK_NO_ACTIVITY")
@@ -255716,7 +255719,8 @@ function buildDirective(p, e) {
     evidence = "session status " + e.sessionStatus;
   else
     evidence = "the operator's decision";
-  return buildKillDirectiveText(e.wave.wave, p.id, "<agent>", evidence, agent);
+  const lastId = e.agent.sessionIds.length > 0 ? e.agent.sessionIds[e.agent.sessionIds.length - 1] : tids !== "none" ? tids.split(",")[0] : "";
+  return buildKillDirectiveText(e.wave.wave, p.id, agentRef, evidence, lastId);
 }
 function matchStuckPatterns(evidence) {
   for (const p of PATTERNS) {
@@ -255840,6 +255844,78 @@ async function checkTodowriteStaleness(rows, now = Date.now()) {
   return flagged;
 }
 
+// src/tools/main-session-heal.ts
+init_utils();
+var TRAILING_ELLIPSIS = /(?:\.\.\.|\u2026)\s*$/;
+var DANGLING_CONNECTIVE = /\b(the|and|or|but|because|of|to|with|for|on|at|from|by|a|an|is|are|was|were|that|which|this|these|if|then|so|as|in|it|its|their|his|her|our|your|we|they|he|she|not|no|yes)\s*$/i;
+var UNCLOSED_FENCE = /```[^`]*$/;
+var UNBALANCED_OPEN = (t) => {
+  const open = (t.match(/\(/g) || []).length + (t.match(/\[/g) || []).length;
+  const close = (t.match(/\)/g) || []).length + (t.match(/\]/g) || []).length;
+  return open > close;
+};
+var TERMINALS = /[.!?"')\]}>`:;]/;
+function detectDroppedMainGeneration(sessionId, opts = {}) {
+  const reader = opts.stream ?? readSessionStream;
+  try {
+    const page = reader(sessionId, { limit: 25 });
+    if (!page.ok || page.parts.length === 0) {
+      return { dropped: false, reason: null, tail: "", newestPartType: null };
+    }
+    const newest = page.parts[page.parts.length - 1];
+    if (newest.type !== "text" && newest.type !== "step-finish") {
+      return { dropped: false, reason: "in-flight", tail: "", newestPartType: newest.type };
+    }
+    let lastText = "";
+    for (let i = page.parts.length - 1;i >= 0; i--) {
+      if (page.parts[i].type === "text" && typeof page.parts[i].text === "string" && page.parts[i].text.trim().length > 0) {
+        lastText = page.parts[i].text;
+        break;
+      }
+    }
+    if (lastText.length === 0) {
+      return { dropped: false, reason: "no-text", tail: "", newestPartType: newest.type };
+    }
+    const tail = lastText.trimEnd();
+    const tailSnippet = tail.length > 120 ? tail.slice(-120) : tail;
+    let reason = null;
+    if (TRAILING_ELLIPSIS.test(tail))
+      reason = "trailing-ellipsis";
+    else if (UNCLOSED_FENCE.test(tail))
+      reason = "unclosed-code-fence";
+    else if (UNBALANCED_OPEN(tail))
+      reason = "unbalanced-brackets";
+    else if (!TERMINALS.test(tail.slice(-1))) {
+      reason = DANGLING_CONNECTIVE.test(tail) ? "dangling-connective" : "mid-sentence-cut";
+    }
+    if (!reason) {
+      return { dropped: false, reason: "complete", tail: "", newestPartType: newest.type };
+    }
+    return { dropped: true, reason, tail: tailSnippet, newestPartType: newest.type };
+  } catch (e) {
+    tridentLog("WARN", "main-session-heal", "the dropped-generation detection failed (fail-safe \u2014 no kick): " + (e instanceof Error ? e.message : String(e)));
+    return { dropped: false, reason: null, tail: "", newestPartType: null };
+  }
+}
+var KICK_COOLDOWN_MS = 10 * 60000;
+var lastKickAt = {};
+async function kickMainSession(client, sessionId) {
+  const last = lastKickAt[sessionId] ?? 0;
+  if (Date.now() - last < KICK_COOLDOWN_MS) {
+    return { kicked: false, error: "cooldown" };
+  }
+  try {
+    await client.tui.appendPrompt({ body: { text: "continue" } });
+    await client.tui.submitPrompt({});
+    lastKickAt[sessionId] = Date.now();
+    tridentLog("INFO", "main-session-heal", "KICK: the dropped main generation in " + sessionId + ' \u2014 the minimal "continue" sent (the agent reactivates)');
+    return { kicked: true };
+  } catch (e) {
+    tridentLog("WARN", "main-session-heal", "the kick failed for " + sessionId + ": " + (e instanceof Error ? e.message : String(e)));
+    return { kicked: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // src/tools/wave-cron.ts
 import { Database as Database7 } from "bun:sqlite";
 import * as fs36 from "fs";
@@ -255937,6 +256013,7 @@ async function tickAgent(client, wave, name, agent) {
   const evidence = {
     agent,
     wave,
+    name,
     sessionStatus: status,
     statusReadFailed,
     lastTickBytes: agent.lastBytes,
@@ -255987,6 +256064,25 @@ async function waveTick(client, mainSessionId, opts = {}) {
   await secondaryChecks(client, mainSessionId, opts);
 }
 async function secondaryChecks(client, mainSessionId, opts = {}) {
+  if (mainSessionId && client && typeof client.tui?.appendPrompt === "function") {
+    try {
+      const heal = detectDroppedMainGeneration(mainSessionId);
+      tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL: session=" + mainSessionId + " dropped=" + heal.dropped + " reason=" + (heal.reason ?? "none") + " newest=" + (heal.newestPartType ?? "none") + " tail=" + JSON.stringify(heal.tail.slice(0, 60)));
+      if (heal.dropped) {
+        kickMainSession(client, mainSessionId).then((kr) => {
+          if (!kr.kicked && kr.error !== "cooldown") {
+            tridentLog("WARN", "wave-cron", "the main-session kick did not land: " + (kr.error ?? "unknown"));
+          }
+        }).catch((healErr) => {
+          tridentLog("WARN", "wave-cron", "the main-session kick threw (non-fatal): " + (healErr instanceof Error ? healErr.message : String(healErr)));
+        });
+      }
+    } catch (healErr) {
+      tridentLog("WARN", "wave-cron", "the main-session heal check failed (non-fatal): " + (healErr instanceof Error ? healErr.message : String(healErr)));
+    }
+  } else {
+    tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL SKIPPED: mainSessionId=" + String(mainSessionId) + " client=" + (client ? "yes" : "no") + " tui=" + (client && typeof client.tui?.appendPrompt === "function" ? "yes" : "no"));
+  }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {
       const res = await client.todo({ path: { id: mainSessionId ?? "" } });

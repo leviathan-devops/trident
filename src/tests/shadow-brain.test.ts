@@ -416,7 +416,7 @@ describe('shadow-brain — the streaming transport (2026-08-09)', () => {
     }
   });
 
-  test('RETRY: a SHADOW_BRAIN_HTTP_500 followed by success — ONE retry re-runs the primary and recovers', async () => {
+  test('RETRY: a SHADOW_BRAIN_HTTP_500 followed by success — a retry re-runs the primary and recovers (the up-to-3 ruling)', async () => {
     let calls = 0;
     const flaky: ShadowStreamFn = async () => {
       calls++;
@@ -424,39 +424,47 @@ describe('shadow-brain — the streaming transport (2026-08-09)', () => {
       return { content: 'the recovered prompt', stopReason: 'stop' };
     };
     const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: flaky, retryBackoffMs: 1 });
-    expect(calls).toBe(2); // exactly ONE retry — never more
+    expect(calls).toBe(2); // the FIRST retry succeeded — the loop stopped (up to 3 allowed)
     expect(r.ok).toBe(true);
     expect(r.content).toBe('the recovered prompt');
   });
 
-  test('RETRY: a double 500 exhausts the primary (ONE retry) + the official-API fallback (ONE retry) then fails LOUDLY naming both transports — never a silent pass', async () => {
+  test('RETRY: the retryable class exhausts the primary (up to 3 retries) + the official-API fallback (up to 3 retries) then fails LOUDLY naming both transports — never a silent pass', async () => {
     let primaryCalls = 0;
     let fallbackCalls = 0;
+    let fallbackModel = '';
     const doubleFlaky: ShadowStreamFn = async (args) => {
-      if (args.model === SHADOW_MODEL) primaryCalls++;
-      else fallbackCalls++;   // the fallback runs with the fallback model (deepseek-chat)
+      // THE DISCRIMINATOR (2026-08-13 — the model is NOW the same on both
+      // transports: deepseek-v4-flash hardcoded on the fallback too — the
+      // transports differ by the endpoint + the reasoning_options, so the
+      // fallback is the call with reasoningOptions === false).
+      if (args.reasoningOptions === false) { fallbackCalls++; fallbackModel = args.model; }
+      else primaryCalls++;
       return { content: '', stopReason: 'error', errorMessage: 'SHADOW_BRAIN_HTTP_500: opencode-go 500 boom' };
     };
     const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: doubleFlaky, retryBackoffMs: 1 });
-    expect(primaryCalls).toBe(2);    // THE PRIMARY RETRIES EXACTLY ONCE — never more
-    expect(fallbackCalls).toBe(2);   // the official-API fallback also retries exactly once
+    expect(primaryCalls).toBe(4);    // 1 attempt + up to 3 retries (the 2026-08-13 ruling)
+    expect(fallbackCalls).toBe(4);   // the official-API fallback runs the SAME up-to-3 pattern
+    // THE MODEL PIN (2026-08-13 — the operator: "make sure the model is hardcoded
+    // to deepseek v4 flash - never pro or any other model. on both providers"):
+    expect(fallbackModel).toBe('deepseek-v4-flash');   // the fallback is v4-flash too — never deepseek-chat
     expect(r.ok).toBe(false);
     expect(r.error).toContain('SHADOW_BRAIN_HTTP_500');
     expect(r.error).toContain('primary');
     expect(r.error).toContain('fallback');
   });
 
-  test('RETRY: the timeout class IS retryable (the 2026-08-12 live ruling) — ONE primary retry + ONE fallback retry, then the loud timeout', async () => {
+  test('RETRY: the timeout class IS retryable (the 2026-08-12 live ruling) — up to 3 primary retries + up to 3 fallback retries, then the loud timeout', async () => {
     let primaryCalls = 0;
     let fallbackCalls = 0;
     const timeoutClass: ShadowStreamFn = async (args) => {
-      if (args.model === SHADOW_MODEL) primaryCalls++;
-      else fallbackCalls++;
+      if (args.reasoningOptions === false) fallbackCalls++;
+      else primaryCalls++;
       return { content: '', stopReason: 'error', errorMessage: 'SHADOW_BRAIN_TIMEOUT: the LLM call stalled' };
     };
     const r = await callShadow('p', 's', 100, { apiKey: 'test-key', streamFn: timeoutClass, retryBackoffMs: 1 });
-    expect(primaryCalls).toBe(2);    // the timeout retries ONCE (the live proof: 180s fail → 361s success)
-    expect(fallbackCalls).toBe(2);
+    expect(primaryCalls).toBe(4);    // 1 attempt + up to 3 retries (the live proof: 180s fail → 361s success)
+    expect(fallbackCalls).toBe(4);
     expect(r.ok).toBe(false);
     expect(r.error).toContain('SHADOW_BRAIN_TIMEOUT');
   });

@@ -1,1 +1,1 @@
-e48b2621a18d8bb0bab872417a28ca1d7c65ebc1cd87276c1a988f3c3b610b0f  dist/index.js
+a512823abc6dd2010cff05237452d061fd2a35ac0cf1db604c5cb9717bf1cc20  dist/index.js

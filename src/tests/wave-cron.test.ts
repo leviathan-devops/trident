@@ -30,8 +30,10 @@ function makeEvidence(overrides: Partial<Parameters<typeof matchStuckPatterns>[0
   const agent = freshAgentTrack('sess-a', now - 10 * 60_000); // last activity 10m ago
   agent.state = 'running' as const;
   agent.lastActivityAt = now - 10 * 60_000;
+  agent.taskIds = ['ses_task-1'];        // the background dispatch's real handle (2026-08-13 — the directive must carry it)
   return {
     agent, wave,
+    name: 'agent-a',                     // the REAL agent name (2026-08-13 — the directive names it, never the '<agent>' placeholder)
     sessionStatus: 'running',
     statusReadFailed: false,
     lastTickBytes: 100,
@@ -66,6 +68,11 @@ describe('wave-cron — the 10m tick decisions (Part 5)', () => {
     expect(d.action).toBe('KILL_AND_RESPAWN');
     expect(d.pattern?.id).toBe('STUCK_NO_ACTIVITY');
     expect(d.directive).toContain('STUCK_NO_ACTIVITY');
+    // THE ID FIX (2026-08-13 — the operator's question): the directive carries
+    // the REAL agent name + the REAL session/task ids — never the placeholders.
+    expect(d.directive).toContain('agent-a');
+    expect(d.directive).toContain('sess-a');
+    expect(d.directive).toContain('ses_task-1');
   });
 
   test('STUCK_NO_ACTIVITY does NOT match a growing stream (the SLOW_LEGIT precedence)', () => {

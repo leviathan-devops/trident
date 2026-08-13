@@ -48,7 +48,7 @@ export function generateContainerTestPlan(
   script += `# Create opencode.json\n`;
   script += `cat > "$SNAP/opencode.json" << OPENEOL\n`;
   script += `{\n`;
-  script += `  "model": "deepseek/deepseek-chat",\n`;
+  script += `  "model": "deepseek/deepseek-v4-flash",\n`;
   script += `  "provider": {\n`;
   script += `    "deepseek": {\n`;
   script += `      "npm": "@ai-sdk/openai-compatible",\n`;

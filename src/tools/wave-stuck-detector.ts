@@ -29,6 +29,7 @@ export interface PatternFamily {
 export interface StuckEvidence {
   agent: AgentTrack;
   wave: WaveTrack;
+  name: string;                          // THE AGENT'S NAME KEY (2026-08-13 — the directive must name the REAL agent, never the literal '<agent>' placeholder)
   sessionStatus: string;                 // the session.status read
   statusReadFailed: boolean;             // the read itself failed (2026-08-07:
                                          // a READ FAILURE is NOT a session
@@ -98,17 +99,28 @@ export const PATTERNS: PatternFamily[] = [
 
 // THE DIRECTIVE BUILDER — the evidence named in the kill text (Part 5.3: "the
 // diagnosis first (the evidence named), the axe only on the matched evidence").
+// THE ID FIX (2026-08-13 — the operator's question: "does it return the exact
+// task/session IDs of the agents to investigate?" — the OLD builder fired the
+// literal '<agent>' placeholder + an EMPTY session id for background waves (the
+// sessionIds array is empty until the batch dispatch writes them; the REAL
+// handles are the taskIds). The directive now carries the REAL agent name +
+// the REAL session ids + the REAL taskIds — the orchestrator can investigate
+// THE EXACT sessions, never a placeholder.)
 function buildDirective(p: PatternFamily, e: StuckEvidence): string {
-  const agent = e.agent.sessionIds.length > 0
-    ? e.agent.sessionIds[e.agent.sessionIds.length - 1]
-    : '<unknown>';
+  const name = e.name || '<unknown-agent>';
+  const sids = e.agent.sessionIds.length > 0 ? e.agent.sessionIds.join(',') : 'none';
+  const tids = e.agent.taskIds && e.agent.taskIds.length > 0 ? e.agent.taskIds.join(',') : 'none';
+  const agentRef = name + ' (sessions: ' + sids + '; taskIds: ' + tids + ')';
   const ageMin = Math.round(e.lastActivityAgeMs / 60000);
   let evidence = '';
   if (p.id === 'STUCK_NO_ACTIVITY') evidence = 'no stream growth for ' + ageMin + 'm past the ETA';
   else if (p.id === 'PROVIDER_QUOTA') evidence = e.agent.errorCodes.join(', ') || 'quota/500 codes in the tail';
   else if (p.id === 'SESSION_CRASH') evidence = 'session status ' + e.sessionStatus;
   else evidence = 'the operator\'s decision';
-  return buildKillDirectiveText(e.wave.wave, p.id, '<agent>', evidence, agent);
+  const lastId = e.agent.sessionIds.length > 0
+    ? e.agent.sessionIds[e.agent.sessionIds.length - 1]
+    : (tids !== 'none' ? tids.split(',')[0] : '');
+  return buildKillDirectiveText(e.wave.wave, p.id, agentRef, evidence, lastId);
 }
 
 // THE DECISION — the pattern loop (the detector layer). The FIRST matched +

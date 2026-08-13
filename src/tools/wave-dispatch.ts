@@ -323,15 +323,15 @@ export async function executeWaveDispatch(
   // (5/10 generations failed: SHADOW_BRAIN_HTTP_500 ×2 + SHADOW_BRAIN_TIMEOUT
   // ×3 — the per-call lottery against the same flaky endpoint). The INTELLIGENT
   // async (the operator's law: "async/parallel is the DEFAULT... INTELLIGENT
-  // async systems"): a bounded pool (CONCURRENT_GENERATIONS = 3) keeps the
-  // wave's total ≈ the slowest agent AND caps the self-inflicted provider load
-  // (the 2026-08-08 live probes: the provider's latency grows with the queue
-  // depth — 35-50s per non-streamed 384K request). The per-agent telemetry
+  // async systems"): a bounded pool keeps the wave's total ≈ the slowest agent
+  // AND caps the self-inflicted provider load. THE CALIBRATION (the operator's
+  // ruling 2026-08-13: "raise this limit to 15"): CONCURRENT_GENERATIONS = 15 —
+  // a 12-agent wave generates in ONE slice; the cap still bounds the 25-agent
+  // maximum (the schema's cap) to two slices. The per-agent telemetry
   // (startedAt/finishedAt/durationMs) makes the async-parallel PROVABLE in the
-  // returned output (the forensics' fix #1: "the tool exposes NO telemetry to
-  // prove it"). Each agent's failures land in the manifest's failed list + the
-  // ERROR-* files (never a silent skip), exactly as before. ═══
-  const CONCURRENT_GENERATIONS = 3;
+  // returned output (the forensics' fix #1). Each agent's failures land in the
+  // manifest's failed list + the ERROR-* files (never a silent skip). ═══
+  const CONCURRENT_GENERATIONS = 15;
   const generated: Array<{ spec: AgentSpec; prompt: string; notes: string[]; startedAt: string; finishedAt: string; durationMs: number }> = [];
   const generationFailures: Array<{ name: string; error: string; startedAt?: string; durationMs?: number }> = [];
   const runOne = async (spec: AgentSpec): Promise<void> => {

@@ -55,7 +55,7 @@ export function generateDeploymentManifest(
   manifest += `\n### Config Template\n\n`;
   manifest += `\`\`\`json\n`;
   manifest += `{\n`;
-  manifest += `  "model": "deepseek/deepseek-chat",\n`;
+  manifest += `  "model": "deepseek/deepseek-v4-flash",\n`;
   manifest += `  "provider": {\n`;
   manifest += `    "deepseek": {\n`;
   manifest += `      "npm": "@ai-sdk/openai-compatible",\n`;
@@ -93,7 +93,7 @@ export function generateDeploymentManifest(
   manifest += `# Create config (customize model/provider)\n`;
   manifest += `cat > "$SNAP/opencode.json" << 'EOF'\n`;
   manifest += `{\n`;
-  manifest += `  "model": "deepseek/deepseek-chat",\n`;
+  manifest += `  "model": "deepseek/deepseek-v4-flash",\n`;
   manifest += `  "provider": {\n`;
   manifest += `    "deepseek": {\n`;
   manifest += `      "npm": "@ai-sdk/openai-compatible",\n`;

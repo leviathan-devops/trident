@@ -114,12 +114,14 @@ describe('wave-dispatch — the bounded-concurrency generation + the telemetry (
       { generator: sleeper },
     );
     const elapsed = Date.now() - t0;
-    expect(maxActive).toBeLessThanOrEqual(3);   // THE POOL BOUND — never all-4-at-once
-    expect(maxActive).toBeGreaterThanOrEqual(1);
+    // THE POOL BOUND (2026-08-13 — the operator's ruling: "raise this limit to
+    // 15"): the bound is now 15 — a 4-agent wave runs ALL 4 concurrently (one
+    // slice); the pool still caps the 25-agent maximum to two slices.
+    expect(maxActive).toBeLessThanOrEqual(15);
+    expect(maxActive).toBeGreaterThanOrEqual(4);   // the whole wave ran at once
     expect(r.dispatched.length).toBe(4);
-    // the pool: 2 slices of 3+1 → the total ≈ 2 × 25ms, NOT 4 × 25ms (the
-    // parallel within the slice) — the elapsed stays well under the sequential
-    // 100ms+ (the 25ms sleeps + the overhead)
+    // the pool: ONE slice of 4 concurrent 25ms sleeps → the total ≈ 25ms, NOT
+    // 4 × 25ms (the sequential) — the elapsed stays well under 90ms.
     expect(elapsed).toBeLessThan(90);
     expect(r.telemetry['b1'].status).toBe('ok');
     expect(r.telemetry['b4'].status).toBe('ok');
