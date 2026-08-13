@@ -61,6 +61,13 @@ export interface WaveCronClient {
   status(opts: { query?: Record<string, unknown> }): Promise<{ data?: { status?: string } | null }>;
   messages(opts: { path: { id: string }; query?: Record<string, unknown> }): Promise<{ data?: unknown[] | null }>;
   todo(opts: { path: { id: string } }): Promise<{ data?: unknown[] | null }>;
+  // THE MAIN-SESSION RESOLUTION (2026-08-13 — the live finding: the hook
+  // inputs carry sessionID 'default' in the container — the chat.message/event
+  // tether never gets the real id. The CLIENT's session list is the reliable
+  // source — the newest session IS the main session. P1-verified.)
+  session?: {
+    list(opts: Record<string, unknown>): Promise<{ data?: Array<{ id?: string }> | null }>;
+  };
   // THE KICK CHANNEL (2026-08-13 — the main-session self-heal): the TUI input
   // (appendPrompt + submitPrompt — the same channel the human typing in the
   // TUI uses). The live client exposes it (the wave-probe's P3 verified it).
@@ -68,6 +75,26 @@ export interface WaveCronClient {
     appendPrompt(opts: { body: { text: string } }): Promise<{ data?: unknown }>;
     submitPrompt(opts: Record<string, unknown>): Promise<{ data?: unknown }>;
   };
+}
+
+// THE MAIN-SESSION ID RESOLUTION (2026-08-13 — the tether fix): the hook
+// inputs carry 'default' (never the real id) — the cron falls back to the
+// CLIENT's session list (the newest session = the main session). Returns the
+// passed id when non-null, else the client-resolved id, else null.
+async function resolveMainSessionId(client: WaveCronClient | null, mainSessionId: string | null): Promise<string | null> {
+  if (mainSessionId && mainSessionId !== 'default') return mainSessionId;
+  if (!client || typeof client.session?.list !== 'function') return null;
+  try {
+    const res = await client.session.list({});
+    const sessions = (res?.data ?? []) as Array<{ id?: string }>;
+    for (let i = sessions.length - 1; i >= 0; i--) {
+      const sid = sessions[i]?.id;
+      if (sid && sid !== 'default') return sid;
+    }
+  } catch (e) {
+    tridentLog('WARN', 'wave-cron', 'the main-session resolution failed (the heal + the todo checks skip this tick): ' + (e instanceof Error ? e.message : String(e)));
+  }
+  return null;
 }
 
 export function startWaveCron(): void {
@@ -243,6 +270,9 @@ async function secondaryChecks(
   mainSessionId: string | null,
   opts: { openQueueCount?: number; todoTarget?: TodoReadTarget | null } = {},
 ): Promise<void> {
+  // THE MAIN-SESSION RESOLUTION (2026-08-13 — the tether fix): the hook
+  // inputs carry 'default' — the CLIENT's session list is the reliable id.
+  const healSessionId = await resolveMainSessionId(client, mainSessionId);
   // ═══ THE MAIN-SESSION SELF-HEAL (2026-08-13 — the operator's design) ═══
   // The main agent's generation can DROP mid-sentence (the provider cuts the
   // stream; the runtime FINALIZES the partial — the ▣ timestamp renders, the
@@ -255,12 +285,12 @@ async function secondaryChecks(
   // reactivate it. NO interrupt path, NO model switch (the operator's rulings
   // 2026-08-13 — both removed). The cooldown (10m — the cron interval) bounds
   // the kick rate. The fail-safe: a detection failure NEVER kicks.
-  if (mainSessionId && client && typeof client.tui?.appendPrompt === 'function') {
+  if (healSessionId && client && typeof client.tui?.appendPrompt === 'function') {
     try {
-      const heal = detectDroppedMainGeneration(mainSessionId);
-      tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL: session=' + mainSessionId + ' dropped=' + heal.dropped + ' reason=' + (heal.reason ?? 'none') + ' newest=' + (heal.newestPartType ?? 'none') + ' tail=' + JSON.stringify(heal.tail.slice(0, 60)));
+      const heal = detectDroppedMainGeneration(healSessionId);
+      tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL: session=' + healSessionId + ' dropped=' + heal.dropped + ' reason=' + (heal.reason ?? 'none') + ' newest=' + (heal.newestPartType ?? 'none') + ' tail=' + JSON.stringify(heal.tail.slice(0, 60)));
       if (heal.dropped) {
-        void kickMainSession(client as unknown as HealClient, mainSessionId).then((kr) => {
+        void kickMainSession(client as unknown as HealClient, healSessionId).then((kr) => {
           if (!kr.kicked && kr.error !== 'cooldown') {
             tridentLog('WARN', 'wave-cron', 'the main-session kick did not land: ' + (kr.error ?? 'unknown'));
           }
@@ -272,7 +302,7 @@ async function secondaryChecks(
       tridentLog('WARN', 'wave-cron', 'the main-session heal check failed (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
     }
   } else {
-    tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL SKIPPED: mainSessionId=' + String(mainSessionId) + ' client=' + (client ? 'yes' : 'no') + ' tui=' + (client && typeof client.tui?.appendPrompt === 'function' ? 'yes' : 'no'));
+    tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL SKIPPED: mainSessionId=' + String(healSessionId) + ' client=' + (client ? 'yes' : 'no') + ' tui=' + (client && typeof client.tui?.appendPrompt === 'function' ? 'yes' : 'no'));
   }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {

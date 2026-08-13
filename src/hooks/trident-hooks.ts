@@ -1289,6 +1289,14 @@ var chatMessageHook = async function(input: Record<string, unknown>, output: Rec
   try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] CHAT_AGENT_CHECK: agent="${agent}" isTrident=${isTridentAgent(agent)}\n`); } catch (e) { /* debug non-fatal */ }
   if (isTridentAgent(agent)) {
     setCurrentAgent(agent, sid);
+    // THE CRON MAIN-SESSION TETHER (2026-08-13 — the live finding: the event
+    // hook's sid resolution fell back to 'default' in the container → the
+    // cron's mainSessionId stayed NULL → the main-session self-heal SKIPPED
+    // (verified: 'MAIN-SESSION HEAL SKIPPED: mainSessionId=null'). The
+    // chat.message hook's sid IS the real session id — the agent registered
+    // under it (the status bar's agent identity proves it). The tether here
+    // gives the cron the real main session for the heal + the todo checks.
+    setCronMainSessionId(sid === 'default' ? null : sid);
     // Dual-write under 'default' — messages.transform does NOT receive sessionID
     // in its input (observed: sessionID=NONE) and must look the agent up under
     // the 'default' key. Same pattern as poseidonState.activate(sid)+('default').

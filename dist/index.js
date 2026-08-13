@@ -255947,6 +255947,24 @@ function isBackgroundTerminal(taskId) {
 var ENV_INTERVAL = parseInt(process.env.TRIDENT_WAVE_CRON_INTERVAL_MS ?? "", 10);
 var CRON_INTERVAL_MS = Number.isFinite(ENV_INTERVAL) && ENV_INTERVAL > 0 ? ENV_INTERVAL : 10 * 60 * 1000;
 var cronHandle = null;
+async function resolveMainSessionId(client, mainSessionId) {
+  if (mainSessionId && mainSessionId !== "default")
+    return mainSessionId;
+  if (!client || typeof client.session?.list !== "function")
+    return null;
+  try {
+    const res = await client.session.list({});
+    const sessions = res?.data ?? [];
+    for (let i = sessions.length - 1;i >= 0; i--) {
+      const sid = sessions[i]?.id;
+      if (sid && sid !== "default")
+        return sid;
+    }
+  } catch (e) {
+    tridentLog("WARN", "wave-cron", "the main-session resolution failed (the heal + the todo checks skip this tick): " + (e instanceof Error ? e.message : String(e)));
+  }
+  return null;
+}
 function startWaveCron() {
   if (cronHandle)
     return;
@@ -256064,12 +256082,13 @@ async function waveTick(client, mainSessionId, opts = {}) {
   await secondaryChecks(client, mainSessionId, opts);
 }
 async function secondaryChecks(client, mainSessionId, opts = {}) {
-  if (mainSessionId && client && typeof client.tui?.appendPrompt === "function") {
+  const healSessionId = await resolveMainSessionId(client, mainSessionId);
+  if (healSessionId && client && typeof client.tui?.appendPrompt === "function") {
     try {
-      const heal = detectDroppedMainGeneration(mainSessionId);
-      tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL: session=" + mainSessionId + " dropped=" + heal.dropped + " reason=" + (heal.reason ?? "none") + " newest=" + (heal.newestPartType ?? "none") + " tail=" + JSON.stringify(heal.tail.slice(0, 60)));
+      const heal = detectDroppedMainGeneration(healSessionId);
+      tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL: session=" + healSessionId + " dropped=" + heal.dropped + " reason=" + (heal.reason ?? "none") + " newest=" + (heal.newestPartType ?? "none") + " tail=" + JSON.stringify(heal.tail.slice(0, 60)));
       if (heal.dropped) {
-        kickMainSession(client, mainSessionId).then((kr) => {
+        kickMainSession(client, healSessionId).then((kr) => {
           if (!kr.kicked && kr.error !== "cooldown") {
             tridentLog("WARN", "wave-cron", "the main-session kick did not land: " + (kr.error ?? "unknown"));
           }
@@ -256081,7 +256100,7 @@ async function secondaryChecks(client, mainSessionId, opts = {}) {
       tridentLog("WARN", "wave-cron", "the main-session heal check failed (non-fatal): " + (healErr instanceof Error ? healErr.message : String(healErr)));
     }
   } else {
-    tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL SKIPPED: mainSessionId=" + String(mainSessionId) + " client=" + (client ? "yes" : "no") + " tui=" + (client && typeof client.tui?.appendPrompt === "function" ? "yes" : "no"));
+    tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL SKIPPED: mainSessionId=" + String(healSessionId) + " client=" + (client ? "yes" : "no") + " tui=" + (client && typeof client.tui?.appendPrompt === "function" ? "yes" : "no"));
   }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {
@@ -256893,6 +256912,7 @@ var chatMessageHook = async function(input, output) {
   } catch (e) {}
   if (isTridentAgent(agent)) {
     setCurrentAgent(agent, sid);
+    setCronMainSessionId(sid === "default" ? null : sid);
     setCurrentAgent(agent, "default");
     var inputModel = input?.model;
     if (inputModel && typeof inputModel === "object" && inputModel.providerID && inputModel.modelID) {
