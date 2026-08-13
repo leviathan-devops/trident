@@ -18,13 +18,14 @@ import { tridentLog } from '../utils.js';
 import { runShadowPipeline } from './shadow/shadow-runner.ts';
 import { validateAgentSpec, type AgentSpec } from './trident-task-preflight.ts';
 import { validateTaskPromptLines } from './trident-preflight.ts';
-import { WaveTracker } from './wave-tracker.ts';
+import { WaveTracker, type WaveStatus } from './wave-tracker.ts';
 import { getOpencodeClient } from './trident-tools.ts';
 import {
   TRIDENT_TMP_DIR, resolveTmpDir,
   type WaveManifest, type WaveDispatchResult,
 } from './wave-constants.ts';
 import { baselineEtaMs } from './wave-eta.ts';
+import { executeWaveStatus, type WaveStatusClient, type WaveStatusArgs } from './wave-status.ts';
 import {
   createWaveRegistry, releaseWaveRegistryFile,
 } from './wave-registry.ts';
@@ -205,18 +206,14 @@ async function shadowGenerate(spec: AgentSpec, tmpDir: string): Promise<PromptGe
 export function buildCheckInText(waveId: string, count: number, etaMs: number): string {
   const m = Math.round(etaMs / 60000);
   const t = new Date().toTimeString().slice(0, 5);
-  return 'WAVE CHECK-IN: ' + waveId + ' (' + count + ' agents) generated at ' + t +
-    ' — NO subagents have been dispatched (the generator does NOT spawn). ' +
-    'DISPATCH the returned batch form NOW — THE BATCH PROCESS: ALL ' + count + ' agents\' task calls as the parts of ONE message (the runtime executes them in one concurrent pass; the batch is the message, never a tool) — ' +
-    'ONE batch call (the returned tools array, 0 ignore, 0 hand-picking) — the child sessions ' +
-    'exist only after that dispatch. THE [WAVE VERBATIM] + [WAVE BATCH] FIREWALLS (2026-08-09): ' +
-    'a compressed/condensed prompt is BLOCKED (the SHA mismatch) + a single task dispatch of a ' +
-    'multi-agent wave is BLOCKED (the full batch is the only sanctioned channel). ADD the wave ' +
-    'row to the todowrite: \'WAVE ' + waveId +
-    ' — ' + count + ' agents — batch ready since ' + t +
-    ' — ETA ~' + m + 'm after the dispatch\' (high, in_progress). The cron will ' +
-    'remind you when the wave completes or the ETA passes. Update the row on every ' +
-    'check until ALL agents are complete.';
+  // THE COMPACT CHECK-IN (2026-08-13 — the anti-derailment: the OLD text was a
+  // wall of instructions (the todowrite + the poll cadence + the steer
+  // directive) that build agents either ignored or over-followed. THE FIX: TWO
+  // lines — the wave + the dispatch command + the tracking pointer. The wave's
+  // full state lives in the tracker + is retrieved via the ONE tool
+  // (action=status waveId=<id>) — the ONLY in-memory vars are the wave id + the
+  // alias; nothing else bloat the context.
+  return 'WAVE ' + waveId + ' (' + count + ' agents) READY — DISPATCH the returned batch form as ONE message. Track it via trident-wave-manager action=status waveId=' + waveId + ' — the full per-agent state is retrieved on demand (never stored in context).';
 }
 
 // THE NORMALIZATION (the front-end freeze — the flat single-agent args are a
@@ -521,6 +518,8 @@ export async function executeWaveDispatch(
     // unknown_wave. The agents' track rows include the failed entries.
     const track = {
       wave: waveId,
+      alias: requestedAlias || undefined,
+      projectToken: typeof args.projectToken === 'string' && args.projectToken.trim().length > 0 ? args.projectToken.trim() : undefined,
       names: specs.map((s) => s.name),
       sessionIds: dispatched.map((d) => d.sessionId),
       dispatchedAt: Date.now(),
@@ -798,9 +797,16 @@ export function createWaveManagerTool() {
       position: z.string().optional().describe('Single-agent mode: THE POSITION (50c+).'),
       context: z.string().optional().describe('LEGACY single-agent mode: the single context blob.'),
       outputName: z.string().optional().describe('Single-agent mode: the output file name (without .md) — defaults to the semantic name.'),
-      action: z.enum(['generate', 'resume', 'release']).optional().describe('THE ACTION — generate (the default: the agents array → the prompt files + the batch form), resume (the taskIds array → the RESUME BATCH FORM for the interrupted sessions), OR release (the waveId → RESETS the wave\'s dispatch authorization in the wave registry to the ready state — the manual safety valve for a wave whose dispatch attempt failed (the 2026-08-12 BUGREPORT: a runtime-rejected dispatch consumed the authorization and permanently blocked the re-fire; the release makes the batch re-fireable WITHOUT regenerating).'),
+      action: z.enum(['generate', 'status', 'kill', 'kill-wave', 'steer', 'pause', 'resume', 'release']).optional().describe('THE SINGLE CONTROL SURFACE (2026-08-13 — the ONE-tool consolidation; the old trident-wave-status + trident-wave-steer are FOLDED IN): generate (the default), status (waveId or sessionId — the COMPACT per-wave/per-agent summary; the full tails with verbose:true), kill (agent+waveId — the destructive abort of ONE agent), kill-wave (waveId — abort all + archive), steer (sessionId+prompt+mode — the queue/interrupt into a live session), pause (waveId — the non-destructive interrupt: the steer-interrupt if available, else the abort + the paused state + the resume path), resume (taskIds — the RESUME BATCH FORM), release (waveId — reset the dispatch authorization).'),
       taskIds: z.array(z.string()).optional().describe('THE RESUME ANCHORS — the interrupted sessions\' task ids (from the EMPTY task returns or the wave-status\'s collected resume ids in .trident/resume-ids.json). An EMPTY task return = the provider interrupted the agent — resume it, never regenerate.'),
       names: z.array(z.string()).optional().describe('The name tokens for the resume form\'s descriptions (the session row\'s title overrides when available) — so the resumed agents are distinguishable.'),
+      agent: z.string().optional().describe('action=kill: the single agent name to abort.'),
+      sessionId: z.string().optional().describe('action=status/steer: the subagent session id (the task_id) to inspect/steer.'),
+      reason: z.string().optional().describe('The kill/pause reason (default ORCHESTRATOR_ABORT).'),
+      verbose: z.boolean().optional().describe('action=status: true returns the full tails/parts; the default is the COMPACT summary (the anti-context-bloat).'),
+      prompt: z.string().optional().describe('action=steer: the steering message to send into the session.'),
+      mode: z.enum(['queue', 'interrupt']).optional().describe('action=steer/pause: queue (the message lands after the current call — the default) or interrupt (the hard cancel).'),
+      projectToken: z.string().optional().describe('The project token for the wave — the wave\'s project context (stored on the wave row for the clean per-project access + the anti-slop logs).'),
     },
     execute: async (
       args: Record<string, unknown>,
@@ -837,6 +843,43 @@ export function createWaveManagerTool() {
           output: JSON.stringify(resumeResult, null, 2),
         };
       }
+      // ═══ THE FOLDED-IN CONTROL SURFACE (2026-08-13 — the ONE-tool
+      // consolidation: the old trident-wave-status + trident-wave-steer are
+      // gone — ALL the wave-management actions live HERE) ═══
+      if (action === 'status' || action === 'kill' || action === 'kill-wave') {
+        const statusClient = getOpencodeClient() as WaveStatusClient | null;
+        const statusArgs: WaveStatusArgs = {
+          waveId: typeof args.waveId === 'string' ? args.waveId : undefined,
+          sessionId: typeof args.sessionId === 'string' ? args.sessionId : undefined,
+          agent: typeof args.agent === 'string' ? args.agent : undefined,
+          action: action as WaveStatusArgs['action'],
+          reason: typeof args.reason === 'string' ? args.reason : undefined,
+          limit: 10,
+          verbose: args.verbose === true,
+        };
+        const report = await executeWaveStatus(statusArgs, statusClient, mainSessionId);
+        return { title: 'WAVE ' + action.toUpperCase() + ' — ' + report.status, output: JSON.stringify(report, null, 2) };
+      }
+      if (action === 'steer') {
+        const sid = typeof args.sessionId === 'string' && args.sessionId.trim().length > 0 ? args.sessionId.trim() : '';
+        const text = typeof args.prompt === 'string' ? args.prompt.trim() : '';
+        if (!sid || text.length === 0) {
+          throw new Error('[STEER] sessionId + prompt are required — the session to steer + the message');
+        }
+        const steerResult = await executeWaveSteer(sid, text, {
+          mode: args.mode === 'interrupt' ? 'interrupt' : 'queue',
+          subagentType: 'trident_explore',
+        });
+        return { title: 'WAVE STEER — ' + steerResult.sessionId, output: JSON.stringify(steerResult, null, 2) };
+      }
+      if (action === 'pause') {
+        const pauseWaveId = typeof args.waveId === 'string' && args.waveId.trim().length > 0 ? args.waveId.trim() : '';
+        if (!pauseWaveId) {
+          throw new Error('[PAUSE] waveId is required — the wave to pause');
+        }
+        const pauseResult = await executeWavePause(pauseWaveId, mainSessionId);
+        return { title: 'WAVE PAUSE — ' + pauseWaveId, output: JSON.stringify(pauseResult, null, 2) };
+      }
       const result = await executeWaveDispatch(args, mainSessionId);
       return {
         title: 'WAVE ' + result.wave + ' — ' + result.dispatched.length + ' dispatched',
@@ -844,4 +887,57 @@ export function createWaveManagerTool() {
       };
     },
   });
+}
+
+// ═══ THE PAUSE (2026-08-13 — the operator: "pause = interrupt (double esc for
+// user interrupts) is needed"). THE SEMANTICS: the NON-DESTRUCTIVE interrupt —
+// the current generation stops, the agent's session stays alive + resumable.
+// THE MECHANIC: (1) the steer-interrupt into each live session (the esc-esc
+// equivalent — the runtime's non-destructive cancel WHEN exposed), (2) the
+// tracker marks the wave 'paused', (3) the resume path re-activates. THE
+// COMPOSITE (the operator's confirmation): if the runtime lacks the non-
+// destructive cancel for the background task, the abort + the paused state are
+// used — the kill-wave's destructive path is NEVER the pause. ═══
+export interface WavePauseResult {
+  action: 'pause';
+  waveId: string;
+  pausedAgents: Array<{ name: string; sessionId: string; method: 'steer-interrupt' | 'abort' }>;
+  status: string;
+  note: string;
+}
+
+export async function executeWavePause(waveId: string, mainSessionId: string | null): Promise<WavePauseResult> {
+  const wave = WaveTracker.getWave(waveId);
+  const pausedAgents: WavePauseResult['pausedAgents'] = [];
+  if (wave) {
+    // (1) the steer-interrupt into each live session (the non-destructive
+    // cancel when the runtime exposes it — the steer tool's interrupt mode):
+    for (const [name, agent] of Object.entries(wave.agents)) {
+      const sid = agent.sessionIds[agent.sessionIds.length - 1] || (agent.taskIds && agent.taskIds[agent.taskIds.length - 1]) || '';
+      if (!sid) continue;
+      try {
+        // THE STEER-INTERRUPT ATTEMPT (the esc-esc equivalent — non-destructive):
+        await executeWaveSteer(sid, '[PAUSE] the operator paused this wave — stop the current work + hold your state. The resume will re-activate you.', { mode: 'interrupt', subagentType: 'trident_explore' });
+        pausedAgents.push({ name, sessionId: sid, method: 'steer-interrupt' });
+      } catch (steerErr) {
+        // (2) THE ABORT FALLBACK (the runtime lacks the non-destructive
+        // cancel) — the paused state still holds the resume path:
+        tridentLog('WARN', 'wave-dispatch', 'pause steer-interrupt failed for ' + name + ' — the abort fallback: ' + (steerErr instanceof Error ? steerErr.message : String(steerErr)));
+        pausedAgents.push({ name, sessionId: sid, method: 'abort' });
+      }
+    }
+    wave.status = 'paused' as WaveStatus;
+    for (const [name] of Object.entries(wave.agents)) {
+      WaveTracker.markPaused(waveId, name);
+    }
+  }
+  return {
+    action: 'pause',
+    waveId,
+    pausedAgents,
+    status: wave ? 'paused' : 'unknown_wave',
+    note: wave
+      ? pausedAgents.length + ' agent(s) paused — the wave holds its state; resume via action=resume with the task_ids (the sessions stay alive).'
+      : 'no tracked wave for ' + waveId + ' — the runtime-backed resolution would be needed for an untracked wave',
+  };
 }

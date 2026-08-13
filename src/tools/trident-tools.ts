@@ -21,8 +21,6 @@ import { createShipPackageTool } from './trident-ship-package.js';
 import { createPreflightTool } from './trident-preflight.ts';
 
 import { createWaveManagerTool } from './wave-dispatch.ts';
-import { createWaveStatusTool } from './wave-status-tool.ts';
-import { createWaveSteerTool } from './wave-steer-tool.ts';
 import { createWaveProbeTool } from './wave-probe-tool.ts';
 import { contextSynthesisEngine } from '../modes/context-synthesis-engine.js';
 import * as fsSync from 'fs';
@@ -2744,12 +2742,6 @@ ${specs.map(s => `  - ${s.name} [${s.type}]: ${s.lines} lines [${s.status}]`).jo
     // spawns). THE SINGLE TOOL — the legacy generator/dispatch names are NOT
     // registered (the operator's mandate: ONE wave manager tool):
     'trident-wave-manager': createWaveManagerTool(),
-    // THE WATCH INSTRUMENT (Part 23 — the orchestrator's control surface):
-    'trident-wave-status': createWaveStatusTool(),
-    // THE STEERING SURFACE (2026-08-12 — the orchestration overhaul): send any
-    // prompt into an EXISTING subagent session (the resume channel cloned + the
-    // input mechanism modified; queue by default, interrupt conditional):
-    'trident-wave-steer': createWaveSteerTool(),
     // THE PHASE-0 PROBE TOOL (Part 8/18 — the temporary load-bearing verifications):
     'trident-wave-probe': createWaveProbeTool(),
     // THE TASK-PREFLIGHT TOOL REMOVED (2026-08-08 — the operator: "we should

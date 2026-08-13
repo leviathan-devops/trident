@@ -635,3 +635,13 @@ THE POOL: the wave generation runs CONCURRENT_GENERATIONS = 15 as a CAP (splice(
 - **The wave-id naming:** wave-<sanitized-alias>-<epoch> (waveId='persistence-demo' → wave-persistence-demo-<epoch>) — distinguishable tokens, live-proven.
 - **Verification:** 409/409 unit, tsc 0, the container: the named id + the tracker file + the post-restart load.
 - **Dist:** 8a8fe69bae2251a0c6f3cc2472829d5d48e175a2f811ad93ff2ad7a1b5755b7b.
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE ONE-TOOL + THE SQLITE TRACKER + THE COMPACT CONTEXT
+
+- **The one-tool consolidation:** trident-wave-manager = ALL the wave actions (generate/status/kill/kill-wave/steer/pause/resume/release); the old trident-wave-status + trident-wave-steer REMOVED (the clean break — no backward compat).
+- **The pause:** the non-destructive interrupt (the steer-interrupt/abort composite) + the 'paused' tracker state + the resume path — container-verified.
+- **The compact context:** the two-line check-in + the compact status default (the wave + the alias + the projectToken + the per-agent one-liners) + the verbose flag — the anti-context-bloat + the anti-derailment.
+- **The sqlite tracker:** trident-waves.sqlite (WAL + busy-timeout + the row-keyed upserts + the write-retry + the stale prune + the projectToken) — the 8-parallel-session hardening, container-verified (both concurrent rows survive).
+- **Verification:** 411/411 unit, tsc 0, the container (the named id + the alias + the token + the pause).
+- **Dist:** b2ed69d8d946929d4c2ce4e09b4d6be15c4342cc9a84a60c67e009112fc85cc5.

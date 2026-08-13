@@ -85,6 +85,8 @@ export interface WaveDispatchResult {
 // THE WAVE-STATUS REPORT (Part 23.2 — the orchestrator's view):
 export interface WaveStatusReport {
   wave: string;
+  alias?: string | null;         // NEW (2026-08-13): the wave's alias token (the navigation input)
+  projectToken?: string | null;  // NEW (2026-08-13): the wave's project token
   status: string;
   etaMs: number;
   etaConfidence: number;

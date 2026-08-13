@@ -27,6 +27,7 @@ export interface WaveStatusArgs {
   agent?: string;
   action?: 'status' | 'kill' | 'kill-wave';
   reason?: string;
+  verbose?: boolean;                 // NEW (2026-08-13): false/absent = the COMPACT summary; true = the full tails/parts
   limit?: number;                        // NEW (2026-08-12): the stream page size (default 50, max 500)
   beforeId?: string;                     // NEW (2026-08-12): the stream page cursor (FULL SCROLL back)
 }
@@ -200,6 +201,22 @@ export function readSessionStream(
 }
 
 // THE PER-AGENT REPORT — the live reads (the sessions are the truth):
+// THE COMPACT PER-AGENT ENTRY (2026-08-13 — the anti-context-bloat design:
+// the model's context holds ONLY the wave hash + the alias token; the status
+// default is the COMPACT summary — the minimal navigation data per agent. The
+// FULL detail (the tails, the parts, the error codes) comes only with the
+// verbose flag — retrieved on demand, never dumped into the context.)
+function compactAgent(name: string, agent: AgentTrack): Record<string, unknown> {
+  const sid = agent.sessionIds[agent.sessionIds.length - 1] ?? '';
+  return {
+    name,
+    state: agent.state,
+    sessionId: sid,
+    taskId: agent.taskIds && agent.taskIds.length > 0 ? agent.taskIds[agent.taskIds.length - 1] : undefined,
+    lastActivity: agent.lastActivityAt ? fmtAge(Date.now() - agent.lastActivityAt) : null,
+  };
+}
+
 async function reportAgent(
   client: WaveStatusClient,
   wave: WaveTrack,
@@ -451,10 +468,16 @@ export async function executeWaveStatus(
     };
   }
   const entries = Object.entries(wave.agents);
-  const agents = await Promise.all(entries.map(([name, agent]) => reportAgent(client, wave, name, agent)));
+  // THE COMPACT-vs-VERBOSE (2026-08-13 — the anti-context-bloat: the default
+  // report = the wave hash + the alias + the per-agent one-liners (the
+  // navigation data ONLY); the full tails/parts/error-codes come with verbose).
+  const agents = args.verbose === true
+    ? await Promise.all(entries.map(([name, agent]) => reportAgent(client, wave, name, agent)))
+    : entries.map(([name, agent]) => compactAgent(name, agent));
   const orphanCheck = mainSessionId ? await scanOrphanedChildren(client, mainSessionId, entries.map(([, a]) => a.sessionIds[a.sessionIds.length - 1])) : [];
   return {
-    wave: waveId, status: wave.status, etaMs: wave.etaMs,
+    wave: waveId, alias: wave.alias ?? null, projectToken: wave.projectToken ?? null,
+    status: wave.status, etaMs: wave.etaMs,
     etaConfidence: wave.etaConfidence, elapsedMs: Date.now() - wave.dispatchedAt,
     agents,
     ...(orphanCheck.length > 0 ? { note: 'orphaned children (no tracker match): ' + orphanCheck.join(', ') } : {}),

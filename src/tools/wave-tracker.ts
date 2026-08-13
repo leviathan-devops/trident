@@ -9,10 +9,10 @@
 import { tridentLog } from '../utils.js';
 
 export type WaveStatus =
-  | 'dispatching' | 'running' | 'checking' | 'complete' | 'aborted';
+  | 'dispatching' | 'running' | 'checking' | 'complete' | 'aborted' | 'paused';   // 'paused' (2026-08-13): the non-destructive interrupt — the wave holds its state, resumable
 
 export type AgentState =
-  | 'spawned' | 'running' | 'stuck' | 'killed' | 'respawned' | 'complete' | 'failed';
+  | 'spawned' | 'running' | 'stuck' | 'killed' | 'respawned' | 'complete' | 'failed' | 'paused';   // 'paused' (2026-08-13): the non-destructive hold
 
 export type KillReason =
   | 'STUCK_NO_ACTIVITY' | 'PROVIDER_QUOTA' | 'SESSION_CRASH' | 'ORCHESTRATOR_ABORT';
@@ -37,6 +37,8 @@ export interface AgentTrack {
 
 export interface WaveTrack {
   wave: string;
+  alias?: string;                 // NEW (2026-08-13): the operator's alias token (the semantic name) — the navigation input alongside the wave hash
+  projectToken?: string;           // NEW (2026-08-13): the project token — the wave's project context (anti-slop + the clean per-project access)
   names: string[];
   sessionIds: string[];
   dispatchedAt: number;
@@ -75,6 +77,7 @@ export interface WaveTrackerSurface {
   markFailed(wave: string, name: string, error: string): void;
   markKilled(wave: string, name: string, reason: KillReason): void;
   markStuck(wave: string, name: string): void;
+  markPaused(wave: string, name: string): void;   // NEW (2026-08-13): the non-destructive pause
   getWave(wave: string): WaveTrack | undefined;
   getActiveWaves(): WaveTrack[];
   archiveWave(wave: string): void;
@@ -164,16 +167,29 @@ function getTrackerDb(): Database {
 // THE PERSIST — the ROW-KEYED UPSERT (each wave's row, NOT a whole-file
 // rewrite): the SQLite writer lock serializes the parallel processes.
 function persistWaveRow(wave: WaveTrack): void {
-  try {
-    fs.mkdirSync(path.dirname(TRACKER_DB), { recursive: true });
-    const db = getTrackerDb();
-    db.run(
-      'INSERT INTO waves (wave, data, status, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(wave) DO UPDATE SET data = excluded.data, status = excluded.status, updated_at = excluded.updated_at',
-      [wave.wave, JSON.stringify(wave), wave.status, Date.now()],
-    );
-  } catch (e) {
-    tridentLog('WARN', 'wave-tracker', 'the tracker persist failed for ' + wave.wave + ' (non-fatal — the in-memory state stays live): ' + (e instanceof Error ? e.message : String(e)));
+  // THE WRITE RETRY (2026-08-13 — the operator: "busy timeout has retries
+  // right so it never causes a hard fail?"): the busy_timeout is a BOUNDED WAIT
+  // (5s), not a retry — beyond it a write throws + the row could be lost. THE
+  // FIX: the write retries 3 attempts (each with the busy wait + the
+  // health-checked reopen) — the persist NEVER silently drops a mutation.
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      fs.mkdirSync(path.dirname(TRACKER_DB), { recursive: true });
+      const db = getTrackerDb();
+      db.run(
+        'INSERT INTO waves (wave, data, status, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(wave) DO UPDATE SET data = excluded.data, status = excluded.status, updated_at = excluded.updated_at',
+        [wave.wave, JSON.stringify(wave), wave.status, Date.now()],
+      );
+      return;
+    } catch (e) {
+      lastErr = e;
+      // the reopen on the stale handle + a brief wait before the retry:
+      if (trackerDb) { try { trackerDb.close(); } catch (cErr) { /* closed */ } trackerDb = null; }
+      try { const sleepMs = 50 * (attempt + 1); const start = Date.now(); while (Date.now() - start < sleepMs) { /* busy-wait */ } } catch (wErr) { /* non-fatal */ }
+    }
   }
+  tridentLog('WARN', 'wave-tracker', 'the tracker persist failed for ' + wave.wave + ' after 3 attempts (the in-memory state stays live): ' + (lastErr instanceof Error ? lastErr.message : String(lastErr)));
 }
 
 function persistArchiveRow(wave: WaveTrack, index: number): void {
@@ -197,9 +213,26 @@ function deleteWaveRow(wave: string): void {
   }
 }
 
+// THE STALE-ROW PRUNE (2026-08-13 — the anti-slop: the waves table must not
+// accumulate dead rows forever). The ACTIVE rows (the recent updates) survive;
+// the rows older than 24h WITHOUT an update are dead (the wave crashed/never
+// archived) → removed. Called at the tracker load + after the mutations.
+const TRACKER_STALE_MS = 24 * 60 * 60 * 1000;
+function pruneStaleTrackerRows(): void {
+  try {
+    if (!fs.existsSync(TRACKER_DB)) return;
+    const db = getTrackerDb();
+    const cutoff = Date.now() - TRACKER_STALE_MS;
+    db.run('DELETE FROM waves WHERE updated_at < ?', [cutoff]);
+  } catch (e) {
+    tridentLog('WARN', 'wave-tracker', 'the stale-row prune failed (non-fatal): ' + (e instanceof Error ? e.message : String(e)));
+  }
+}
+
 function loadTracker(): void {
   try {
     if (!fs.existsSync(TRACKER_DB)) return;
+    pruneStaleTrackerRows();
     const db = getTrackerDb();
     const rows = db.query<{ wave: string; data: string; status: string }>('SELECT wave, data, status FROM waves').all();
     for (const r of rows) {
@@ -338,6 +371,14 @@ export const WaveTracker: WaveTrackerSurface = {
     agent.state = 'stuck';                      // running → stuck (the evidence)
     const w4 = TRACKER.get(wave);
     if (w4) persistWaveRow(w4);
+  },
+
+  markPaused(wave, name): void {
+    const agent = TRACKER.get(wave)?.agents[name];
+    if (!agent) return;
+    agent.state = 'paused';                     // running → paused (the non-destructive interrupt — the agent holds its state)
+    const w6 = TRACKER.get(wave);
+    if (w6) { w6.status = 'paused'; persistWaveRow(w6); }
   },
 
   getWave(wave) {

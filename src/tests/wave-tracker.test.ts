@@ -165,3 +165,29 @@ describe('THE TRACKER PERSISTENCE (2026-08-13 - the failure doc: the tracker mus
     } finally { db.close(); }
   });
 });
+
+describe('THE PAUSE (2026-08-13 — the non-destructive interrupt)', () => {
+  test('markPaused sets the agent + the wave to the paused state + persists', () => {
+    const wave = WaveTracker.registerWave({
+      wave: 'wave-pause-test', names: ['a1'], sessionIds: ['s-p'], dispatchedAt: Date.now(),
+      etaMs: 600000, etaConfidence: 0.5, agents: {},
+    });
+    WaveTracker.registerAgent(wave, 'a1', 's-p');
+    WaveTracker.markPaused(wave, 'a1');
+    const w = WaveTracker.getWave(wave);
+    expect(w?.status).toBe('paused');
+    expect(w?.agents['a1'].state).toBe('paused');
+    // the persisted row carries the paused state (the anti-slop + the resume path):
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const tf = process.env.TRIDENT_TRACKER_DB || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', 'trident-waves.sqlite');
+    const sqlite = require('bun:sqlite');
+    const db = new sqlite.Database(tf);
+    try {
+      const row = db.query('SELECT data FROM waves WHERE wave = ?').get('wave-pause-test') as { data: string } | null;
+      expect(row).not.toBeNull();
+      expect(JSON.parse(row!.data).status).toBe('paused');
+    } finally { db.close(); }
+  });
+});
