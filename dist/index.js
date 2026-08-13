@@ -373,8 +373,8 @@ var init_utils = __esm(() => {
   };
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate-dev.cjs.js
-var require_xstate_dev_cjs = __commonJS((exports) => {
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate-dev.development.cjs.js
+var require_xstate_dev_development_cjs = __commonJS((exports) => {
   Object.defineProperty(exports, "__esModule", { value: true });
   function getGlobal() {
     if (typeof globalThis !== "undefined") {
@@ -388,6 +388,9 @@ var require_xstate_dev_cjs = __commonJS((exports) => {
     }
     if (typeof global !== "undefined") {
       return global;
+    }
+    {
+      console.warn("XState could not find a global object in this environment. Please let the maintainers know and raise an issue here: https://github.com/statelyai/xstate/issues");
     }
   }
   function getDevTools() {
@@ -420,9 +423,9 @@ var require_xstate_dev_cjs = __commonJS((exports) => {
   exports.registerService = registerService;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/raise-7c948725.cjs.js
-var require_raise_7c948725_cjs = __commonJS((exports) => {
-  var dist_xstateDev = require_xstate_dev_cjs();
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/raise-964cd4e9.development.cjs.js
+var require_raise_964cd4e9_development_cjs = __commonJS((exports) => {
+  var dist_xstateDev = require_xstate_dev_development_cjs();
 
   class Mailbox {
     constructor(_process) {
@@ -609,6 +612,11 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
         self: self2
       });
     }
+    if (!!mapper && typeof mapper === "object" && Object.values(mapper).some((val) => typeof val === "function")) {
+      console.warn(`Dynamically mapping values to individual properties is deprecated. Use a single function that returns the mapped object instead.
+Found object containing properties whose values are possibly mapping functions: ${Object.entries(mapper).filter(([, value]) => typeof value === "function").map(([key, value]) => `
+ - ${key}: ${value.toString().replace(/\n\s*/g, "")}`).join("")}`);
+    }
     return mapper;
   }
   function isArray(value) {
@@ -668,6 +676,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     if (!descriptor.endsWith(".*")) {
       return false;
     }
+    if (/.*\*.+/.test(descriptor)) {
+      console.warn(`Wildcards can only be the last token of an event descriptor (e.g., "event.*") or the entire event descriptor ("*"). Check the "${descriptor}" event.`);
+    }
     const partialEventTokens = descriptor.split(".");
     const eventTokens = eventType.split(".");
     for (let tokenIndex = 0;tokenIndex < partialEventTokens.length; tokenIndex++) {
@@ -675,6 +686,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
       const eventToken = eventTokens[tokenIndex];
       if (partialEventToken === "*") {
         const isLastToken = tokenIndex === partialEventTokens.length - 1;
+        if (!isLastToken) {
+          console.warn(`Infix wildcards in transition events are not allowed. Check the "${descriptor}" transition.`);
+        }
         return isLastToken;
       }
       if (partialEventToken !== eventToken) {
@@ -821,7 +835,7 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     };
     return system;
   }
-  var executingCustomAction = false;
+  exports.executingCustomAction = false;
   var $$ACTOR_TYPE = 1;
   var ProcessingStatus = /* @__PURE__ */ function(ProcessingStatus2) {
     ProcessingStatus2[ProcessingStatus2["NotStarted"] = 0] = "NotStarted";
@@ -936,12 +950,12 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
             if (!action.exec) {
               return;
             }
-            const saveExecutingCustomAction = executingCustomAction;
+            const saveExecutingCustomAction = exports.executingCustomAction;
             try {
-              executingCustomAction = true;
+              exports.executingCustomAction = true;
               action.exec(action.info, action.params);
             } finally {
-              executingCustomAction = saveExecutingCustomAction;
+              exports.executingCustomAction = saveExecutingCustomAction;
             }
           };
           if (this._processingStatus === ProcessingStatus.Running) {
@@ -1256,11 +1270,19 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     }
     _send(event) {
       if (this._processingStatus === ProcessingStatus.Stopped) {
+        {
+          const eventString = JSON.stringify(event);
+          console.warn(`Event "${event.type}" was sent to stopped actor "${this.id} (${this.sessionId})". This actor has already reached its final state, and will not transition.
+Event: ${eventString}`);
+        }
         return;
       }
       this.mailbox.enqueue(event);
     }
     send(event) {
+      if (typeof event === "string") {
+        throw new Error(`Only event objects may be sent to actors; use .send({ type: "${event}" }) instead`);
+      }
       this.system._relay(undefined, this, event);
     }
     attachDevTools() {
@@ -1285,6 +1307,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
       return this;
     }
     getSnapshot() {
+      if (!this._snapshot) {
+        throw new Error(`Snapshot can't be read while the actor initializes itself`);
+      }
       return this._snapshot;
     }
   }
@@ -1306,7 +1331,11 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     });
   }
   function cancel(sendId) {
-    function cancel2(_args, _params) {}
+    function cancel2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     cancel2.type = "xstate.cancel";
     cancel2.sendId = sendId;
     cancel2.resolve = resolveCancel;
@@ -1338,6 +1367,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
         systemId,
         input: resolvedInput
       });
+    }
+    if (!actorRef) {
+      console.warn(`Actor type '${src}' not found in machine '${actorScope.id}'.`);
     }
     return [cloneMachineSnapshot(snapshot, {
       children: {
@@ -1371,7 +1403,11 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     input,
     syncSnapshot = false
   } = {}]) {
-    function spawnChild2(_args, _params) {}
+    function spawnChild2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     spawnChild2.type = "xstate.spawnChild";
     spawnChild2.id = id;
     spawnChild2.systemId = systemId;
@@ -1421,7 +1457,11 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     });
   }
   function stopChild(actorRef) {
-    function stop2(_args, _params) {}
+    function stop2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     stop2.type = "xstate.stopChild";
     stop2.actorRef = actorRef;
     stop2.resolve = resolveStop;
@@ -1440,7 +1480,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
   }
   function stateIn(stateValue) {
     function stateIn2() {
-      return false;
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
     }
     stateIn2.check = checkStateIn;
     stateIn2.stateValue = stateValue;
@@ -1456,7 +1498,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
   }
   function not(guard) {
     function not2(_args, _params) {
-      return false;
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
     }
     not2.check = checkNot;
     not2.guards = [guard];
@@ -1472,7 +1516,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
   }
   function and(guards) {
     function and2(_args, _params) {
-      return false;
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
     }
     and2.check = checkAnd;
     and2.guards = guards;
@@ -1488,7 +1534,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
   }
   function or(guards) {
     function or2(_args, _params) {
-      return false;
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
     }
     or2.check = checkOr;
     or2.guards = guards;
@@ -1665,6 +1713,9 @@ var require_raise_7c948725_cjs = __commonJS((exports) => {
     const normalizedTarget = normalizeTarget(transitionConfig.target);
     const reenter = transitionConfig.reenter ?? false;
     const target = resolveTarget(stateNode, normalizedTarget);
+    if (transitionConfig.cond) {
+      throw new Error(`State "${stateNode.id}" has declared \`cond\` for one of its transitions. This property has been renamed to \`guard\`. Please update your code.`);
+    }
     const transition = {
       ...transitionConfig,
       actions: toArray(transitionConfig.actions),
@@ -2330,6 +2381,9 @@ ${err.message}`);
     return nextState;
   }
   function macrostep(snapshot, event, actorScope, internalQueue) {
+    if (event.type === WILDCARD) {
+      throw new Error(`An event cannot have the wildcard type ('${WILDCARD}')`);
+    }
     let nextSnapshot = snapshot;
     const microsteps = [];
     function addMicrostep(step, event2, transitions) {
@@ -2441,6 +2495,9 @@ ${err.message}`);
     return this.tags.has(tag);
   };
   var machineSnapshotCan = function can(event) {
+    if (!this.machine) {
+      console.warn(`state.can(...) used outside of a machine-created State object; this will always return false.`);
+    }
     const transitionData = this.machine.getTransitionData(this, event);
     return !!transitionData?.length && transitionData.some((t) => t.target !== undefined || t.actions.length);
   };
@@ -2526,6 +2583,9 @@ ${err.message}`);
     const childrenJson = {};
     for (const id in children) {
       const child = children[id];
+      if (typeof child.src !== "string" && (!options2 || !("__unsafeAllowInlineActors" in options2))) {
+        throw new Error("An inline child actor cannot be persisted.");
+      }
       childrenJson[id] = {
         snapshot: child.getPersistedSnapshot(options2),
         src: child.src,
@@ -2610,7 +2670,14 @@ ${err.message}`);
     }
   }
   function raise(eventOrExpr, options2) {
-    function raise2(_args, _params) {}
+    if (exports.executingCustomAction) {
+      console.warn("Custom actions should not call `raise()` directly, as it is not imperative. See https://stately.ai/docs/actions#built-in-actions for more details.");
+    }
+    function raise2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     raise2.type = "xstate.raise";
     raise2.event = eventOrExpr;
     raise2.id = options2?.id;
@@ -2675,11 +2742,11 @@ ${err.message}`);
   exports.transitionNode = transitionNode;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate-actors.cjs.js
-var require_xstate_actors_cjs = __commonJS((exports) => {
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate-actors.development.cjs.js
+var require_xstate_actors_development_cjs = __commonJS((exports) => {
   Object.defineProperty(exports, "__esModule", { value: true });
-  var dist_xstateGuards = require_raise_7c948725_cjs();
-  require_xstate_dev_cjs();
+  var dist_xstateGuards = require_raise_964cd4e9_development_cjs();
+  require_xstate_dev_development_cjs();
   function fromTransition(transition, initialContext) {
     return {
       config: transition,
@@ -3057,9 +3124,9 @@ var require_xstate_actors_cjs = __commonJS((exports) => {
   exports.fromTransition = fromTransition;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/assign-e8f2bd75.cjs.js
-var require_assign_e8f2bd75_cjs = __commonJS((exports) => {
-  var dist_xstateGuards = require_raise_7c948725_cjs();
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/assign-927227d6.development.cjs.js
+var require_assign_927227d6_development_cjs = __commonJS((exports) => {
+  var dist_xstateGuards = require_raise_964cd4e9_development_cjs();
   function createSpawner(actorScope, {
     machine,
     context
@@ -3141,7 +3208,14 @@ var require_assign_e8f2bd75_cjs = __commonJS((exports) => {
     }), undefined, undefined];
   }
   function assign(assignment) {
-    function assign2(_args, _params) {}
+    if (dist_xstateGuards.executingCustomAction) {
+      console.warn("Custom actions should not call `assign()` directly, as it is not imperative. See https://stately.ai/docs/actions#built-in-actions for more details.");
+    }
+    function assign2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     assign2.type = "xstate.assign";
     assign2.assignment = assignment;
     assign2.resolve = resolveAssign;
@@ -3150,10 +3224,10 @@ var require_assign_e8f2bd75_cjs = __commonJS((exports) => {
   exports.assign = assign;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/StateMachine-e6732977.cjs.js
-var require_StateMachine_e6732977_cjs = __commonJS((exports) => {
-  var dist_xstateGuards = require_raise_7c948725_cjs();
-  var assign = require_assign_e8f2bd75_cjs();
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/StateMachine-be2e51a3.development.cjs.js
+var require_StateMachine_be2e51a3_development_cjs = __commonJS((exports) => {
+  var dist_xstateGuards = require_raise_964cd4e9_development_cjs();
+  var assign = require_assign_927227d6_development_cjs();
   var cache = new WeakMap;
   function memo(object, key, fn) {
     let memoizedData = cache.get(object);
@@ -3423,6 +3497,9 @@ ${err.message}`);
       dist_xstateGuards.formatRouteTransitions(this.root);
       this.states = this.root.states;
       this.events = this.root.events;
+      if (!("output" in this.root) && Object.values(this.states).some((state) => state.type === "final" && ("output" in state))) {
+        console.warn("Missing `machine.output` declaration (top-level final state with output detected)");
+      }
     }
     provide(implementations) {
       const {
@@ -3559,7 +3636,11 @@ ${err.message}`);
         }
         try {
           return root.machine.getStateNodeById(referenced.id);
-        } catch {}
+        } catch {
+          {
+            console.warn(`Could not resolve StateNode for id: ${referenced.id}`);
+          }
+        }
       }
       function reviveHistoryValue(root, historyValue) {
         if (!historyValue || typeof historyValue !== "object") {
@@ -3611,10 +3692,10 @@ ${err.message}`);
   exports.StateNode = StateNode;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/log-7776fcf2.cjs.js
-var require_log_7776fcf2_cjs = __commonJS((exports) => {
-  var dist_xstateGuards = require_raise_7c948725_cjs();
-  var assign = require_assign_e8f2bd75_cjs();
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/log-c2e11c01.development.cjs.js
+var require_log_c2e11c01_development_cjs = __commonJS((exports) => {
+  var dist_xstateGuards = require_raise_964cd4e9_development_cjs();
+  var assign = require_assign_927227d6_development_cjs();
   function resolveEmit(_, snapshot, args, actionParams, {
     event: eventOrExpr
   }) {
@@ -3629,7 +3710,14 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
     actorScope.defer(() => actorScope.emit(event));
   }
   function emit(eventOrExpr) {
-    function emit2(_args, _params) {}
+    if (dist_xstateGuards.executingCustomAction) {
+      console.warn("Custom actions should not call `emit()` directly, as it is not imperative. See https://stately.ai/docs/actions#built-in-actions for more details.");
+    }
+    function emit2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     emit2.type = "xstate.emit";
     emit2.event = eventOrExpr;
     emit2.resolve = resolveEmit;
@@ -3706,7 +3794,14 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
     });
   }
   function sendTo(to, eventOrExpr, options2) {
-    function sendTo2(_args, _params) {}
+    if (dist_xstateGuards.executingCustomAction) {
+      console.warn("Custom actions should not call `sendTo()` directly, as it is not imperative. See https://stately.ai/docs/actions#built-in-actions for more details.");
+    }
+    function sendTo2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     sendTo2.type = "xstate.sendTo";
     sendTo2.to = to;
     sendTo2.event = eventOrExpr;
@@ -3721,6 +3816,16 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
     return sendTo(SpecialTargets.Parent, event, options2);
   }
   function forwardTo(target, options2) {
+    if (!target || typeof target === "function") {
+      const originalTarget = target;
+      target = (...args) => {
+        const resolvedTarget = typeof originalTarget === "function" ? originalTarget(...args) : originalTarget;
+        if (!resolvedTarget) {
+          throw new Error(`Attempted to forward event to undefined actor. This risks an infinite loop in the sender.`);
+        }
+        return resolvedTarget;
+      };
+    }
     return sendTo(target, ({
       event
     }) => event, options2);
@@ -3767,7 +3872,11 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
     return [snapshot, undefined, actions];
   }
   function enqueueActions(collect) {
-    function enqueueActions2(_args, _params) {}
+    function enqueueActions2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     enqueueActions2.type = "xstate.enqueueActions";
     enqueueActions2.collect = collect;
     enqueueActions2.resolve = resolveEnqueueActions;
@@ -3801,7 +3910,11 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
     context,
     event
   }), label) {
-    function log2(_args, _params) {}
+    function log2(_args, _params) {
+      {
+        throw new Error(`This isn't supposed to be called`);
+      }
+    }
     log2.type = "xstate.log";
     log2.value = value;
     log2.label = label;
@@ -3818,15 +3931,15 @@ var require_log_7776fcf2_cjs = __commonJS((exports) => {
   exports.sendTo = sendTo;
 });
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate.cjs.js
-var require_xstate_cjs = __commonJS((exports) => {
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate.development.cjs.js
+var require_xstate_development_cjs = __commonJS((exports) => {
   Object.defineProperty(exports, "__esModule", { value: true });
-  var dist_xstateActors = require_xstate_actors_cjs();
-  var dist_xstateGuards = require_raise_7c948725_cjs();
-  var StateMachine = require_StateMachine_e6732977_cjs();
-  var assign = require_assign_e8f2bd75_cjs();
-  var log = require_log_7776fcf2_cjs();
-  require_xstate_dev_cjs();
+  var dist_xstateActors = require_xstate_actors_development_cjs();
+  var dist_xstateGuards = require_raise_964cd4e9_development_cjs();
+  var StateMachine = require_StateMachine_be2e51a3_development_cjs();
+  var assign = require_assign_927227d6_development_cjs();
+  var log = require_log_c2e11c01_development_cjs();
+  require_xstate_dev_development_cjs();
   function assertEvent(event, type) {
     const types = dist_xstateGuards.toArray(type);
     const matches = types.some((descriptor) => dist_xstateGuards.matchesEventDescriptor(event.type, descriptor));
@@ -4090,6 +4203,9 @@ var require_xstate_cjs = __commonJS((exports) => {
         return;
       }
       let done = false;
+      if (resolvedOptions.timeout < 0) {
+        console.error("`timeout` passed to `waitFor` is negative and it will reject its internal promise immediately.");
+      }
       const handle = resolvedOptions.timeout === Infinity ? undefined : setTimeout(() => {
         dispose();
         rej(new Error(`Timeout of ${resolvedOptions.timeout} ms exceeded`));
@@ -220031,8 +220147,8 @@ class OrchestratorMachineV2 {
 }
 var orchestratorMachineV2 = new OrchestratorMachineV2;
 
-// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate.cjs.mjs
-var import_xstate_cjs = __toESM(require_xstate_cjs(), 1);
+// ../../Manta Agent/Active_Projects/Trident_v4.4.2/node_modules/xstate/dist/xstate.development.cjs.mjs
+var import_xstate_development_cjs = __toESM(require_xstate_development_cjs(), 1);
 
 // src/warheads/xstate-fsm/index.ts
 init_utils();
@@ -230021,7 +230137,7 @@ var auditEngine = new AuditEngine;
 var EVT_SCAN_DONE = "SCAN_COMPLETE";
 var EVT_ANALYSIS_DONE = "ANALYSIS_COMPLETE";
 var EVT_REPORT_DONE = "REPORT_COMPLETE";
-var auditMachine = import_xstate_cjs.createMachine({
+var auditMachine = import_xstate_development_cjs.createMachine({
   id: "audit",
   types: { context: {}, events: {} },
   initial: "idle",
@@ -230118,7 +230234,7 @@ class AuditFSM {
   service;
   actor;
   constructor() {
-    this.actor = import_xstate_cjs.interpret(auditMachine);
+    this.actor = import_xstate_development_cjs.interpret(auditMachine);
     this.service = this.actor;
   }
   start() {
@@ -250690,7 +250806,7 @@ function classifySection(name, firstLine) {
 }
 
 // src/fsm/deep-planning-machine.ts
-var deepPlanningMachine = import_xstate_cjs.createMachine({
+var deepPlanningMachine = import_xstate_development_cjs.createMachine({
   id: "deepPlanning",
   types: { context: {} },
   initial: "idle",
@@ -250723,13 +250839,13 @@ var deepPlanningMachine = import_xstate_cjs.createMachine({
   }
 }, {
   actions: {
-    clearError: import_xstate_cjs.assign({ error: (_) => null }),
-    setPrinciples: import_xstate_cjs.assign({ principles: ({ event }) => event.count }),
-    setComponents: import_xstate_cjs.assign({ components: ({ event }) => event.count }),
-    setLibrary: import_xstate_cjs.assign({ contextLibrary: ({ event }) => event.content }),
-    principlesError: import_xstate_cjs.assign({ error: ({ context }) => `Need >= 3 principles, got ${context.principles}` }),
-    componentsError: import_xstate_cjs.assign({ error: ({ context }) => `Need >= 5 components, got ${context.components}` }),
-    libraryError: import_xstate_cjs.assign({ error: (_) => "Context library is empty" })
+    clearError: import_xstate_development_cjs.assign({ error: (_) => null }),
+    setPrinciples: import_xstate_development_cjs.assign({ principles: ({ event }) => event.count }),
+    setComponents: import_xstate_development_cjs.assign({ components: ({ event }) => event.count }),
+    setLibrary: import_xstate_development_cjs.assign({ contextLibrary: ({ event }) => event.content }),
+    principlesError: import_xstate_development_cjs.assign({ error: ({ context }) => `Need >= 3 principles, got ${context.principles}` }),
+    componentsError: import_xstate_development_cjs.assign({ error: ({ context }) => `Need >= 5 components, got ${context.components}` }),
+    libraryError: import_xstate_development_cjs.assign({ error: (_) => "Context library is empty" })
   },
   guards: {
     principlesReady: ({ context }) => context.principles >= 3,
@@ -250739,7 +250855,7 @@ var deepPlanningMachine = import_xstate_cjs.createMachine({
 });
 
 // src/fsm/context-synthesis-machine.ts
-var contextSynthesisMachine = import_xstate_cjs.createMachine({
+var contextSynthesisMachine = import_xstate_development_cjs.createMachine({
   id: "contextSynthesis",
   types: { context: {} },
   initial: "idle",
@@ -250760,10 +250876,10 @@ var contextSynthesisMachine = import_xstate_cjs.createMachine({
   }
 }, {
   actions: {
-    setRawContext: import_xstate_cjs.assign({ rawContext: ({ event }) => event.context }),
-    setCompressed: import_xstate_cjs.assign({ compressed: ({ event }) => event.compressed }),
-    setSections: import_xstate_cjs.assign({ sections: ({ event }) => event.sections }),
-    overBudget: import_xstate_cjs.assign({ error: ({ context }) => `Token budget exceeded: ${context.currentTokens}/${context.tokenBudget}` })
+    setRawContext: import_xstate_development_cjs.assign({ rawContext: ({ event }) => event.context }),
+    setCompressed: import_xstate_development_cjs.assign({ compressed: ({ event }) => event.compressed }),
+    setSections: import_xstate_development_cjs.assign({ sections: ({ event }) => event.sections }),
+    overBudget: import_xstate_development_cjs.assign({ error: ({ context }) => `Token budget exceeded: ${context.currentTokens}/${context.tokenBudget}` })
   },
   guards: {
     budgetReady: ({ context }) => context.currentTokens <= context.tokenBudget
@@ -253572,7 +253688,7 @@ function createTridentTools(client) {
           } catch (e) {
             tridentLog("WARN", "trident-tools", `Error: ${e instanceof Error ? e.message : String(e)}`);
           }
-          const machineActor = import_xstate_cjs.interpret(deepPlanningMachine).start();
+          const machineActor = import_xstate_development_cjs.interpret(deepPlanningMachine).start();
           const projectName = args.targetPath ? await resolveProjectName(args.targetPath) : args.requirements?.substring(0, 30).replace(/[^a-zA-Z0-9]/g, "-") || "project";
           let discovery = null;
           if (args.targetPath) {
@@ -254421,7 +254537,7 @@ This spec is ${l2ArtLines} lines; the mandate is 3000+. Surgically EXPAND the th
         }
         try {
           orchestrator.startContextSynthesis();
-          const csMachineActor = import_xstate_cjs.interpret(contextSynthesisMachine).start();
+          const csMachineActor = import_xstate_development_cjs.interpret(contextSynthesisMachine).start();
           const detectionText = [
             args.projectName,
             ...args.keyFacts || [],

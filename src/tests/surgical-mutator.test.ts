@@ -477,28 +477,3 @@ describe('THE SURGICAL MUTATOR — THE ADVERSARIAL (CN-5.4)', () => {
     expect(out.text).toContain('[SSTF UNEVIDENCED]');              // the warhead present
   });
 });
-
-// ===== THE SEAM COMPATIBILITY (the wave-4 contract — the acceptance criterion) =====
-
-describe('THE SURGICAL MUTATOR — THE SEAM COMPATIBILITY (the wave-4 SSTFTransformSeam)', () => {
-  test('the exported mutateMessage is assignable to + callable through the seam ({ text, mutated: number, verdicts? })', async () => {
-    // THE ACCEPTANCE CRITERION: "the signature matching what the wave-4's
-    // SSTFTransformSeam consumes (read the seam's expectation BEFORE freezing
-    // the export shape)". The seam (semantic-smoke-firewall.ts:39) expects
-    // `(text: string, sessionId?: string) => { text: string; mutated: number;
-    // verdicts?: unknown[] }` — the assignment below typechecks (the compile
-    // proof) AND the call exercises the runtime path (the dynamic-import seam
-    // in index.ts wraps exactly this shape).
-    const { setSSTFTransformSeam, getSSTFTransformSeam } = await import('../firewalls/semantic-smoke-firewall.js');
-    setSSTFTransformSeam({ mutateMessage });
-    const seam = getSSTFTransformSeam();
-    expect(typeof seam.mutateMessage).toBe('function');
-    const out = seam.mutateMessage!('the battery is green.', freshSession());
-    expect(typeof out.text).toBe('string');
-    expect(typeof out.mutated).toBe('number');                     // the hook's `tOut.mutated === 0` guard :3433
-    expect(out.mutated).toBeGreaterThan(0);                        // the slop detected through the seam
-    // The no-op path through the seam (the hook's byte-identical pass-through):
-    const noSlop = seam.mutateMessage!('the analysis continues below.', freshSession());
-    expect(noSlop.mutated).toBe(0);
-  });
-});

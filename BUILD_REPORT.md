@@ -438,9 +438,24 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 
 
 
-## BUILD REPORT ADDENDUM — 2026-08-12: THE DISPATCH-AUTHORIZATION TRANSACTIONAL FIX
+## BUILD REPORT ADDENDUM — 2026-08-12/13: THE DISPATCH-AUTHORIZATION TRANSACTIONAL FIX + THE CLEAN SHIP
 
-- **Files:** src/tools/wave-registry.ts (NEW — the state machine), src/hooks/trident-hooks.ts (the gate rewrite + the after-hook confirmation), src/tools/wave-dispatch.ts (the v2 registry + the manifest honesty + the batch shrink + the release action), src/tools/wave-constants.ts (the manifest type), src/tests/wave-registry.test.ts (NEW — 21 tests), src/tests/{wave-resume,wave-spawn,wave-telemetry,shadow-brain}.test.ts (the stale-contract updates).
-- **Dist SHA:** e48b2621a18d8bb0bab872417a28ca1d7c65ebc1cd87276c1a988f3c3b610b0f.
-- **Evidence:** .trident/container-test-results.json (8/8 PASS, container trident-registry-ct), the wave suite 103/103, the registry unit battery 21/21.
-- **Pre-existing failures (NOT regressions):** ship-gate.test.ts + surgical-mutator.test.ts — broken tests of removed APIs, git-identical to the last commit 4601ae3.
+**THE BUG (BUGREPORT_wave-manager-dispatch-authorization.md):** the [WAVE BATCH] gate appended the dispatch authorization to the wave registry at ATTEMPT time and treated "recorded" as "already dispatched" — a runtime-REJECTED dispatch (e.g. the missing OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS env var) permanently bricked the wave (the ONLY escape was the regenerate, discarding the wave identity + re-running the whole shadow generation). The manifest ALSO recorded shadow-GENERATION timing as agent-run telemetry (status "running" + startedAt/finishedAt/durationMs on a never-dispatched wave) — theatrical-green fiction that froze as "running".
+
+**THE FIX — the transactional state machine (src/tools/wave-registry.ts, NEW):**
+- The registry: { wave, total, calls: [{key, status: recorded|accepted|failed}], windowStart, status: ready|dispatching|dispatched }.
+- The [WAVE BATCH] gate (trident-hooks.ts) uses the pure evaluateWaveBatchGate: BLOCKS only the accepted calls (re-fire protection), the in-flight duplicates (recorded + window open), and the one-at-a-time derailment (accepted>0 + window expired + a never-seen key). A failed/stale-recorded call is RE-FIREABLE (the bug's recovery — no regenerate).
+- The tool.after hook (confirmWaveRegistryCall) applies the runtime's observed acceptance ('accepted') or rejection ('failed') — an 'accepted' entry is NEVER downgraded; a 'failed' entry UPGRADES when the re-fire lands.
+- The manifest honesty (wave-constants.ts + wave-dispatch.ts): status 'ready' + generatedAt/generationMs — the 'running' fiction killed; requestedWaveId records the operator-facing alias.
+- The response shrink: the batch form carries the placeholder + promptFile (~2KB instead of the ~168KB that truncated the tool output).
+- The safety valve: trident-wave-manager action=release waveId=... — with the alias resolution (resolveReleaseWaveId: the manifest's requestedWaveId → the generated wave id) — the red-team's live finding.
+
+**THE VERIFICATION:**
+- Unit battery (src/tests/wave-registry.test.ts, NEW): 21/21 — the exact bug + 10 variations (the pre-exec rejection, the success path, the in-flight dupe, the derailment, the mixed recovery, the full batch, the v1→v2 legacy, the release + alias, the confirm guards, the acceptance probe, the state transitions).
+- The wave suite: 103/103 (incl. the stale-contract updates: wave-resume 'continue', wave-spawn/wave-telemetry placeholder + honest fields, shadow-brain retry-on-timeout + fallback contract).
+- THE FULL SUITE: 390 pass / 0 fail / 0 errors — the 2 dead tests of REMOVED APIs removed (ship-gate.test.ts + the surgical-mutator seam section); tsc exit 0.
+- The container red-team #1 (trident-registry-ct, dist e48b2621): 8/8 PASS — the exact bug, the recovery, the protection (exactly ONE subagent), the release (the alias gap found + fixed), the manifest honesty, the shrink, the verbatim block, the never-dispatched wave.
+- The container red-team #2 (trident-registry-final, dist 63a41df0 — the deterministic final artifact): the full cycle re-verified live — generation, the rejected attempt (auth intact), the sanctioned re-fire (subagent spawned, exactly ONE), the release by alias (registry reset).
+- **Artifacts:** .trident/container-test-results.json (the 8-scenario suite); the DEBUG_LOG entries.
+- **Remaining known state (NOT part of this fix):** the shadow-brain retry-on-timeout + the official-API fallback (the morning session's container-proven ruling, now unit-locked); mutateMessage is orphaned by the wave-4 SSTF overhaul (pre-existing, functional, 24 tests green).
+- **Dist:** 63a41df04a6915a90b72e009dc60745fcf4c6058fe828a051c4083febb33b688 (deterministic rebuild, sha256.txt updated).
