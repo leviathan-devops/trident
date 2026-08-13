@@ -125,5 +125,16 @@
   "toolResultContext": "container trident-one-tool: the tracker row = wave-one-tool-demo-1786630524368 | alias one-tool-demo | token trident-test | status paused (after the pause action); the old tools removed; the check-in compact",
   "timedOut": false,
   "verdict": "PASS"
+},
+{
+  "scenario": "THE FULL one-tool verification (dist b2ed69d8) — the previously-unobserved checks",
+  "prompt": "old-tools-gone probe → generate (waveId full-verify + projectToken trident-verify) → status → pause → kill-wave",
+  "passToken": "the old tools NOT available (the clean break) + the wave generated with the alias + the token + the kill-wave archived the wave",
+  "passTokenMatch": true,
+  "failToken": "the old tools still respond",
+  "failTokenAbsent": true,
+  "toolResultContext": "container trident-full-verify2: the agent verbatim: 'Neither trident-wave-status nor trident-wave-steer exists in my toolset... the trident-wave-manager tool, whose action enum is generate | status | kill | kill-wave | steer | pause | resume | release'; the tracker rows: wave-full-verify-1786632996062 | alias full-verify | token trident-verify; the kill-wave archived the wave with status aborted",
+  "timedOut": false,
+  "verdict": "PASS"
 }
 
