@@ -476,3 +476,11 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - **The pool clarification:** CONCURRENT_GENERATIONS = 15 is a CAP (splice(0, 15)) — never a forced 15.
 - **Dist:** 0cfad3a52313e1540c5cc8251521fe9abb74dbce4e2435dc5cdd87bffbd5aaf6.
 - **Verification:** 405/405 unit, tsc 0, the anchor live-probe (the session.created event's properties.sessionID = the real id).
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE ANCHOR WIRING CORRECTION
+
+- **The bug the operator's callout exposed:** the tether could be NULLED — the old setCronMainSessionId was a plain overwrite + two call sites passed null/'default' → the session.created anchor was cleared by the later 'default'-carrying events (the container's KICK hit the right session BY THE DB FALLBACK, not the tether).
+- **The fix:** the stick-once never-null setter (ignores null/'default', keeps the first real id) + the call sites only set real ids. The session.created event's properties.sessionID is the primary anchor (container-proven); the db newest-root is the no-anchor fallback only.
+- **Dist:** 4e9cebdca764050f.
+- **Verification:** 406/406 unit (the new stick-once test), tsc 0.

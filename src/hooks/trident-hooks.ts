@@ -1286,8 +1286,11 @@ var sessionHook = async function(input: Record<string, unknown>) {
       var evtType = evt && evt.type;
       if (evtType === 'session.idle' || evtType === 'session.updated' || evtType === 'todo.updated') {
         var evtSid = cast<InputMessage>(input)?.sessionID || cast<Record<string, unknown>>(evtData.data || {})?.sessionID || 'default';
-        if (typeof evtSid === 'string' && evtSid) {
-          setCronMainSessionId(evtSid === 'default' ? null : evtSid);
+        // THE STICK-ONCE TETHER (2026-08-13 — never null the anchor: the
+        // setter ignores 'default' + keeps the first real id — the session.
+        // created anchor survives the later 'default'-carrying events).
+        if (typeof evtSid === 'string' && evtSid && evtSid !== 'default') {
+          setCronMainSessionId(evtSid);
         }
       }
     } catch (wvErr) {
@@ -1314,7 +1317,7 @@ var chatMessageHook = async function(input: Record<string, unknown>, output: Rec
     // chat.message hook's sid IS the real session id — the agent registered
     // under it (the status bar's agent identity proves it). The tether here
     // gives the cron the real main session for the heal + the todo checks.
-    setCronMainSessionId(sid === 'default' ? null : sid);
+    setCronMainSessionId(sid);   // the stick-once setter ignores 'default' + keeps the first real id — never nulls the session.created anchor
     // Dual-write under 'default' — messages.transform does NOT receive sessionID
     // in its input (observed: sessionID=NONE) and must look the agent up under
     // the 'default' key. Same pattern as poseidonState.activate(sid)+('default').

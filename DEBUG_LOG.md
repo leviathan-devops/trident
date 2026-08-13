@@ -212,3 +212,16 @@ The request model 'deepseek-chat' resolves to deepseek-v4-flash on the official 
 **THE OTHER ANSWERS (2026-08-13):**
 - THE POOL IS A CAP, not a forced count: `specsQueue.splice(0, CONCURRENT_GENERATIONS)` — a 12-agent wave fires 12 concurrent generations (ONE slice), a 3-agent wave fires 3; the 25-agent maximum = 15 + 10 (two slices). It never fires 15 when there are fewer.
 - THE TIMELINE: the self-heal's kick latency is the cron's 10-minute cadence (the worst case = 10 min if the drop lands right after a tick). The live run's kick came ~5.5 min after the drop (the tick happened to fall then); my earlier diagram's "06:21 → 06:42 = 21 min" mixed the round-4 and round-5 timestamps — the actual gap was ~5.5 min.
+
+
+## 2026-08-13 — THE ANCHOR WIRING CORRECTION (the operator: "the 'first' one is fucking bullshit explain how this is actually wired")
+
+**THE HONEST FINDING:** the "first session.created" claim was WRONG as implemented — the OLD setter was a plain overwrite and TWO call sites (the wave-event hook + the chat.message hook) passed NULL/'default' → they NULLED the session.created anchor the moment a 'default'-carrying event arrived. In the anchor-probe container, the KICK hit the right session BY THE DB FALLBACK (the newest root — correct only because the container had ONE session), NOT by the tether.
+
+**THE FIX — the stick-once, never-null anchor:**
+- setCronMainSessionId now: ignores null/'default' entirely (never sets, never clears) + keeps the FIRST real id (a later 'default' or a different session's id can never hijack or clear it).
+- The call sites: the session.created tether (the event's properties.sessionID — the container-proven real id), the wave-event hook (only sets when the sid is real), the chat.message hook (only sets when the sid is real — never the null branch).
+- The order in the standard model: the process boots → its TUI session is created → the session.created event fires with ITS id → anchored (sticks). The later 'default'-carrying events do nothing.
+- The fallback (the db newest-root) engages ONLY when no real id was ever seen (a plugin load without the session.created event).
+
+**THE ARCHITECTURE (why the first real id IS this process's session in the standard model):** each `opencode` TUI window launches its OWN server process → its OWN plugin instance → its OWN cron. The session.created event at boot is THAT process's TUI session. On a shared-server model (multiple sessions on one server), the first REAL activity sid anchors — the best available heuristic; the anchor never drifts once set.

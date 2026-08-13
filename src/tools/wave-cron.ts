@@ -141,11 +141,27 @@ export function stopWaveCron(): void {
 
 // THE MAIN SESSION ID — the session-key tether (the sidecar's chain); set by
 // the hook context when available (Part 3.2 — the parentID resolution).
+// THE STICK-ONCE SEMANTICS (2026-08-13 — the operator's callout: the OLD
+// setter was a plain overwrite and TWO call sites passed NULL when the hook
+// input carried 'default' — the chat.message + the wave-event hooks — so the
+// session.created anchor got NULLED in the container (the KICK hit the right
+// session BY THE DB FALLBACK, not the tether). THE FIX: the anchor accepts
+// ONLY a real non-default id, and the FIRST real id STICKS — a later 'default'
+// or a different session's id can never hijack or clear it. The first real id
+// the process sees IS its own session in the standard model (each TUI window =
+// its own opencode server process = its own plugin = its own cron; the
+// session.created event fires for ITS session at boot — container-proven).
 let mainSessionIdOverride: string | null = null;
 export function setCronMainSessionId(sid: string | null): void {
+  if (typeof sid !== 'string' || sid.length === 0 || sid === 'default') return;  // never null, never 'default'
+  if (mainSessionIdOverride) return;                                             // the first real id sticks
   mainSessionIdOverride = sid;
 }
 function mainSessionIdRef(): string | null {
+  return mainSessionIdOverride;
+}
+// THE TEST SEAM (the stick-once semantics are externally verifiable):
+export function getCronMainSessionId(): string | null {
   return mainSessionIdOverride;
 }
 

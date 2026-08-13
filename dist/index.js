@@ -256001,6 +256001,10 @@ function startWaveCron() {
 }
 var mainSessionIdOverride = null;
 function setCronMainSessionId(sid) {
+  if (typeof sid !== "string" || sid.length === 0 || sid === "default")
+    return;
+  if (mainSessionIdOverride)
+    return;
   mainSessionIdOverride = sid;
 }
 function mainSessionIdRef() {
@@ -256897,8 +256901,8 @@ var sessionHook = async function(input) {
       var evtType = evt && evt.type;
       if (evtType === "session.idle" || evtType === "session.updated" || evtType === "todo.updated") {
         var evtSid = cast11(input)?.sessionID || cast11(evtData.data || {})?.sessionID || "default";
-        if (typeof evtSid === "string" && evtSid) {
-          setCronMainSessionId(evtSid === "default" ? null : evtSid);
+        if (typeof evtSid === "string" && evtSid && evtSid !== "default") {
+          setCronMainSessionId(evtSid);
         }
       }
     } catch (wvErr) {
@@ -256924,7 +256928,7 @@ var chatMessageHook = async function(input, output) {
   } catch (e) {}
   if (isTridentAgent(agent)) {
     setCurrentAgent(agent, sid);
-    setCronMainSessionId(sid === "default" ? null : sid);
+    setCronMainSessionId(sid);
     setCurrentAgent(agent, "default");
     var inputModel = input?.model;
     if (inputModel && typeof inputModel === "object" && inputModel.providerID && inputModel.modelID) {

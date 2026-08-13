@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { matchStuckPatterns, STUCK_ACTIVITY_AGE_MS } from '../tools/wave-stuck-detector.ts';
 import { ReminderQueue } from '../tools/wave-reminder-queue.ts';
-import { waveTick, type WaveCronClient } from '../tools/wave-cron.ts';
+import { waveTick, setCronMainSessionId, getCronMainSessionId, type WaveCronClient } from '../tools/wave-cron.ts';
 import { WaveTracker, freshAgentTrack } from '../tools/wave-tracker.ts';
 import { todoTouchHistory, STALE_TASK_WINDOW_MS, setMechanicalWrite } from '../tools/wave-todowrite.ts';
 
@@ -249,5 +249,20 @@ describe('wave-cron — the 10m tick decisions (Part 5)', () => {
     expect(threw).toBe(false);
     // The tracker's agent now carries the SESSION_CRASH evidence (error status):
     expect(WaveTracker.getWave(waveId)).toBeDefined();
+  });
+});
+
+describe("THE MAIN-SESSION ANCHOR — the stick-once semantics (2026-08-13 — the operator's multi-session callout)", () => {
+  test('the FIRST real id sticks; "default"/null NEVER set or clear; a different session NEVER hijacks', () => {
+    setCronMainSessionId(null);          // the wave-event hook's null
+    setCronMainSessionId('default');     // the chat.message hook's 'default'
+    expect(getCronMainSessionId()).toBeNull();          // nothing real seen yet
+    setCronMainSessionId('ses_alpha');   // the session.created anchor (the process's own session)
+    expect(getCronMainSessionId()).toBe('ses_alpha');
+    setCronMainSessionId('default');     // the later chat.message 'default' — must NOT clear
+    setCronMainSessionId(null);          // the later wave-event null — must NOT clear
+    expect(getCronMainSessionId()).toBe('ses_alpha');  // the anchor SURVIVES
+    setCronMainSessionId('ses_beta');    // another TUI on the shared server — must NOT hijack
+    expect(getCronMainSessionId()).toBe('ses_alpha');  // the first real id sticks
   });
 });
