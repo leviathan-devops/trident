@@ -154,10 +154,14 @@ describe('THE TRACKER PERSISTENCE (2026-08-13 - the failure doc: the tracker mus
     const fs = require('node:fs');
     const os = require('node:os');
     const path = require('node:path');
-    const tf = process.env.TRIDENT_TRACKER_FILE || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', '.wave-tracker.json');
-    const payload = JSON.parse(fs.readFileSync(tf, 'utf-8'));
-    expect(payload.tracker.some((w: { wave: string }) => w.wave === 'wave-persist-test')).toBe(true);
-    const agent = payload.tracker.find((w: { wave: string }) => w.wave === 'wave-persist-test').agents['a1'];
-    expect(agent.taskIds).toEqual(['ses-p1-task']);
+    const tf = process.env.TRIDENT_TRACKER_DB || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', 'trident-waves.sqlite');
+    expect(fs.existsSync(tf)).toBe(true);
+    const sqlite = require('bun:sqlite');
+    const db = new sqlite.Database(tf);
+    try {
+      const row = db.query('SELECT data FROM waves WHERE wave = ?').get('wave-persist-test') as { data: string };
+      const parsed = JSON.parse(row.data);
+      expect(parsed.agents['a1'].taskIds).toEqual(['ses-p1-task']);
+    } finally { db.close(); }
   });
 });
