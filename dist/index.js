@@ -245937,6 +245937,7 @@ function readSessionStream(sessionId, opts = {}) {
         try {
           const d = JSON.parse(r.data);
           const rec = { type: d.type ?? "unknown" };
+          rec.completed = typeof d.time?.end === "number";
           if (d.type === "tool") {
             rec.tool = d.tool ?? d.state?.tool ?? "tool";
             rec.input = d.state?.input;
@@ -255862,7 +255863,6 @@ var UNBALANCED_OPEN = (t) => {
   const close = (t.match(/\)/g) || []).length + (t.match(/\]/g) || []).length;
   return open > close;
 };
-var TERMINALS = /[.!?"')\]}>`:;]/;
 function detectDroppedMainGeneration(sessionId, opts = {}) {
   const reader = opts.stream ?? readSessionStream;
   try {
@@ -255871,7 +255871,8 @@ function detectDroppedMainGeneration(sessionId, opts = {}) {
       return { dropped: false, reason: null, tail: "", newestPartType: null };
     }
     const newest = page.parts[page.parts.length - 1];
-    if (newest.type !== "text" && newest.type !== "step-finish") {
+    const newestCompleted = newest.type === "step-finish" || newest.type === "text" && newest.completed === true;
+    if (!newestCompleted) {
       return { dropped: false, reason: "in-flight", tail: "", newestPartType: newest.type };
     }
     let lastText = "";
@@ -255893,9 +255894,8 @@ function detectDroppedMainGeneration(sessionId, opts = {}) {
       reason = "unclosed-code-fence";
     else if (UNBALANCED_OPEN(tail))
       reason = "unbalanced-brackets";
-    else if (!TERMINALS.test(tail.slice(-1))) {
-      reason = DANGLING_CONNECTIVE.test(tail) ? "dangling-connective" : "mid-sentence-cut";
-    }
+    else if (DANGLING_CONNECTIVE.test(tail))
+      reason = "dangling-connective";
     if (!reason) {
       return { dropped: false, reason: "complete", tail: "", newestPartType: newest.type };
     }
@@ -257887,7 +257887,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
           teaRecFiles.push({ name: tpF.name, age: Date.now() - tpStat.mtimeMs });
         }
         teaRecFiles.sort(function(a, b) {
-          return b.age - a.age;
+          return a.age - b.age;
         });
         for (var tq = 0;tq < teaRecFiles.length; tq++) {
           var tpRec = teaRecFiles[tq];
