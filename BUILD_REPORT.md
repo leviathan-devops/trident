@@ -459,3 +459,12 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - **Artifacts:** .trident/container-test-results.json (the 8-scenario suite); the DEBUG_LOG entries.
 - **Remaining known state (NOT part of this fix):** the shadow-brain retry-on-timeout + the official-API fallback (the morning session's container-proven ruling, now unit-locked); mutateMessage is orphaned by the wave-4 SSTF overhaul (pre-existing, functional, 24 tests green).
 - **Dist:** 63a41df04a6915a90b72e009dc60745fcf4c6058fe828a051c4083febb33b688 (deterministic rebuild, sha256.txt updated).
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE RULINGS + THE MAIN-SESSION SELF-HEAL
+
+- **The rulings:** pool 15, retries up-to-3 (same backoff), timeout 15m, the directive ids, the v4-flash pin on BOTH providers (the fallback was deepseek-chat + an env override — both fixed).
+- **The self-heal (NEW — src/tools/main-session-heal.ts):** the dropped-generation detector (the incompletion lexicon + the FINALIZED discriminator) + the minimal 'continue' kick (appendPrompt + submitPrompt) + the 10m cooldown. NO interrupt, NO model switch (the operator's rulings).
+- **The live red-team found + fixed 3 wiring bugs:** the mainSessionId tether (the hook inputs carry 'default' → the db root-session resolution), the text-part shape (the plain string vs {value}) — both fixed + live-verified; the FULL LOOP proven: the 'the' drop → detected (dangling-connective) → kicked → the agent reactivated.
+- **Dist:** 1a002f702c0445e2993744c7fe0771290aa6b0a938cacaa7c7e4e59352a58bc8.
+- **Verification:** 405/405 unit, tsc 0, the live container loop.

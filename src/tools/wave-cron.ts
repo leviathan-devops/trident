@@ -77,19 +77,25 @@ export interface WaveCronClient {
   };
 }
 
-// THE MAIN-SESSION ID RESOLUTION (2026-08-13 — the tether fix): the hook
-// inputs carry 'default' (never the real id) — the cron falls back to the
-// CLIENT's session list (the newest session = the main session). Returns the
-// passed id when non-null, else the client-resolved id, else null.
-async function resolveMainSessionId(client: WaveCronClient | null, mainSessionId: string | null): Promise<string | null> {
+// THE MAIN-SESSION ID RESOLUTION (2026-08-13 — the tether fix, live-verified
+// twice): (1) the hook inputs carry 'default' (never the real id) → the tether
+// is null; (2) the client.session.list picked a SUBAGENT session as the
+// 'newest' (the subagents are children — the main session is the newest ROOT).
+// THE DEFINITIVE SOURCE: the opencode.db's session table — the newest session
+// with parent_id NULL IS the main TUI session (the subagents carry a parent).
+// The same db channel as the stream/terminal checks.
+function resolveMainSessionId(client: WaveCronClient | null, mainSessionId: string | null): string | null {
   if (mainSessionId && mainSessionId !== 'default') return mainSessionId;
-  if (!client || typeof client.session?.list !== 'function') return null;
   try {
-    const res = await client.session.list({});
-    const sessions = (res?.data ?? []) as Array<{ id?: string }>;
-    for (let i = sessions.length - 1; i >= 0; i--) {
-      const sid = sessions[i]?.id;
+    const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+    if (!fs.existsSync(dbPath)) return null;
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const row = db.query('SELECT id FROM session WHERE parent_id IS NULL ORDER BY rowid DESC LIMIT 1').get() as { id?: string } | null;
+      const sid = row?.id ?? null;
       if (sid && sid !== 'default') return sid;
+    } finally {
+      db.close();
     }
   } catch (e) {
     tridentLog('WARN', 'wave-cron', 'the main-session resolution failed (the heal + the todo checks skip this tick): ' + (e instanceof Error ? e.message : String(e)));
@@ -288,7 +294,6 @@ async function secondaryChecks(
   if (healSessionId && client && typeof client.tui?.appendPrompt === 'function') {
     try {
       const heal = detectDroppedMainGeneration(healSessionId);
-      tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL: session=' + healSessionId + ' dropped=' + heal.dropped + ' reason=' + (heal.reason ?? 'none') + ' newest=' + (heal.newestPartType ?? 'none') + ' tail=' + JSON.stringify(heal.tail.slice(0, 60)));
       if (heal.dropped) {
         void kickMainSession(client as unknown as HealClient, healSessionId).then((kr) => {
           if (!kr.kicked && kr.error !== 'cooldown') {
@@ -301,8 +306,6 @@ async function secondaryChecks(
     } catch (healErr) {
       tridentLog('WARN', 'wave-cron', 'the main-session heal check failed (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
     }
-  } else {
-    tridentLog('DEBUG', 'wave-cron', 'MAIN-SESSION HEAL SKIPPED: mainSessionId=' + String(healSessionId) + ' client=' + (client ? 'yes' : 'no') + ' tui=' + (client && typeof client.tui?.appendPrompt === 'function' ? 'yes' : 'no'));
   }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {

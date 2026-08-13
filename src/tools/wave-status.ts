@@ -130,10 +130,19 @@ export function readSessionStream(
             rec.input = d.state?.input;
             rec.outputSnippet = typeof d.state?.output === 'string' ? d.state.output.slice(0, 200) : undefined;
             lastTools.push(rec.tool);
-          } else if (d.type === 'text' && d.text?.value) {
-            rec.text = d.text.value;
+          } else if (d.type === 'text') {
+            // THE TEXT SHAPE (2026-08-13 — the live finding: the runtime
+            // 1.14.51 writes the text part's `text` as a PLAIN STRING
+            // ({"type":"text","text":"the"}), NOT the {value: ...} object the
+            // old mapping expected — the self-heal's detector read 'no-text'
+            // on a session whose text WAS there. Handle BOTH shapes.
+            const tv = (d as { text?: unknown }).text;
+            if (typeof tv === 'string') rec.text = tv;
+            else if (tv && typeof (tv as { value?: unknown }).value === 'string') rec.text = (tv as { value: string }).value;
           } else if (d.type === 'reasoning') {
-            rec.text = String((d as { text?: unknown }).text ?? '').slice(0, 400);
+            const rv = (d as { text?: unknown }).text;
+            if (typeof rv === 'string') rec.text = rv.slice(0, 400);
+            else if (rv && typeof (rv as { value?: unknown }).value === 'string') rec.text = (rv as { value: string }).value.slice(0, 400);
           }
           parts.push(rec);
         } catch { /* a malformed part is skipped — never a page failure */ }

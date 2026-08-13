@@ -245942,10 +245942,18 @@ function readSessionStream(sessionId, opts = {}) {
             rec.input = d.state?.input;
             rec.outputSnippet = typeof d.state?.output === "string" ? d.state.output.slice(0, 200) : undefined;
             lastTools.push(rec.tool);
-          } else if (d.type === "text" && d.text?.value) {
-            rec.text = d.text.value;
+          } else if (d.type === "text") {
+            const tv = d.text;
+            if (typeof tv === "string")
+              rec.text = tv;
+            else if (tv && typeof tv.value === "string")
+              rec.text = tv.value;
           } else if (d.type === "reasoning") {
-            rec.text = String(d.text ?? "").slice(0, 400);
+            const rv = d.text;
+            if (typeof rv === "string")
+              rec.text = rv.slice(0, 400);
+            else if (rv && typeof rv.value === "string")
+              rec.text = rv.value.slice(0, 400);
           }
           parts.push(rec);
         } catch {}
@@ -255947,18 +255955,21 @@ function isBackgroundTerminal(taskId) {
 var ENV_INTERVAL = parseInt(process.env.TRIDENT_WAVE_CRON_INTERVAL_MS ?? "", 10);
 var CRON_INTERVAL_MS = Number.isFinite(ENV_INTERVAL) && ENV_INTERVAL > 0 ? ENV_INTERVAL : 10 * 60 * 1000;
 var cronHandle = null;
-async function resolveMainSessionId(client, mainSessionId) {
+function resolveMainSessionId(client, mainSessionId) {
   if (mainSessionId && mainSessionId !== "default")
     return mainSessionId;
-  if (!client || typeof client.session?.list !== "function")
-    return null;
   try {
-    const res = await client.session.list({});
-    const sessions = res?.data ?? [];
-    for (let i = sessions.length - 1;i >= 0; i--) {
-      const sid = sessions[i]?.id;
+    const dbPath = path41.join(os15.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs36.existsSync(dbPath))
+      return null;
+    const db = new Database7(dbPath, { readonly: true });
+    try {
+      const row = db.query("SELECT id FROM session WHERE parent_id IS NULL ORDER BY rowid DESC LIMIT 1").get();
+      const sid = row?.id ?? null;
       if (sid && sid !== "default")
         return sid;
+    } finally {
+      db.close();
     }
   } catch (e) {
     tridentLog("WARN", "wave-cron", "the main-session resolution failed (the heal + the todo checks skip this tick): " + (e instanceof Error ? e.message : String(e)));
@@ -256086,7 +256097,6 @@ async function secondaryChecks(client, mainSessionId, opts = {}) {
   if (healSessionId && client && typeof client.tui?.appendPrompt === "function") {
     try {
       const heal = detectDroppedMainGeneration(healSessionId);
-      tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL: session=" + healSessionId + " dropped=" + heal.dropped + " reason=" + (heal.reason ?? "none") + " newest=" + (heal.newestPartType ?? "none") + " tail=" + JSON.stringify(heal.tail.slice(0, 60)));
       if (heal.dropped) {
         kickMainSession(client, healSessionId).then((kr) => {
           if (!kr.kicked && kr.error !== "cooldown") {
@@ -256099,8 +256109,6 @@ async function secondaryChecks(client, mainSessionId, opts = {}) {
     } catch (healErr) {
       tridentLog("WARN", "wave-cron", "the main-session heal check failed (non-fatal): " + (healErr instanceof Error ? healErr.message : String(healErr)));
     }
-  } else {
-    tridentLog("DEBUG", "wave-cron", "MAIN-SESSION HEAL SKIPPED: mainSessionId=" + String(healSessionId) + " client=" + (client ? "yes" : "no") + " tui=" + (client && typeof client.tui?.appendPrompt === "function" ? "yes" : "no"));
   }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {
