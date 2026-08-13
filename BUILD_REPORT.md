@@ -499,3 +499,131 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - The wave generated on the host with the honest manifest + the records SURVIVING the prune (the fixed ascending sort).
 - The release by the alias resolved (host-release-test → wave-1786620646238) + the registry reset (calls:[]/ready) — verified on disk.
 - The ONLY remaining host difference vs the latest dist: the phantom-kick patch (ddc2b24a) — pending the operator's redeploy.
+
+
+## 9. THE CURRENT FULL ARCHITECTURE (2026-08-13 — the complete system as it exists)
+
+> THE ONE-SENTENCE PICTURE: the operator asks the wave manager to generate a wave → the SHADOW BRAIN writes the prompts + the registry + the manifest → the orchestrator dispatches the batch (background) → the [WAVE BATCH] GATE + the RUNTIME decide the dispatch fate → the AFTER-HOOK confirms the outcome into the registry → the TRACKER + the CRON watch the wave → the CRON also runs the MAIN-SESSION SELF-HEAL (the dropped-generation detector + the "continue" kick) anchored to THIS process's session. All state is on disk (trident-tmp) + the opencode.db; nothing is memory-only fiction.
+
+### 9.1 THE END-TO-END DISPATCH FLOW (the pipeline)
+
+```
+┌──────────────┐   ┌────────────────────────────┐   ┌──────────────────────┐
+│  OPERATOR    │──►│ trident-wave-manager        │──►│ THE SHADOW BRAIN     │
+│  (the agent) │   │ (generate: agents + args)  │   │ (shadow-brain.ts):    │
+└──────────────┘   └────────────────────────────┘   │ the bounded pool (15- │
+                                                    │ cap), the up-to-3      │
+                                                    │ retries (same backoff)│
+                                                    │ the 15m timeout, the  │
+                                                    │ v4-flash pin on both  │
+                                                    │ providers              │
+                                                    └──────────┬───────────┘
+                                                               ▼
+                                                    ┌────────────────────────────┐
+                                                    │ THE ON-DISK OUTPUTS        │
+                                                    │ trident-tmp/:              │
+                                                    │  .wave-manifest-wave-<id>  │
+                                                    │  .wave-registry-wave-<id>  │
+                                                    │  <agent>.md (the prompt)   │
+                                                    └──────────┬───────────┘
+                                                               ▼  (the batch form returns)
+                                                    ┌────────────────────────────┐
+                                                    │ THE ORCHESTRATOR DISPATCHES│
+                                                    │ the batch (background:true)│
+                                                    └──────────┬───────────┘
+                                                               ▼
+                                          ┌────────────────────┴───────────────────┐
+                                          ▼                                        ▼
+                               ┌─────────────────────┐              ┌──────────────────────────┐
+                               │ THE [WAVE BATCH]    │              │ THE RUNTIME              │
+                               │ GATE (before-hook)  │              │ (the task tool schema)   │
+                               │  evaluateWaveBatch- │              │  accepts OR rejects      │
+                               │  Gate: BLOCK only   │              │  (e.g. a malformed       │
+                               │  accepted/in-flight/│              │  background:"yes" →      │
+                               │  derailment; ALLOW  │              │  SchemaError)            │
+                               │  failed/stale-      │              └──────────┬───────────────┘
+                               │  recorded re-fires  │                          ▼
+                               └─────────────────────┘              ┌──────────────────────────┐
+                                          │                         │ THE AFTER-HOOK           │
+                                          ▼                         │ (confirmWaveRegistryCall)│
+                               the registry: recorded ────────────►│  accepted | failed       │
+                               (the authorization appended)        │  → the registry status   │
+                                                                    └──────────────────────────┘
+```
+
+THE FAILURE RECOVERY (the 2026-08-12 bug's fix): a runtime-rejected dispatch leaves the registry call `recorded` (the after-hook never confirms a rejection it did not observe). The 60s window (WAVE_DISPATCH_WINDOW_MS) expires → the RE-FIRE hits the stale-recorded-reset path → the gate ALLOWS it → the runtime accepts → the after-hook marks `accepted` → the wave `dispatched`. A confirmed dispatch BLOCKS re-fires; the one-at-a-time derailment (1 accepted + the window expired + a new key) is BLOCKED.
+
+### 9.2 THE REGISTRY STATE MACHINE (src/tools/wave-registry.ts)
+
+```
+PER-CALL:  recorded ──► accepted        (the after-hook observed the task_id)
+           recorded ──► failed          (the after-hook observed the rejection)
+           recorded ──(window expires)──► stale-recorded (the re-fire is sanctioned)
+WAVE-LEVEL: ready ──► dispatching ──► dispatched   (any accepted call)
+GATE BLOCKS:  accepted (re-fire) · recorded+window-open (in-flight) · new-key+accepted+window-expired (derailment)
+GATE ALLOWS:  failed (the attempt died) · stale-recorded (the runtime never confirmed)
+RELEASE:      trident-wave-manager action=release waveId=<alias> — the alias resolves via the
+              manifest's requestedWaveId → the registry resets to calls:[]/ready (the safety valve)
+```
+
+### 9.3 THE MAIN-SESSION SELF-HEAL (src/tools/main-session-heal.ts + the cron)
+
+```
+THE DETECTOR (every 10m cron tick, the process's OWN session via the anchor):
+  READ the session's parts (readSessionStream) →
+  FINALIZED check: the newest part is a step-finish OR a text with time.end (the ▣ timestamp
+    rendered) — a STREAMING text (no end) = a live generation = NEVER finalized (the misfire fix) →
+  THE LAST TEXT → THE INCOMPLETION LEXICON (a real drop only):
+    trailing "..." / dangling connective (the/and/because...) / unclosed code fence /
+    unbalanced bracket  (the bare mid-sentence-cut REMOVED — a plain-word report ending is NOT a drop)
+THE KICK (on a drop): client.tui.appendPrompt("continue") + submitPrompt — the minimal chat
+  message; the 10m cooldown bounds the rate; a detection failure NEVER kicks.
+THE ANCHOR: each process's session.created event's properties.sessionID (container-proven shape)
+  → setCronMainSessionId (the stick-once — the first real id; null/'default'/other ids never
+  overwrite) → the db newest-root query is the no-anchor fallback.
+```
+
+### 9.4 THE SHADOW-BRAIN CALL PATH (src/tools/shadow/shadow-brain.ts)
+
+```
+PRIMARY (opencode.ai/zen/go — deepseek-v4-flash, FROZEN): attempt 0 → up to 3 retries (the SAME
+  retryBackoffMs, never exponential) on the HTTP_500 + TIMEOUT class →
+FALLBACK (api.deepseek.com/v1 — deepseek-v4-flash HARDCODED, no env override): the SAME up-to-3
+  retry pattern →
+LOUD FAIL: names BOTH transports' error trails (never a silent pass).
+THE POOL: the wave generation runs CONCURRENT_GENERATIONS = 15 as a CAP (splice(0,15)) — a
+  12-agent wave = one slice; the 25-agent maximum = two. THE TIMEOUT: SHADOW_TIMEOUT_MS = 900_000
+  (15m per call — a 12-agent wave's slow generation is never killed).
+```
+
+### 9.5 THE MODULE MAP (the current system)
+
+| Module | Role |
+| --- | --- |
+| src/tools/wave-dispatch.ts | the generator (the shadow pipeline + the registry/manifest creation + the batch form + the release) |
+| src/tools/wave-registry.ts | the transactional registry state machine (the pure gate decision + the confirmation + the release resolution) |
+| src/tools/wave-constants.ts | the manifest/batch contracts + the shared tmp + the directives |
+| src/tools/shadow/shadow-brain.ts | the LLM call (the retries + the timeout + the fallback + the model pin) |
+| src/tools/shadow/shadow-secrets.ts | the endpoint/key resolvers (the base64 secrets) |
+| src/tools/wave-tracker.ts | the wave-level runtime state (the agents, the task_ids, the ETA) |
+| src/tools/wave-status.ts | the session-stream reader (the parts + the completed flag) |
+| src/tools/wave-cron.ts | the 10m tick (the wave children + the background completion + the main-session heal + the anchor) |
+| src/tools/main-session-heal.ts | the dropped-generation detector + the "continue" kick + the cooldown |
+| src/tools/wave-stuck-detector.ts | the ISE PatternFamily (STUCK_NO_ACTIVITY / PROVIDER_QUOTA / SESSION_CRASH — the directive carries the REAL agent name + the session/task ids) |
+| src/tools/wave-reminder-queue.ts | the FIFO tier-1 reminder drain (per tool result) |
+| src/tools/wave-steer-tool.ts | the steer tool (queue/interrupt) |
+| src/hooks/trident-hooks.ts | the tool.before gate + the tool.after confirmation + the session.created tether + the T.E.A. wipe + the record prune (the ascending sort fix) |
+| src/security/tool-allowlist.ts | the allowlist admission (task_status etc.) |
+
+### 9.6 THE CONTRACTS (the on-disk state)
+
+- THE MANIFEST (.wave-manifest-wave-<id>.json): { wave, requestedWaveId (the alias), generatedAt, agents: [{name, type, lines, sha256, status:'ready', generatedAt, generationMs}] } — the honest lifecycle, NEVER 'running'.
+- THE REGISTRY (.wave-registry-wave-<id>.json): { wave, total, calls: [{key, status: recorded|accepted|failed}], windowStart, status: ready|dispatching|dispatched }.
+- THE BATCH FORM: the task calls with description + the SHORT placeholder prompt + promptFile (the loader injects the byte-exact content before the gates) + background:true.
+- THE HOST LAYOUT: the plugin at ~/.config/opencode/plugins/trident/dist/index.js; the tmp at ~/OPENCODE_WORKSPACE/trident-tmp/; the engine log at /tmp/trident-engine.log (the tridentLog); the session db at ~/.local/share/opencode/opencode.db.
+
+### 9.7 THE KNOWN STATE (the honest boundaries)
+
+- The unit suite 408/408, tsc 0; the container evidence (.trident/container-test-results.json); the host verifications (the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias).
+- The host runs c40fd1b8; the ddc2b24a phantom-kick patch is the ONLY pending difference (the operator's one-copy redeploy).
+- The pre-existing residuals: the 2 dead tests of removed APIs removed (ship-gate + the surgical-mutator seam — the suite is green); the provider is the flakiest external link (the shadow retry + the heal mitigate); the shared-server re-created-events anchor edge is documented.
