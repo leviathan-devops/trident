@@ -104,3 +104,14 @@
     }
   ]
 }
+,{
+  "scenario": "THE WAVE-RECORD PRUNE DIRECT TEST (dist c40fd1b8 — the prune sort fix)",
+  "prompt": "create 50 fake record files (the newest 5 at -30s, the oldest 8 at -90..-100m) + trigger a task completion's prune",
+  "passToken": "the NEWEST records (fake-21..25) SURVIVE + the OLDEST (fake-1..8) removed + the total drops to the 20-cap",
+  "passTokenMatch": true,
+  "failToken": "the NEWEST records removed (the pre-fix behavior)",
+  "failTokenAbsent": true,
+  "toolResultContext": "container trident-prune-direct: 53 records → 20 after the prune; fake-21..25 present 5/5 (the newest kept); fake-1..8 present 0/8 (the over-age removed); the prune log + the engine log's WAVE-RECORD PRUNE entries",
+  "timedOut": false,
+  "verdict": "PASS"
+}
