@@ -256883,6 +256883,10 @@ var sessionHook = async function(input) {
     } catch (e) {}
     if (evt && evt.type === "session.created") {
       try {
+        var sesEvtSid = cast11(input)?.sessionID || cast11(input?.event?.data || {})?.sessionID || cast11(evt?.properties || {})?.sessionID || cast11(evt?.properties?.data || {})?.id || "default";
+        if (typeof sesEvtSid === "string" && sesEvtSid && sesEvtSid !== "default") {
+          setCronMainSessionId(sesEvtSid);
+        }
         await synthesizeWarheadSkill();
       } catch (wErr) {
         tridentLog("WARN", "trident-hooks", "session.created warhead skill synthesis failed (non-fatal): " + (wErr instanceof Error ? wErr.message : String(wErr)));

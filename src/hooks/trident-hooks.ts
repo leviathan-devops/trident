@@ -1252,6 +1252,24 @@ var sessionHook = async function(input: Record<string, unknown>) {
     try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SESSION_WRAP: event type=${evt && evt.type}\n`); } catch (e) { /* non-fatal */ }
     if (evt && evt.type === 'session.created') {
       try {
+        // ═══ THE PER-PROCESS MAIN-SESSION TETHER (2026-08-13 — the operator's
+        // multi-session question: on the HOST with 8+ parallel TUI sessions,
+        // "the newest null-parent session" is NOT necessarily THIS process's
+        // session. The CORRECT anchor: the FIRST session.created event fired
+        // in THIS process IS this process's own session — each TUI session is
+        // its own opencode process with its own plugin instance. Capture the
+        // first non-default id ONCE. ═══
+        var sesEvtSid = cast<InputMessage>(input)?.sessionID
+          || cast<Record<string, unknown>>((input?.event as { data?: unknown })?.data || {})?.sessionID
+          || cast<Record<string, unknown>>((evt as { properties?: unknown })?.properties || {})?.sessionID
+          || cast<Record<string, unknown>>((evt as { properties?: { data?: unknown } })?.properties?.data || {})?.id
+          || 'default';
+        // THE LIVE-PROVEN SOURCE (2026-08-13 — the container probe): the
+        // session.created event's properties.sessionID carries the REAL id
+        // (verified: props={"sessionID":"ses_005c09a6...","info":{...}}).
+        if (typeof sesEvtSid === 'string' && sesEvtSid && sesEvtSid !== 'default') {
+          setCronMainSessionId(sesEvtSid);
+        }
         await synthesizeWarheadSkill();
       } catch (wErr) {
         tridentLog('WARN', 'trident-hooks', 'session.created warhead skill synthesis failed (non-fatal): ' + (wErr instanceof Error ? wErr.message : String(wErr)));

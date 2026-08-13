@@ -468,3 +468,11 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - **The live red-team found + fixed 3 wiring bugs:** the mainSessionId tether (the hook inputs carry 'default' → the db root-session resolution), the text-part shape (the plain string vs {value}) — both fixed + live-verified; the FULL LOOP proven: the 'the' drop → detected (dangling-connective) → kicked → the agent reactivated.
 - **Dist:** 1a002f702c0445e2993744c7fe0771290aa6b0a938cacaa7c7e4e59352a58bc8.
 - **Verification:** 405/405 unit, tsc 0, the live container loop.
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE MULTI-SESSION ANCHOR
+
+- **The fix:** the sessionHook captures the FIRST session.created event's properties.sessionID (container-proven: props={"sessionID":"ses_005c09a6..."}) + tethers the cron — each process anchors to ITS OWN session (the multi-session host with 8+ parallel TUI sessions: each cron heals ITS session, never another's). The db newest-root query is now only the fallback.
+- **The pool clarification:** CONCURRENT_GENERATIONS = 15 is a CAP (splice(0, 15)) — never a forced 15.
+- **Dist:** 0cfad3a52313e1540c5cc8251521fe9abb74dbce4e2435dc5cdd87bffbd5aaf6.
+- **Verification:** 405/405 unit, tsc 0, the anchor live-probe (the session.created event's properties.sessionID = the real id).
