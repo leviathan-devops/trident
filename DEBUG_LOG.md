@@ -234,3 +234,13 @@ The request model 'deepseek-chat' resolves to deepseek-v4-flash on the official 
 2. THE PLAIN-WORD MISFLAG: the lexicon's bare 'mid-sentence-cut' (a tail without a terminal + no dangling connective) flagged legitimate report endings that end with a plain word. THE FIX: the bare mid-sentence-cut REMOVED — a REAL drop shows a dangling connective, a trailing ellipsis, an unclosed fence, or an unbalanced bracket.
 **The correction:** the two 09:40:41 KICK entries in the engine log were the UNIT TESTS' kick logs (the shared /tmp/trident-engine.log — the tests run on the host + log there); the 10:29:08 entry was the real misfire.
 **Verification:** the unit suite 408/408 (the new misfire tests: the streaming part → in-flight → never kicked; the plain-word ending → complete → never kicked; the operator's '...' example still dropped). The container (trident-misfire-fix, dist ddc2b24a): the detector read a messy session's COMPLETE last text → NO false kick (the no-misfire behavior). The real-drop kick remains container-proven from the earlier runs (the 'the' when the agent actually waits).
+
+
+## 2026-08-13 — THE HOST RELEASE-BY-ALIAS VERIFICATION (the prune-fix milestone)
+
+**THE RETEST THAT THE PRUNE BUG BLOCKED NOW PASSES ON THE HOST (c40fd1b8 — the prune fix deployed):**
+1. The wave generated on the host (wave-1786620646238, the honest manifest: status 'ready' + generatedAt/generationMs + requestedWaveId 'host-release-test') — AND THE RECORDS SURVIVED the prune (the fixed ascending sort keeps the newest — the OLD descending sort had removed the wave under test).
+2. THE RELEASE BY THE ALIAS: trident-wave-manager action=release waveId=host-release-test → the alias resolved via the manifest's requestedWaveId → wave-1786620646238 → the registry reset to calls:[] + status 'ready' (verified on disk: {"wave":"wave-1786620646238","total":1,"calls":[],"windowStart":null,"status":"ready"}).
+3. The previous release attempt FAILED for exactly the prune-bug reason (the records were gone → the alias scan found nothing); the fixed prune + the alias resolution now work end-to-end on the host.
+
+**THE HOST STATE (2026-08-13):** the host runs c40fd1b8 — the complete stack minus the self-heal misfire fix (ddc2b24a — the end-signal finalized check + the lexicon hardening — pending the operator's redeploy; the ONLY functional difference between the deployed dist and the latest is the phantom-kick patch).

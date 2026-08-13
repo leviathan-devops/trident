@@ -492,3 +492,10 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - **The fix:** the end-signal finalized check (the part's time.end / a step-finish required — a streaming text is never finalized) + the lexicon hardened (the bare mid-sentence-cut removed).
 - **Verification:** 408/408 unit (the misfire cases locked), tsc 0, the container no-false-kick observed.
 - **Dist:** ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79 (needs the host redeploy).
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE HOST RELEASE-BY-ALIAS VERIFIED
+
+- The wave generated on the host with the honest manifest + the records SURVIVING the prune (the fixed ascending sort).
+- The release by the alias resolved (host-release-test → wave-1786620646238) + the registry reset (calls:[]/ready) — verified on disk.
+- The ONLY remaining host difference vs the latest dist: the phantom-kick patch (ddc2b24a) — pending the operator's redeploy.
