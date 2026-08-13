@@ -52,14 +52,48 @@ export interface WaveStatusClient {
 }
 
 function toolNames(parts: unknown[] | undefined): string[] {
-  if (!Array.isArray(parts)) return [];
-  return parts
-    .filter((p) => p && typeof p === 'object' && (p as { type?: string }).type === 'tool')
-    .map((p) => {
-      const name = (p as { name?: string }).name;
-      return typeof name === 'string' ? name : 'tool';
-    })
-    .slice(0, 6);
+  return (parts ?? []).map((p) => (p as { tool?: string }).tool ?? '').filter(Boolean).slice(-8);
+}
+
+// THE RUNTIME-BACKED SESSION RESOLUTION (2026-08-13 — the failure doc's fix #2:
+// the tracker row can be missing (a process restart before the persistence fix,
+// or a cross-process gap). The wave's subagent sessions are titled
+// 'agent-wave-<waveId>-*' in the opencode.db — the runtime's ground truth. The
+// kill/kill-wave/list-all resolve THROUGH the db when the tracker misses, so
+// the control surface NEVER reports "no active waves" while the runtime has
+// live background agents.)
+function resolveWaveSessionsFromDb(waveId: string): Array<{ id: string; title: string }> {
+  try {
+    const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+    if (!fs.existsSync(dbPath)) return [];
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const rows = db.query('SELECT id, title FROM session WHERE title LIKE ?').all('agent-wave-' + waveId + '-%') as Array<{ id: string; title: string }>;
+      return rows.map((r) => ({ id: r.id, title: r.title ?? '' }));
+    } finally { db.close(); }
+  } catch (e) {
+    tridentLog('WARN', 'wave-status', 'the runtime session resolution failed for ' + waveId + ': ' + (e instanceof Error ? e.message : String(e)));
+    return [];
+  }
+}
+
+// THE RUNTIME-ACTIVE SESSIONS (the list-all fallback — the running background
+// agents the tracker cannot see after a loss):
+function resolveRunningBackgroundSessions(): Array<{ id: string; title: string }> {
+  try {
+    const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+    if (!fs.existsSync(dbPath)) return [];
+    const db = new Database(dbPath, { readonly: true });
+    try {
+      const cutoff = Date.now() - 30 * 60_000;
+      const rows = db.query('SELECT id, title FROM session WHERE parent_id IS NOT NULL AND title LIKE ? AND time_updated > ? ORDER BY time_updated DESC LIMIT 20')
+        .all('agent-wave-%', cutoff) as Array<{ id: string; title: string }>;
+      return rows.map((r) => ({ id: r.id, title: r.title ?? '' }));
+    } finally { db.close(); }
+  } catch (e) {
+    tridentLog('WARN', 'wave-status', 'the runtime-active resolution failed: ' + (e instanceof Error ? e.message : String(e)));
+    return [];
+  }
 }
 
 function fmtAge(ms: number | null): string {
@@ -227,6 +261,27 @@ export async function executeWaveStatus(
     const wave = WaveTracker.getWave(args.waveId);
     const agent = wave?.agents[args.agent];
     if (!wave || !agent) {
+      // THE RUNTIME-BACKED FALLBACK (2026-08-13 — the failure doc's fix #2):
+      // the tracker row can be missing — resolve the wave's sessions from the
+      // runtime db and abort them anyway; the kill NEVER dead-ends while the
+      // runtime has live agents.
+      const runtimeSessions = resolveWaveSessionsFromDb(args.waveId);
+      if (runtimeSessions.length > 0) {
+        const reason = toKillReason(args.reason);
+        for (const s of runtimeSessions) {
+          try {
+            await client.abort({ path: { id: s.id } });
+          } catch (abErr) {
+            tridentLog('WARN', 'wave-status', 'kill abort failed for ' + s.id + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
+          }
+        }
+        tridentLog('INFO', 'wave-status', 'KILL ' + args.waveId + '/' + args.agent + ' via the RUNTIME-BACKED resolution (' + runtimeSessions.length + ' sessions aborted) — the tracker row was missing');
+        return {
+          wave: args.waveId, status: 'killed', etaMs: 0, etaConfidence: 0,
+          elapsedMs: 0, agents: [],
+          note: 'killed via the runtime-backed resolution — ' + runtimeSessions.length + ' sessions aborted (the tracker row was missing: ' + runtimeSessions.map((s) => s.id).join(',') + ')',
+        };
+      }
       return {
         wave: args.waveId, status: 'unknown_wave', etaMs: 0, etaConfidence: 0,
         elapsedMs: 0, agents: [],
@@ -256,6 +311,25 @@ export async function executeWaveStatus(
   if (action === 'kill-wave' && args.waveId) {
     const wave = WaveTracker.getWave(args.waveId);
     if (!wave) {
+      // THE RUNTIME-BACKED FALLBACK (2026-08-13 — the failure doc's fix #2):
+      // the tracker row can be missing — resolve + abort the wave's sessions
+      // from the runtime db; kill-wave NEVER dead-ends while the agents live.
+      const runtimeSessions = resolveWaveSessionsFromDb(args.waveId);
+      if (runtimeSessions.length > 0) {
+        await Promise.all(runtimeSessions.map(async (s) => {
+          try {
+            await client.abort({ path: { id: s.id } });
+          } catch (abErr) {
+            tridentLog('WARN', 'wave-status', 'kill-wave abort failed for ' + s.id + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
+          }
+        }));
+        tridentLog('INFO', 'wave-status', 'KILL-WAVE ' + args.waveId + ' via the RUNTIME-BACKED resolution (' + runtimeSessions.length + ' sessions aborted) — the tracker row was missing');
+        return {
+          wave: args.waveId, status: 'aborted', etaMs: 0, etaConfidence: 0,
+          elapsedMs: 0, agents: [],
+          note: 'aborted via the runtime-backed resolution — ' + runtimeSessions.length + ' sessions killed (the tracker row was missing)',
+        };
+      }
       return {
         wave: args.waveId, status: 'unknown_wave', etaMs: 0, etaConfidence: 0,
         elapsedMs: 0, agents: [], note: 'no tracked wave for ' + args.waveId,
@@ -338,6 +412,18 @@ export async function executeWaveStatus(
     // wave ACTION_REQUIRED (the INVESTIGATE ruling — it blocks the completion).
     const waves = WaveTracker.getActiveWaves();
     if (waves.length === 0) {
+      // THE RUNTIME-ACTIVE FALLBACK (2026-08-13 — the failure doc's fix #2):
+      // the tracker can be empty after a loss while the runtime has live
+      // background agents — the list-all must NEVER report "no active waves"
+      // against a live world. Resolve the running agent-wave sessions from the db.
+      const runtimeActive = resolveRunningBackgroundSessions();
+      if (runtimeActive.length > 0) {
+        return {
+          wave: 'all', status: 'runtime_active', etaMs: 0, etaConfidence: 0, elapsedMs: 0,
+          agents: runtimeActive.map((s) => ({ sessionId: s.id, name: s.title, status: 'running (runtime-resolved)' })),
+          note: 'the tracker was empty — ' + runtimeActive.length + ' runtime-active background sessions resolved from the opencode.db',
+        };
+      }
       return {
         wave: 'none', status: 'no_wave', etaMs: 0, etaConfidence: 0, elapsedMs: 0,
         agents: [], note: 'no active waves — pass waveId (or sessionId, or action=kill with waveId+agent)',

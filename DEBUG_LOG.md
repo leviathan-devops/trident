@@ -244,3 +244,16 @@ The request model 'deepseek-chat' resolves to deepseek-v4-flash on the official 
 3. The previous release attempt FAILED for exactly the prune-bug reason (the records were gone → the alias scan found nothing); the fixed prune + the alias resolution now work end-to-end on the host.
 
 **THE HOST STATE (2026-08-13):** the host runs c40fd1b8 — the complete stack minus the self-heal misfire fix (ddc2b24a — the end-signal finalized check + the lexicon hardening — pending the operator's redeploy; the ONLY functional difference between the deployed dist and the latest is the phantom-kick patch).
+
+
+## 2026-08-13 — THE WAVE-MANAGER CONTROL-SURFACE FIX (WAVE_MANAGER_RUNTIME_FAILURE_2026-08-13.md — ADDRESSED)
+
+**THE FAILURE DOC:** the wave-status could not see/kill a generated wave — "unknown_wave"/"no active waves" while the runtime had live background agents; the orchestrator had to bypass the wave manager.
+
+**THE ROOT CAUSE (found + fixed):** the WaveTracker was MEMORY-ONLY — a process restart (compaction / session switch / crash) wiped the wave rows → the wave-status's tracker lookup missed → the blind control surface. THE FIXES:
+1. THE TRACKER PERSISTENCE (wave-tracker.ts): the tracker + the archive persist to ~/OPENCODE_WORKSPACE/trident-tmp/.wave-tracker.json on EVERY mutation + LOAD at the module init (the TRIDENT_TRACKER_FILE env override for the tests). The wave rows SURVIVE restarts → the wave-status sees the waves it was built to control. LIVE-PROVEN: after a generate + a deploy-restart, the new process logged "the tracker LOADED from disk: 1 active waves".
+2. THE RUNTIME-BACKED RESOLUTION (wave-status.ts): the kill/kill-wave/list-all fall back to the opencode.db when the tracker row is missing — the wave's sessions resolve by the 'agent-wave-<waveId>-*' title prefix + the abort fires through the runtime; the list-all shows 'runtime_active' (the running background sessions) instead of "no active waves" against a live world.
+3. THE RESPAWN-vs-FRESH GATE (wave-dispatch.ts — the container found it): the waveId arg was the respawn anchor UNCONDITIONALLY — a FRESH generation with a waveId hit the respawn path → respawnAgent on a NON-EXISTENT wave → NO tracker row → NO persistence. THE FIX: the respawn path engages ONLY when the wave EXISTS in the tracker — a new waveId registers FRESH (the row + the persistence are ALWAYS written).
+4. THE WAVE-ID NAMING (wave-dispatch.ts — the operator: "why are all the wave ids still some hash slop"): the id = 'wave-<sanitized-alias>-<epoch>' — e.g. waveId='persistence-demo' → 'wave-persistence-demo-1786626890853' — the distinguishable token rides IN the id. LIVE-PROVEN.
+5. THE EVIDENCE-DB CONCURRENCY (agent-state.ts — the full-suite found "SQLiteError: database is locked"): the shared trident-evidence.sqlite + the parallel test workers → WAL + busy_timeout 5000 (the canonical sqlite pair).
+**Verification:** the unit suite 409/409, tsc 0, the container (trident-tracker-persist, dist 8a8fe69b): the named id ✓ + the tracker file written ✓ + "the tracker LOADED from disk: 1 active waves" after the restart ✓.

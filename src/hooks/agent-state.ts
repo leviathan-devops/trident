@@ -263,6 +263,14 @@ const EVIDENCE_DB_PATH = process.env.TRIDENT_EVIDENCE_DB_PATH || join(tmpdir(), 
 function getEvidenceDb(): EvidenceSqliteDatabase {
   if (evidenceDbHandle.db === null) {
     const db = new Database(EVIDENCE_DB_PATH) as EvidenceSqliteDatabase;
+    // THE CONCURRENCY FIX (2026-08-13 — "SQLiteError: database is locked" in
+    // the parallel test workers + the runtime): WAL allows concurrent readers
+    // with ONE writer; the busy_timeout makes the writer WAIT for the lock
+    // instead of failing immediately — the canonical sqlite concurrency pair.
+    try {
+      db.exec('PRAGMA journal_mode = WAL;');
+      db.exec('PRAGMA busy_timeout = 5000;');
+    } catch (pErr) { /* non-fatal — the pragmas are a hardening, not a requirement */ }
     db.exec(EVIDENCE_TABLE_DDL);
     db.exec(EVIDENCE_EVENTS_TABLE_DDL);
     db.exec(EVIDENCE_EVENTS_INDEX_DDL);

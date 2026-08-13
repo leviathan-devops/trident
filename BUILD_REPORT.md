@@ -627,3 +627,11 @@ THE POOL: the wave generation runs CONCURRENT_GENERATIONS = 15 as a CAP (splice(
 - The unit suite 408/408, tsc 0; the container evidence (.trident/container-test-results.json); the host verifications (the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias).
 - The host runs c40fd1b8; the ddc2b24a phantom-kick patch is the ONLY pending difference (the operator's one-copy redeploy).
 - The pre-existing residuals: the 2 dead tests of removed APIs removed (ship-gate + the surgical-mutator seam — the suite is green); the provider is the flakiest external link (the shadow retry + the heal mitigate); the shared-server re-created-events anchor edge is documented.
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE CONTROL-SURFACE + THE NAMED WAVE IDS
+
+- **The failure doc addressed:** the WaveTracker persistence (the rows survive restarts — live-proven), the runtime-backed kill/list-all resolution, the respawn-vs-fresh gate (a fresh waveId registers, never respawns into nothing), the evidence-db WAL/busy-timeout.
+- **The wave-id naming:** wave-<sanitized-alias>-<epoch> (waveId='persistence-demo' → wave-persistence-demo-<epoch>) — distinguishable tokens, live-proven.
+- **Verification:** 409/409 unit, tsc 0, the container: the named id + the tracker file + the post-restart load.
+- **Dist:** 8a8fe69bae2251a0c6f3cc2472829d5d48e175a2f811ad93ff2ad7a1b5755b7b.

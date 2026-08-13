@@ -282,9 +282,19 @@ export async function executeWaveDispatch(
   opts: ExecuteWaveDispatchOptions = {},
 ): Promise<WaveDispatchResult> {
   // ── STEP 1 — THE VALIDATION (the shared validator — the named remedies) ──
-  // The waveId is created BEFORE the normalization (2026-08-10 — the
-  // name-collision fix): the name fallback needs the waveId to be unique.
-  const waveId = 'wave-' + Date.now();
+  // THE WAVE-ID NAMING (2026-08-13 — the operator: "why are all the wave ids
+  // still some hash slop and not named with distinguishable tokens relevant to
+  // the context of the wave"): the id was 'wave-<epoch-ms>' — pure timestamp
+  // slop. THE FIX: when the operator provides the waveId (the alias), the
+  // generated id = 'wave-<sanitized-alias>-<epoch>' — e.g. waveId='hydra-full-
+  // map-v1' → 'wave-hydra-full-map-v1-1786...' — the distinguishable token
+  // rides IN the id (the status/tracker/registry all show it). The raw alias
+  // stays in the manifest's requestedWaveId for the release resolution.
+  const requestedAlias = typeof args.waveId === 'string' && args.waveId.trim().length > 0 ? args.waveId.trim() : '';
+  const sanitizedAlias = requestedAlias
+    .replace(/[^A-Za-z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '')
+    .slice(0, 30);
+  const waveId = 'wave-' + (sanitizedAlias ? sanitizedAlias + '-' : '') + Date.now();
   const specs = normalizeAgents(args, waveId);
   if (specs.length === 0) {
     throw new Error('the agents array is empty — pass at least one agent spec');
@@ -490,7 +500,15 @@ export async function executeWaveDispatch(
 
   // ── STEP 6 — THE TRACKER + THE WAVE ROW ──
   const respawnWaveId = typeof args.waveId === 'string' ? args.waveId : opts.waveId ?? null;
-  if (respawnWaveId) {
+  // THE RESPAWN-vs-FRESH GATE (2026-08-13 — the container found it: the waveId
+  // arg was the respawn anchor UNCONDITIONALLY — a FRESH generation with a
+  // waveId hit the respawn path → respawnAgent on a NON-EXISTENT wave →
+  // warnRespawnMiss → NO registerWave → NO tracker row → NO persistence → the
+  // wave-status saw "unknown_wave". THE FIX: the respawn path engages ONLY
+  // when the wave ALREADY EXISTS in the tracker — a new waveId registers FRESH
+  // (the tracker row + the persistence file are ALWAYS written).
+  const existingWaveForRespawn = respawnWaveId ? WaveTracker.getWave(respawnWaveId) : null;
+  if (respawnWaveId && existingWaveForRespawn) {
     // THE RESPAWN PATH (Part 4.3): the waveId + the name matching — the tracker
     // updates the EXISTING wave's agents IN PLACE (the lineage).
     for (const d of dispatched) {

@@ -140,3 +140,24 @@ describe('wave-tracker — the state machines (Part 4)', () => {
     expect(agent.state).toBe('running');
   });
 });
+
+describe('THE TRACKER PERSISTENCE (2026-08-13 - the failure doc: the tracker must survive restarts)', () => {
+  test('registerWave + the mutations persist to the tracker file (the load roundtrip)', () => {
+    WaveTracker.clear();
+    const wave = WaveTracker.registerWave({
+      wave: 'wave-persist-test', names: ['a1'], sessionIds: ['ses-p1'],
+      dispatchedAt: Date.now(), etaMs: 600000, etaConfidence: 0.5,
+      agents: {},
+    });
+    WaveTracker.registerAgent(wave, 'a1', 'ses-p1');
+    WaveTracker.registerTaskIds(wave, 'a1', ['ses-p1-task']);
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const tf = process.env.TRIDENT_TRACKER_FILE || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', '.wave-tracker.json');
+    const payload = JSON.parse(fs.readFileSync(tf, 'utf-8'));
+    expect(payload.tracker.some((w: { wave: string }) => w.wave === 'wave-persist-test')).toBe(true);
+    const agent = payload.tracker.find((w: { wave: string }) => w.wave === 'wave-persist-test').agents['a1'];
+    expect(agent.taskIds).toEqual(['ses-p1-task']);
+  });
+});

@@ -84,8 +84,55 @@ export interface WaveTrackerSurface {
 }
 
 // THE IN-PROCESS REGISTRY + THE ARCHIVE:
+// THE PERSISTENCE (2026-08-13 — WAVE_MANAGER_RUNTIME_FAILURE_2026-08-13.md: the
+// tracker was MEMORY-ONLY — a process restart (compaction / session switch /
+// crash) wiped the wave rows → the wave-status control surface saw
+// "unknown_wave"/"no active waves" while the runtime had live background
+// agents. THE FIX: the tracker persists to the shared trident-tmp on EVERY
+// mutation + loads at the module init — the wave rows SURVIVE restarts, so the
+// wave-status (the same process OR a fresh one) sees the waves it was built to
+// control.)
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
+
+const TRACKER_FILE = process.env.TRIDENT_TRACKER_FILE
+  || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', '.wave-tracker.json');
 const TRACKER = new Map<string, WaveTrack>();
 const ARCHIVE: WaveTrack[] = [];
+
+function persistTracker(): void {
+  try {
+    fs.mkdirSync(path.dirname(TRACKER_FILE), { recursive: true });
+    const payload = {
+      tracker: [...TRACKER.values()],
+      archive: [...ARCHIVE],
+      savedAt: Date.now(),
+    };
+    fs.writeFileSync(TRACKER_FILE, JSON.stringify(payload, null, 2), 'utf-8');
+  } catch (e) {
+    tridentLog('WARN', 'wave-tracker', 'the tracker persistence write failed (non-fatal — the in-memory state stays live): ' + (e instanceof Error ? e.message : String(e)));
+  }
+}
+
+function loadTracker(): void {
+  try {
+    if (!fs.existsSync(TRACKER_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(TRACKER_FILE, 'utf-8')) as { tracker?: WaveTrack[]; archive?: WaveTrack[] };
+    for (const w of parsed.tracker ?? []) {
+      if (w && typeof w.wave === 'string') TRACKER.set(w.wave, w);
+    }
+    for (const w of parsed.archive ?? []) {
+      if (w && typeof w.wave === 'string') ARCHIVE.push(w);
+    }
+    if (TRACKER.size > 0 || ARCHIVE.length > 0) {
+      tridentLog('INFO', 'wave-tracker', 'the tracker LOADED from disk: ' + TRACKER.size + ' active waves + ' + ARCHIVE.length + ' archived');
+    }
+  } catch (e) {
+    tridentLog('WARN', 'wave-tracker', 'the tracker load failed (fresh start): ' + (e instanceof Error ? e.message : String(e)));
+  }
+}
+loadTracker();
 
 function warnRespawnMiss(wave: string, name: string): void {
   tridentLog('WARN', 'wave-tracker',
@@ -104,6 +151,7 @@ export const WaveTracker: WaveTrackerSurface = {
     TRACKER.set(entry.wave, wave);
     // THE TRANSITION: dispatching → running (all spawns settled).
     wave.status = 'running';
+    persistTracker();
     return entry.wave;
   },
 
@@ -127,6 +175,7 @@ export const WaveTracker: WaveTrackerSurface = {
       w.agents[name] = track;
     }
     w.sessionIds.push(sessionId);
+    persistTracker();
   },
 
   // THE BACKGROUND TASK-ID BACKFILL (2026-08-12 — the background-only ruling):
@@ -138,6 +187,7 @@ export const WaveTracker: WaveTrackerSurface = {
     agent.taskIds = [...(agent.taskIds ?? []), ...taskIds];
     const w = TRACKER.get(wave);
     if (w && w.status === 'dispatching') w.status = 'running';
+    persistTracker();
   },
 
   // ── THE RESPAWN LINEAGE (Part 4.3 — the operator's "no new-wave stupidity") ──
@@ -160,6 +210,7 @@ export const WaveTracker: WaveTrackerSurface = {
     agent.lastBytes = 0;
     agent.errorCodes = [];
     w.sessionIds.push(sessionId);
+    persistTracker();
   },
 
   markComplete(wave, name): void {
@@ -168,6 +219,7 @@ export const WaveTracker: WaveTrackerSurface = {
     agent.state = 'complete';                   // running → complete
     agent.spawnTimes.completedAt = Date.now();
     agent.lastActivityAt = Date.now();
+    persistTracker();
   },
 
   markFailed(wave, name, error): void {
@@ -175,6 +227,7 @@ export const WaveTracker: WaveTrackerSurface = {
     if (!agent) return;
     agent.state = 'failed';                     // running → failed (the crash)
     agent.lastError = error;
+    persistTracker();
   },
 
   markKilled(wave, name, reason): void {
@@ -183,12 +236,14 @@ export const WaveTracker: WaveTrackerSurface = {
     agent.state = 'killed';                     // stuck → killed (the decision)
     agent.lastKillReason = reason;
     agent.spawnTimes.killedAt = Date.now();
+    persistTracker();
   },
 
   markStuck(wave, name): void {
     const agent = TRACKER.get(wave)?.agents[name];
     if (!agent) return;
     agent.state = 'stuck';                      // running → stuck (the evidence)
+    persistTracker();
   },
 
   getWave(wave) {
@@ -211,11 +266,13 @@ export const WaveTracker: WaveTrackerSurface = {
     ARCHIVE.push(w);                            // the last-10 pruning:
     while (ARCHIVE.length > WAVE_ARCHIVE_CAP) ARCHIVE.shift(); // the oldest first
     TRACKER.delete(wave);
+    persistTracker();
   },
 
   clear(): void {
     TRACKER.clear();
     ARCHIVE.length = 0;
+    persistTracker();
   },
 
   size(): number {
