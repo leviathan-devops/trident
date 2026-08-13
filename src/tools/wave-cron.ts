@@ -156,6 +156,9 @@ export function setCronMainSessionId(sid: string | null): void {
   if (typeof sid !== 'string' || sid.length === 0 || sid === 'default') return;  // never null, never 'default'
   if (mainSessionIdOverride) return;                                             // the first real id sticks
   mainSessionIdOverride = sid;
+  // THE ONE-TIME ANCHOR LOG (once per process — the observable proof of the
+  // session.created tether; NOT per-tick noise):
+  void tridentLog('INFO', 'wave-cron', 'MAIN-SESSION ANCHOR: ' + sid + ' (the first real session id — the process\'s own session)');
 }
 function mainSessionIdRef(): string | null {
   return mainSessionIdOverride;

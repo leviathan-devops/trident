@@ -256006,6 +256006,7 @@ function setCronMainSessionId(sid) {
   if (mainSessionIdOverride)
     return;
   mainSessionIdOverride = sid;
+  tridentLog("INFO", "wave-cron", "MAIN-SESSION ANCHOR: " + sid + " (the first real session id \u2014 the process's own session)");
 }
 function mainSessionIdRef() {
   return mainSessionIdOverride;
