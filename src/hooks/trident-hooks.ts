@@ -2723,7 +2723,14 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
           var tpStat = statSync(path.join(TRIDENT_TMP_DIR, tpF.name));
           teaRecFiles.push({ name: tpF.name, age: Date.now() - tpStat.mtimeMs });
         }
-        teaRecFiles.sort(function (a, b) { return b.age - a.age; });   // the oldest first
+        // THE SORT FIX (2026-08-13 — the HOST found it: the OLD sort was
+        // DESCENDING by age (`b.age - a.age` — the oldest first), so the
+        // over-cap check `tq >= CAP` removed the array END = the NEWEST
+        // records — the wave being tested was pruned mid-test when the shared
+        // host tmp (8 sessions' waves) crossed the 20-record cap. THE FIX:
+        // ASCENDING (`a.age - b.age` — the newest first) → the over-cap keeps
+        // the newest + removes the OLDEST (the intent all along).
+        teaRecFiles.sort(function (a, b) { return a.age - b.age; });   // the newest first — the cap keeps the newest
         for (var tq = 0; tq < teaRecFiles.length; tq++) {
           var tpRec = teaRecFiles[tq];
           var tpOverAge = tpRec.age > WAVE_RECORD_WINDOW_MS;
