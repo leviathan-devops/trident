@@ -27,7 +27,14 @@ import { tridentLog } from '../utils.js';
 
 // ═══ THE INCOMPLETION LEXICON — the mechanical DETECTOR (the ISE law: the
 // regexes flag CANDIDATES only; the state machine decides — the lexicon is
-// the detection layer, never the decision layer). ═══
+// the detection layer, never the decision layer). THE 2026-08-13 HARDENING
+// (the host misfire: the detector kicked a LIVE generation — a streaming text
+// part was read as 'finalized' + a plain-word report ending was read as a
+// 'mid-sentence-cut'). THE FIX: (1) the FINALIZED check now requires the
+// COMPLETION SIGNAL (the part's time.end / a step-finish) — a streaming text
+// is NEVER finalized; (2) the BARE mid-sentence-cut is REMOVED — a legit
+// report can end with a plain word — a REAL drop shows a dangling connective,
+// a trailing ellipsis, or an unclosed fence. ═══
 const TRAILING_ELLIPSIS = /(?:\.\.\.|\u2026)\s*$/;                          // the operator's example — the sentence cut + "..." or "…"
 const DANGLING_CONNECTIVE = /\b(the|and|or|but|because|of|to|with|for|on|at|from|by|a|an|is|are|was|were|that|which|this|these|if|then|so|as|in|it|its|their|his|her|our|your|we|they|he|she|not|no|yes)\s*$/i;  // a dangling connective — the sentence never landed
 const UNCLOSED_FENCE = /```[^`]*$/;                                        // an unclosed code fence
@@ -36,9 +43,6 @@ const UNBALANCED_OPEN = (t: string): boolean => {
   const close = (t.match(/\)/g) || []).length + (t.match(/\]/g) || []).length;
   return open > close;
 };
-// A COMPLETE message's tail ends with one of these (the terminal set — the
-// deliberate colon/semicolon endings are NOT incompletions):
-const TERMINALS = /[.!?"')\]}>`:;]/;
 
 // ═══ THE DETECTION (the pure state machine — the stream reader injectable for
 // the tests; the production uses the real readSessionStream). ═══
@@ -66,12 +70,15 @@ export function detectDroppedMainGeneration(
     }
     const newest = page.parts[page.parts.length - 1];
     // ── ANALYZED — THE FINALIZED CHECK (the state machine's discriminator) ──
-    // A generation IN FLIGHT = a pending step-start/reasoning/tool at the top
-    // of the stream — the agent is PROCESSING (a slow healthy generation is
-    // NEVER kicked). A FINALIZED message = the newest part is a text or the
-    // step-finish — the runtime completed the partial (the ▣ timestamp
-    // rendered) and the agent is IDLE — the dropped signature is possible.
-    if (newest.type !== 'text' && newest.type !== 'step-finish') {
+    // THE END-SIGNAL (2026-08-13 — the host misfire fix): a message is
+    // FINALIZED ONLY when it carries the COMPLETION signal — a 'step-finish'
+    // part OR a text part with the time.end present (rec.completed — the ▣
+    // timestamp rendered, the runtime stopped the generation). A STREAMING
+    // text part (no time.end, no step-finish yet) is a LIVE generation — the
+    // agent is PROCESSING — NEVER kicked (the host misfire: the cron read a
+    // streaming partial text as 'finalized' and kicked mid-generation).
+    const newestCompleted = newest.type === 'step-finish' || (newest.type === 'text' && newest.completed === true);
+    if (!newestCompleted) {
       return { dropped: false, reason: 'in-flight', tail: '', newestPartType: newest.type };
     }
     // ── PARSED — the LAST assistant text part (the message content) ──
@@ -88,13 +95,16 @@ export function detectDroppedMainGeneration(
     const tail = lastText.trimEnd();
     const tailSnippet = tail.length > 120 ? tail.slice(-120) : tail;
     // ── CLASSIFIED — THE INCOMPLETION LEXICON (the mechanical DETECTOR) ──
+    // THE BAR (2026-08-13 — the misfire hardening): a REAL drop shows a
+    // dangling connective, a trailing ellipsis, an unclosed fence, or an
+    // unbalanced bracket. The BARE 'mid-sentence-cut' (a plain-word ending
+    // without a terminal) is REMOVED — a legitimate report can end with a
+    // plain word; flagging it produced the false kick.
     let reason: string | null = null;
     if (TRAILING_ELLIPSIS.test(tail)) reason = 'trailing-ellipsis';
     else if (UNCLOSED_FENCE.test(tail)) reason = 'unclosed-code-fence';
     else if (UNBALANCED_OPEN(tail)) reason = 'unbalanced-brackets';
-    else if (!TERMINALS.test(tail.slice(-1))) {
-      reason = DANGLING_CONNECTIVE.test(tail) ? 'dangling-connective' : 'mid-sentence-cut';
-    }
+    else if (DANGLING_CONNECTIVE.test(tail)) reason = 'dangling-connective';
     if (!reason) {
       return { dropped: false, reason: 'complete', tail: '', newestPartType: newest.type };
     }

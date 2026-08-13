@@ -93,6 +93,7 @@ export interface SessionStreamPage {
     input?: unknown;                     // the tool call's input when type === 'tool'
     outputSnippet?: string;              // the tool result's first 200 chars when present
     text?: string;                       // the text/reasoning content
+    completed?: boolean;                 // NEW (2026-08-13): the part's time.end present — the message COMPLETED (never true for a streaming part)
   }>;
   lastTools: string[];                   // the last N tool names (what it's doing right now)
   byteGrowth: number;                    // bytes since the last poll (the progress signal)
@@ -125,6 +126,11 @@ export function readSessionStream(
             state?: { tool?: string; input?: unknown; output?: unknown };
           };
           const rec: SessionStreamPage['parts'][number] = { type: d.type ?? 'unknown' };
+          // THE COMPLETION SIGNAL (2026-08-13 — the detector's misfire fix:
+          // the part's `time.end` exists ONLY when the message COMPLETED — a
+          // STREAMING text part has only `time.start`. The self-heal's
+          // finalized check needs this to never kick a live generation.)
+          rec.completed = typeof (d as { time?: { end?: unknown } }).time?.end === 'number';
           if (d.type === 'tool') {
             rec.tool = d.tool ?? d.state?.tool ?? 'tool';
             rec.input = d.state?.input;

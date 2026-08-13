@@ -484,3 +484,11 @@ trident-wave-manager: "background": true, the flow-safe check-in, 470s generatio
 - **The fix:** the stick-once never-null setter (ignores null/'default', keeps the first real id) + the call sites only set real ids. The session.created event's properties.sessionID is the primary anchor (container-proven); the db newest-root is the no-anchor fallback only.
 - **Dist:** 4e9cebdca764050f.
 - **Verification:** 406/406 unit (the new stick-once test), tsc 0.
+
+
+## BUILD REPORT ADDENDUM — 2026-08-13: THE SELF-HEAL MISFIRE FIX
+
+- **The bug:** the detector kicked a LIVE generation — the FINALIZED check treated a streaming text part as completed + the lexicon's bare mid-sentence-cut flagged legitimate plain-word endings.
+- **The fix:** the end-signal finalized check (the part's time.end / a step-finish required — a streaming text is never finalized) + the lexicon hardened (the bare mid-sentence-cut removed).
+- **Verification:** 408/408 unit (the misfire cases locked), tsc 0, the container no-false-kick observed.
+- **Dist:** ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79 (needs the host redeploy).

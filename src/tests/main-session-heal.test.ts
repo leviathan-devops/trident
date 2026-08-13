@@ -15,7 +15,7 @@ import {
   type HealStreamReader, type HealClient,
 } from '../tools/main-session-heal.ts';
 
-function fakePage(parts: Array<{ type: string; text?: string }>) {
+function fakePage(parts: Array<{ type: string; text?: string; completed?: boolean }>) {
   return {
     ok: true,
     sessionId: 'main-sess',
@@ -23,7 +23,7 @@ function fakePage(parts: Array<{ type: string; text?: string }>) {
     returnedParts: parts.length,
     moreAvailable: false,
     beforeId: null,
-    parts: parts.map((p) => ({ type: p.type, text: p.text ?? '' })),
+    parts: parts.map((p) => ({ type: p.type, text: p.text ?? '', completed: p.completed ?? false })),
     lastTools: [],
     byteGrowth: 0,
   };
@@ -46,17 +46,43 @@ describe('THE INCOMPLETION DETECTOR — the dropped-generation signature', () =>
   });
 
   test('THE OPERATOR\'S EXAMPLE — a sentence cut mid-way is DROPPED', () => {
-    // "look for obvious incompletions in the generated\n.\n.\n.\n" — the
-    // sentence stops halfway, the tail is a word fragment with no terminal:
+    // "look for obvious incompletions in the generated..." — the operator's
+    // actual example: the sentence stops + the '...' marks the cut:
     const r = makeReader(fakePage([
       { type: 'step-start' },
-      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated' },
+      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated...' },
       { type: 'step-finish' },
     ]));
     const d = detectDroppedMainGeneration('main-sess', { stream: r });
     expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('mid-sentence-cut');
+    expect(d.reason).toBe('trailing-ellipsis');   // the operator's example: the cut + the '...'
     expect(d.tail.length).toBeGreaterThan(0);   // the EVIDENCE rides the detection
+  });
+
+  test('THE MISFIRE HARDENING: a plain-word ending WITHOUT the ellipsis/dangling is NOT dropped (a legit report)', () => {
+    // The host misfire: the detector flagged a COMPLETE message that merely
+    // ended with a plain word (no terminal) as a 'mid-sentence-cut'. REMOVED.
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated', completed: true },
+      { type: 'step-finish' },
+    ]));
+    const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('complete');
+  });
+
+  test('THE MISFIRE HARDENING: a STREAMING text part (no time.end) is NEVER dropped — the live generation', () => {
+    // THE host misfire root cause: the cron read a STREAMING text part (the
+    // generation in flight — no step-finish, no time.end) as 'finalized' and
+    // kicked mid-generation. The completed flag must be false for a stream:
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'So the detector looks for obvious incompletions in the gen', completed: false },
+    ]));
+    const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('in-flight');
   });
 
   test('a trailing ellipsis ("...") is DROPPED', () => {
@@ -130,12 +156,12 @@ describe('THE FINALIZED DISCRIMINATOR — the slow-vs-frozen guard', () => {
     // finalized the partial — the ▣ timestamp rendered) + the text is cut:
     const r = makeReader(fakePage([
       { type: 'step-start' },
-      { type: 'text', text: 'The wave was dispatched and the registry shows' },
+      { type: 'text', text: 'The wave was dispatched and the registry shows...', completed: true },
       { type: 'step-finish' },
     ]));
     const d = detectDroppedMainGeneration('main-sess', { stream: r });
     expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('mid-sentence-cut');
+    expect(d.reason).toBe('trailing-ellipsis');
   });
 });
 
