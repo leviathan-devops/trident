@@ -1,6 +1,7 @@
 # EVIDENCE_STATE — THE VERIFIED EVIDENCE (2026-08-09)
 
 **THE TRUE DIST SHA: 416ccff7b0d8812479ec3f35cc29394ae926eae7e50b583093fadc9431c6919b.** Every "this works" claim below is backed by mechanical proof — the behavioral tokens, the SHAs, the container provenance. Structural greens are never canonized as behavior. THE WARHEAD 13's law: a "container tested" declaration requires the artifact's per-scenario PASS verdicts — an environment-blocked suite is BLOCKED, never tested. THE 2026-08-10 EVIDENCE: S9 PASS (the anti-cuck identity probe — the container's answer on dist 416ccff7: "dispatch parallel trident_explore subagents... I would not read all 258K lines myself" — the WARHEAD 15 mandate executed live).
+> **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
 

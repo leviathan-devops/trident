@@ -1,4 +1,21 @@
-# POST-COMPACTION PROMPT — THE FRESH AGENT'S ENTRY (2026-08-10 — the FULL-TEST + FIXES session)
+# POST-COMPACTION PROMPT — THE FRESH AGENT'S ENTRY (2026-08-13 — the FULL host-verified session)
+**READ THIS FIRST. THIS IS THE MISSION.**
+
+## THE PROJECT
+The Trident v4.4.2 wave-manager fork (`v4.4.2-wave-manager-async` — the 4.4.2 git branch). This session shipped + host-verified: (1) the wave-manager dispatch-authorization TRANSACTIONAL FIX (BUGREPORT_wave-manager-dispatch-authorization.md), (2) the 2026-08-13 operator rulings (the generation pool 15-cap, the up-to-3 same-backoff shadow retries, the 15m timeout, the stuck-detector directive IDs, the v4-flash pin on BOTH providers), (3) the MAIN-SESSION SELF-HEAL (the dropped-generation detector + the minimal "continue" kick + the 10m cooldown), (4) the multi-session anchor (the session.created tether + the stick-once), (5) the WAVE-RECORD PRUNE sort fix (found by the host), (6) the SELF-HEAL MISFIRE fix (the end-signal finalized check + the hardened lexicon).
+
+## THE TRUE DIST SHA
+**ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79** (16,156,354 bytes — the misfire fix; the repo's 4.4.2 dist mirror matches).
+
+## THE DEPLOYED SHA
+**c40fd1b8be536bb0** — the host plugin dir runs this (the prune fix); the ONLY functional difference vs the latest dist is the phantom-kick patch (ddc2b24a) — the operator's one-copy redeploy pending.
+
+## THE RESUME SEQUENCE
+1. Read this file + the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda (the full record).
+2. The unit suite: 408/408 (bun test src/tests/), tsc 0.
+3. The container evidence: .trident/container-test-results.json (the exact-bug cycle + the prune-direct + the misfire).
+4. The host evidence: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias — all verified live on the host (c40fd1b8).
+5. The pending host step: deploy ddc2b24a to ~/.config/opencode/plugins/trident/dist/index.js + verify the self-heal's no-phantom-kick on the host.
 
 **READ THIS FIRST. THIS IS THE MISSION.**
 

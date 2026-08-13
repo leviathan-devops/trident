@@ -1,6 +1,7 @@
 # BUILD_STATE — THE CURRENT BUILD (2026-08-09)
 
 **THE TRUE DIST SHA: 416ccff7b0d8812479ec3f35cc29394ae926eae7e50b583093fadc9431c6919b (16.1 MB, 431 modules). THE BATTERY: 680 pass / 10 fail / 2301 expect (the 10 fails = the stale Checkpoints/7.3 snapshot copies — 0 in src/tests).** This is the checkpoint structure, the SHA chain, the verified results, the module inventory, the build command + env, and the frozen machinery. THE 2026-08-10 MILESTONE: WARHEAD 15 (THE ANTI-CONTEXT-BUDGET CUCK WARHEAD + THE DISPATCH-WAVE-FOR-SYNTHESIS MANDATE) — live-verified in the container (S9 PASS: the 258K-line bundle probe → "dispatch parallel trident_explore subagents", ZERO cuck energy).
+> **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
 

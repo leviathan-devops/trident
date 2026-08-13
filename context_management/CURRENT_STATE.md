@@ -1,6 +1,7 @@
 # CURRENT_STATE — THE ARCHITECTURE AS IT IS (2026-08-09)
 
 **THE DIST: 11fb42e76d2d10e110c8d5e75b620084afe2cd1989ba445d9aa888830a88f5c2 (16.0 MB). THE BATTERY: 175 pass / 0 fail / 638 expect.** This is the per-module status — built/solid/broken/open — with the file:line anchors. The architecture as it ACTUALLY is, every deviation from the original design noted.
+> **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
 
