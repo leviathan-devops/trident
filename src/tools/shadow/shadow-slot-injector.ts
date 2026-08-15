@@ -38,7 +38,7 @@ export function slotValue(name: string, filepaths: string[], context: string, ro
   if (n.includes('typecheck') || n.includes('tsc')) return 'tsc --noEmit';
   if (n.includes('sha256')) return 'sha256sum ' + filepaths.join(' ');
   if (n.includes('diff')) return 'git diff';
-  if (n.includes('grep')) return 'grep -rn "export" ' + (filepaths[0] || '.');
+  if (n.includes('grep')) return 'grep -c "export" ' + (filepaths[0] || '.'); // THE BOUNDED FORM (2026-08-15 — the OUTPUT_BOMB fix: the old `grep -rn "export" <path>` re-emits the ENTIRE minified line per match on a bundle → tens of GB → the RAM blow; the count form is constant-memory)
   if (n.includes('probe')) return 'read ' + (filepaths[filepaths.length - 1] || filepaths[0] || '') + ' (offset=9999) — the EOF confirmed';
   if (n.includes('read command')) return filepaths.map((p: string) => 'read ' + p + ' (full pass)').join('\n');
   if (n.includes('spec') || n.includes('doctrine')) return context;

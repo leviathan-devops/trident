@@ -15,7 +15,7 @@ Trident inverts the standard AI coding relationship: most tools write code and c
 
 ## The Wave-Manager Async — The Subagent Orchestration System
 
-The wave manager is Trident's subagent-dispatch orchestration system: it generates prompt files for parallel agents (the shadow pipeline), returns a batch form whose task calls are always dispatched in the background (`background: true` — the calls return immediately with task_ids), and gives the orchestrator a three-channel control surface — completion/state, in-flight vision, and steering. The orchestrator dispatches the batch as ONE message, captures the task_ids, checks in every 5-10 minutes, and continues its own work — never hostage to a wave.
+The wave manager is Trident's subagent-dispatch orchestration system: it generates prompt files for parallel agents (the shadow pipeline), returns a batch form whose task calls carry ONLY the prompt file's PATH (`{ description, promptFile, subagent_type }` — the T.E.B. machine's loader injects the byte-exact prompt + `background: true` at the hook, so the prompt NEVER passes through the model's output and the calls return immediately with task_ids), and gives the orchestrator a three-channel control surface — completion/state, in-flight vision, and steering. The orchestrator dispatches the batch as ONE message, captures the task_ids, checks in every 5-10 minutes, and continues its own work — never hostage to a wave.
 
 ### The three channel surfaces (the orchestrator's control):
 1. **THE COMPLETION/STATE CHANNEL** — `task_status(taskId)`: wait=false for the live state; wait=true blocks (synchronous-on-demand).
@@ -40,8 +40,9 @@ The wave manager is Trident's subagent-dispatch orchestration system: it generat
    ┌──────────────────────────┐
    │ THE WAVE MANAGER         │ D   the shadow pipeline (5-8 min, SYNCHRONOUS —
    │ prompt files + batch form│     no derail during generation)
-   │ batch: EVERY call        │     background:true + promptFile + the generated prompt
-   │ carries background:true  │
+   │ batch: the 3-field shape │     { description, promptFile, subagent_type } ONLY
+   │ (promptFile + the model  │     the T.E.B. loader injects the byte-exact prompt
+   │ passes ONLY the path)    │     + background:true at the HOOK (never the form)
    └────────────┬─────────────┘
                 │ returns the batch form + the flow-safe check-in
                 ▼
@@ -136,9 +137,9 @@ The wave manager is Trident's subagent-dispatch orchestration system: it generat
 - **The official-API fallback is a failsafe** — wired + verified ONCE (HTTP 200, model deepseek-v4-flash), then forgotten.
 - **deepseek-v4-pro is BANNED** — zero references in the codebase.
 
-### The identity — WARHEADS 1-19
+### The identity — WARHEADS 1-21
 
-The identity carries 19 warheads (disk + inline + bundle): 1-15 the pre-existing laws, 16 THE WAVE-DISPATCH EXECUTION LAW (updated for the background reality), 17 THE HOST-PIPELINE TWO-ROLE TESTING LAW, 18 THE BASIC-FUCKING-LOGIC LAW, and **19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW** (the flow-state warhead: the insanely-great bar, the imagineering compiler, the full-context absorption via trident_explore + the wave manager, the self-guided first-principles chain, the PREVENTATIVE flow-state protection, the gates as the measured minimum).
+The identity carries 21 warheads (disk + inline + bundle): 1-15 the pre-existing laws, 16 THE WAVE-DISPATCH EXECUTION LAW (updated for the background reality), 17 THE HOST-PIPELINE TWO-ROLE TESTING LAW, 18 THE BASIC-FUCKING-LOGIC LAW, **19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW** (the flow-state warhead), **20 — THE ASCII-EXPLANATION LAW** (explanation requests open with the box-drawing diagram), and **21 — THE MEMORY-EFFICIENT-DATA-RETRIEVAL LAW** (stat before any python read, the streaming tools for >100MB, `for line in open()` as the only safe in-memory read — the RAM-bomb prevention).
 
 ### The knowledge layer — LLM_FLOW_STATE_ENGINEERING.md
 
@@ -146,24 +147,25 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 
 ### The verification record
 
-- `tsc --noEmit` (strict): 0 errors · the bundle: 436 modules, 16.13 MB — injection-free, pro-free.
-- The container suite (OpenCode 1.14.51): auth probe PASS · the steer tool PASS · task_status PASS · the stream reader PASS (a real session's full page) · the list-all PASS · **the background:true batch form PASS** · both adversarial steer probes PASS · **the full background loop PASS** (generate → dispatch ONE message → poll → complete → verify → zero firewall blocks).
-- The direct host verification (after the deploy): all wire-in tools verified live (task_status allowlisted, the steer JSON, the list-all note, the stream reader on a real session, the wave manager's background:true + the flow-safe check-in + a 470s generation).
-- The one-time fallback verification: HTTP 200 in 1.68s, model deepseek-v4-flash, FALLBACK_OK.
+- `tsc --noEmit` (strict): 0 errors · the bundle: 437 modules, 16.26 MB — injection-free, pro-free, the Omni-Vision v5.1.4 engine vendored.
+- The container suites (OpenCode 1.14.51): the 7/7 forward iteration (the T.E.B. happy path + the memory gate + the promptFile firewall + the wave-mandate + the dispatch memory screen + the deferred wipe + the measured window), the #25 S2-S4 (the partial-dispatch reconcile + the derive-from-manifest + the re-fire protection — with the two container-caught bugs fixed: the custom-waveId discriminator + the recorded-status adopted-set), the omni-vision S2-S4 (the tool registered + the direct mode + the validator gate + the full api vision path through the SSE transport + the memory write), and the 8-scenario red-team (the full firewall stack live).
+- The direct 0-trust red team (the deployed merged runtime): the wave-mandate + the promptFile firewall blocks (the T.E.B. input classifier + the "input is a filepath and nothing else" bullet), the byte-exact T.E.B. injection (the runtime sqlite sha proof), the 434s generation (the measured window), the memory gate, the engine-log gating, and the omni-vision narrative-coherence test on the DXY Gold Standard image set (the operator's confirmation: "this omni vision tool is properly working").
+- The battery: 469/469 (29 files) · the dist: baaf7769 — the ship-approved build.
 
 ### The documentation
 
 | Doc | Contents |
 |---|---|
-| `BUILD_REPORT.md` | the complete build record — the mission, the 11 wire-in files, the architecture, the warhead texts in full, the verification, the SHAs, the handoff |
-| `DEBUG_LOG.md` | the full incident record — every bug class + the fix + the lesson |
+| `BUILD_REPORT_V6.md` | the complete build record — the T.E.B. machine, the shadow-brain 3-fix, the WARHEAD 20/21, the firewall disables, the RAM-bomb prevention, the #25 firewall-intelligence, the Omni-Vision v5.1.4 merge, the ship-approval |
+| `DEBUG_LOG_V6.md` | the full incident record — M1-M22 (every bug class + the fix + the lesson) |
 | `LLM_FLOW_STATE_ENGINEERING.md` | the flow-state engineering bible |
 | `docs/history/` | the historical versioned docs (BUILD_REPORT_V3-V6, DEBUG_LOG_V3-V5 — the 4.4.2 iteration's legacy record) |
-| `context_management/` | the canon docs |
+| `context_management/` | the canon docs (all bumped to the ship-approved state) |
+| `KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md` | the T.E.B. machine bible (the 5-part anatomy + the 6 machines + the replication recipes) |
 
 ### The deployment
 
-- **The dist:** `dist/index.js` — SHA `dce7ca40063757a392296cf5017ef3db5148dfde5ec527a89f622b0d6440f488` (recorded in `dist/sha256.txt`).
+- **The dist:** `dist/index.js` — SHA `baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432` (the ship-approved build — the Omni-Vision v5.1.4 merge + the SSE transport re-wire).
 - **Deploy:** through the sanctioned deploy channel — never direct config writes.
 
 ---
@@ -210,10 +212,11 @@ The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, th
 
 `src/tools/shadow/shadow-brain.ts` is the LLM transport behind the pipeline:
 
-- **The model is FROZEN:** DeepSeek V4 Flash ONLY (`SHADOW_MODEL = 'deepseek-v4-flash'`), `reasoning_options.effort = 'max'` — no other model, no fallback model (D-SH-2).
+- **The model is FROZEN:** DeepSeek V4 Flash ONLY (`SHADOW_MODEL = 'deepseek-v4-flash'`), `reasoning_options.effort = 'max'` — no other model, no fallback model (D-SH-2). NO model/provider switching ever (the operator's ruling).
 - **The streaming transport:** SSE (`stream: true`) — the first chunk lands in ~1s, the total body streams at ~30KB/s.
-- **The stall guards:** the **45s idle detector** (`SHADOW_FETCH_STALL_MS`, re-armed per SSE event — the TRUE "provider is dead" signal) + the **600s total safety net** (`SHADOW_TIMEOUT_MS` — was 180s, which killed healthy streams; the 2026-08-12 fix).
-- **The two-transport fallback:** the opencode-go provider (primary) → the official DeepSeek API (api.deepseek.com/v1 + the DEEPSEEK_API_KEY secret) after the retry — a failsafe, verified once, forgotten; the opencode-go provider is the only path in practice.
+- **THE MEASURED STALL WINDOW (the F1 fix — 2026-08-14):** the old fixed 45s window was a knife-edge (the provider's 35-50s first-event latency on the large 384K generations killed healthy streams — the SHADOW_BRAIN_TIMEOUT class). The window is now `avg × 3` of the rolling first-event latency, bounded `[45s, 5m]` (the shadow-health sqlite store records every call) — a dead provider still fails in 45s (the floor), a slow-but-alive one gets the measured margin. THE 900s total safety net (`SHADOW_TIMEOUT_MS`).
+- **THE BACKOFF RETRY (the F2 fix):** a round-1 timeout/500 retries ONCE at 2× the measured window after a 3s gap — slow, not dead; NO provider/model switching.
+- **THE DENSITY MEMORY (the F3 fix):** the wave-tracker persists the per-agent context-arg totals; a re-generation at <0.7 the prior density appends the DENSITY WARNING (reuse the original args verbatim).
 
 ### The Wave Manager (the orchestrator's generation + dispatch)
 
@@ -224,20 +227,35 @@ THE WAVE MANAGER — the generate flow
 
  the agents[] spec → normalizeAgents → validateAgentSpec (the CTX floors)
  → the SHADOW PIPELINE per agent (bounded concurrency 3) → the prompt files
- → the wave manifest (the per-agent SHA-256 — the [WAVE VERBATIM] anchor)
- → the per-agent manifest records (the [WAVE BATCH] passing shape)
- → the atomic wave registry (the batch gate's window)
- → the tracker (registerWave — the agent states)
- → THE BATCH FORM: { tool: 'batch', parameters: { tools: [ { tool: 'task',
-   parameters: { description, prompt, subagent_type, promptFile, background: true } } ] } }
- → the flow-safe check-in
+  → the wave manifest (the per-agent SHA-256 — the [WAVE VERBATIM] anchor)
+  → the per-agent manifest records (the [WAVE BATCH] passing shape)
+  → the atomic wave registry (the batch gate's window + the derive-from-manifest)
+  → the tracker (registerWave — the agent states)
+  → THE BATCH FORM: { tool: 'batch', parameters: { tools: [ { tool: 'task',
+    parameters: { description, promptFile, subagent_type } } ] } }  ← the 3-field
+    T.E.B. shape — NO prompt, NO background (the loader injects both at the hook)
+  → the flow-safe check-in
 ```
 
-### The Firewalls
+### The Firewalls (the 2026-08-15 intelligence overhaul)
 
-- **[WAVE VERBATIM]** — a compressed/condensed prompt is BLOCKED: the dispatched promptFile's content must match the manifest's SHA-256 exactly.
-- **[WAVE BATCH]** — a single dispatch of a multi-agent wave is BLOCKED: the batch's ONE message is the only sanctioned channel, enforced by the atomic registry's call-count window.
-- **The promptFile channel** — the task call carries `promptFile` (inside the trident-tmp folder) + a placeholder; the loader injects the file's byte-exact content BEFORE the firewalls validate — the orchestrator's hands never touch the prompt text.
+- **[WAVE MANDATE]** — the ONLY dispatch path is the wave manager: a task dispatch NOT matching a generated wave agent is BLOCKED with the generate directive.
+- **[WAVE VERBATIM]** — the PROMPTFILE FIREWALL: a wave-agent dispatch WITHOUT the promptFile is BLOCKED — the T.E.B. loader's `tebHadPromptFile` flag is the mechanical fact the prompt file was passed; an inline prompt is the GLM-compression derailment class, structurally impossible.
+- **THE T.E.B. INPUT CLASSIFIER** — the path-vs-prompt lexicon (the workspace-root anchor in the first 3 branches + the token-shape): a single workspace-anchored path token = the promptFile (ALLOW); a bunch of tokens = a written prompt (BLOCK with "input is a filepath and nothing else. Do NOT write the prompt text.").
+- **THE DISPATCH MEMORY SCREEN** — the dispatched prompt's command lines are screened (the SAME memory lexicon): the OUTPUT_BOMB (a recursive grep on a built artifact) + the BUNDLE_EXEC (executing a dist/bundle) BLOCK the dispatch with the bounded rewrite — the RAM-bomb class never reaches a subagent.
+- **[WAVE BATCH]** — the atomic registry's call-count window: a single dispatch of a multi-agent wave is BLOCKED; the PARTIAL-DISPATCH RECONCILE adopts the running agents + names the missing (never the blind regenerate); the missing-registry wave DERIVES from the manifest; the custom-waveId shapes resolve (the content-aware wave-level discriminator).
+- **The T.E.B. loader** — the promptFile channel: the task call carries ONLY `promptFile` (inside the trident-tmp folder); the loader injects the file's byte-exact content + `background: true` + strips promptFile BEFORE the runtime executes — the orchestrator's hands NEVER touch the prompt text, and the GLM compression is structurally impossible.
+
+### The T.E.B. Machine + the 2026-08-15 additions (the intelligence layer)
+
+- **THE T.E.B. MACHINE (the promptFile-only dispatch):** the batch form emits ONLY `{ description, promptFile, subagent_type }` — the loader hook (trident-hooks.ts) intercepts the task call, reads the promptFile, mutates `promptFile → prompt` byte-exact + `background: true` + strips promptFile BEFORE the runtime executes. **The prompt NEVER passes through the model's output** — the GLM compression derailment is structurally impossible (verified: the subagent's received prompt sha == the prompt file's sha at the runtime sqlite).
+- **THE DEFERRED T.E.A. WIPE:** the prompt files + the manifests survive until the wave's FULL dispatch (calls.length == total && all accepted) — the retry/re-dispatch path intact.
+- **THE MEMORY-READ LEXICON (the RAM-bomb gate):** the typed PatternFamily + the classifyMemoryRead state machine on the bash tool.before — the RAM_BOMB (`.readlines()`/`.read()` on an unsized file — the 7.9GB → 14.6GB RSS incident), the OUTPUT_BOMB (a recursive grep on a built artifact), and the BUNDLE_EXEC (executing a dist/bundle) BLOCKED with the named streaming remedy; the SIZED_READ / LAZY_ITERATE / STREAM_TOOLS / NON_READ allowed. The gate discriminates, never misfires on the safe reads.
+- **THE #25 FIREWALL-BACKEND INTELLIGENCE:** the simple remedy bullets (every block says WHAT WENT WRONG + WHAT TO DO in plain words — "input is a filepath and nothing else"), the partial-dispatch reconcile (adopt-the-running + dispatch-the-missing with the copy-pasteable paths), the derive-from-manifest (the stale wave's registry derived from the manifest — the 15-block dead-end dead), the custom-waveId discriminator (the alias waveIds resolve — the container-caught bypass fixed).
+- **THE OMNI-VISION V5.1.4 MERGE:** the vendored engine (src/tools/omni-vision-v5/ — the 18-file self-contained project) with the TRIDENT'S SSE TRANSPORT RE-WIRE (the forked non-streaming fetch's 35-50s buffered first-byte → the trident's opencodeShadowStreamFn ~1.0s first-byte + the measured window). The tool: the dual-mode media processing (direct + api), the silent-backend pipeline (the context manager + the SQLite/TDB memory + the silent verify + the quality gate + the ledger), the validator floors (the api-mode context args 500+/200+/3+), the chain hook (the batch-read directive injection). Container-verified (the direct mode, the validator gate, the full api vision path through the SSE + the memory write) + the host narrative-coherence test on the DXY Gold Standard set (the operator's confirmation).
+- **THE ENGINE-LOG GATING + THE GATE-1 FIXES:** the tridentLog DEBUG-level writes gated behind TRIDENT_DEBUG=1 + the ~10MB rotation (the 81MB engine log bounded); the CTX-02 stat read-verb; the sqlite3 NON_READ exclusion (the unguarded-open frame tightened to the function-call form).
+- **THE WARHEADS 20/21:** the ASCII-EXPLANATION LAW (explanation requests open with the box-drawing diagram) + the MEMORY-EFFICIENT-DATA-RETRIEVAL LAW (the RAM-bomb prevention's behavioral law).
+- **THE T.E.B. BIBLE:** KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md — the 5-part anatomy (the interceptor / the lexicon / the state machine / the enforcer / the remediation) + the 6-machine inventory + the replication recipes for ANY build.
 
 ### The Batch Process
 
@@ -287,6 +305,12 @@ the orchestrator → trident-wave-manager (generate)
 - **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
 - **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
 - **Read Efficiency Enforcement (.md files):** The `tool.execute.before` hook mechanically forces `limit=1500` when reading `.md` files with `limit < 1000`. Code files (`.ts`, `.js`) are exempt — targeted reads for surgical edits remain allowed. Prevents the #1 waste of turns: reading documentation in 200-line chunks.
+- **The T.E.B. Machine:** the promptFile-only dispatch — `{ description, promptFile, subagent_type }` ONLY; the loader injects the prompt byte-exact + `background: true` at the hook; the prompt NEVER passes through the model's output (the GLM compression derailment structurally impossible). The deferred T.E.A. wipe preserves the prompt files until the full-wave dispatch.
+- **The Firewall-Backend Intelligence (#25):** the wave-mandate (the wave manager is the ONLY dispatch path), the promptFile firewall (the inline-pass blocked), the T.E.B. input classifier (the path-vs-prompt lexicon), the dispatch memory screen (the RAM-bomb commands blocked before any subagent), the partial-dispatch reconcile (adopt-the-running + dispatch-the-missing), the derive-from-manifest (the stale-wave dead-end dead).
+- **The Memory-Read Lexicon:** the typed PatternFamily + the state machine on the bash tool.before — the RAM_BOMB / OUTPUT_BOMB / BUNDLE_EXEC classes blocked with the named streaming remedy; the safe reads (the sized / the lazy iteration / the streaming tools) allowed. The RAM-bomb prevention (the 7.9GB → 14.6GB RSS incident class).
+- **The Omni-Vision v5.1.4:** the vendored engine + the trident's SSE transport re-wire (the ~1.0s first-byte vs the 35-50s non-streaming buffering) — the dual-mode media processing + the silent-backend pipeline (the context manager + the memory + the silent verify) + the validator floors. Container + host verified.
+- **The Engine-Log Gating:** the tridentLog DEBUG writes gated behind TRIDENT_DEBUG=1 + the ~10MB rotation — the 81MB engine log bounded.
+- **The WARHEADS 20/21:** the ASCII-EXPLANATION LAW + the MEMORY-EFFICIENT-DATA-RETRIEVAL LAW (the RAM-bomb prevention's behavioral law).
 
 ---
 

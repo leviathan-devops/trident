@@ -1,6 +1,6 @@
 # BUILD_STATE — THE CURRENT BUILD (2026-08-09)
 
-**THE TRUE DIST SHA: 416ccff7b0d8812479ec3f35cc29394ae926eae7e50b583093fadc9431c6919b (16.1 MB, 431 modules). THE BATTERY: 680 pass / 10 fail / 2301 expect (the 10 fails = the stale Checkpoints/7.3 snapshot copies — 0 in src/tests).** This is the checkpoint structure, the SHA chain, the verified results, the module inventory, the build command + env, and the frozen machinery. THE 2026-08-10 MILESTONE: WARHEAD 15 (THE ANTI-CONTEXT-BUDGET CUCK WARHEAD + THE DISPATCH-WAVE-FOR-SYNTHESIS MANDATE) — live-verified in the container (S9 PASS: the 258K-line bundle probe → "dispatch parallel trident_explore subagents", ZERO cuck energy).
+**THE TRUE DIST SHA: baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432 (16.1 MB, 431 modules). THE BATTERY: 680 pass / 10 fail / 2301 expect (the 10 fails = the stale Checkpoints/7.3 snapshot copies — 0 in src/tests).** This is the checkpoint structure, the SHA chain, the verified results, the module inventory, the build command + env, and the frozen machinery. THE 2026-08-10 MILESTONE: WARHEAD 15 (THE ANTI-CONTEXT-BUDGET CUCK WARHEAD + THE DISPATCH-WAVE-FOR-SYNTHESIS MANDATE) — live-verified in the container (S9 PASS: the 258K-line bundle probe → "dispatch parallel trident_explore subagents", ZERO cuck energy).
 > **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
@@ -200,3 +200,95 @@ THE CONTAINER: theatrical-fw-ct (runtime-grade-container-sandbox:master) — the
 - The question-ban: the operator's "remove the question tool from subagents" — the leaf nodes never ask.
 - The t.e.a. preservation: the manifests + the prompt files survive for the verification + the promptFile channel.
 - The throw-only theatrical: the operator's stream-purity ruling — the text.complete + the messages-transform wiring banned.
+
+---
+
+## THE 2026-08-14 STATE (the T.E.B. machine + the shadow-brain arc)
+
+**THE TRUE DIST SHA: `4a90915827793f12ed3b7ffe11bc7d868a32badff9f69f922c0c2ff95ec30649` (16.17 MB, 435 modules — the T.E.B. machine). THE BATTERY: 434/434, tsc 0.** The trident-task tangent is UNDONE (the tool + its tests deleted); the batch form emits the NATIVE task tool with the promptFile-only payload; the T.E.B. loader hook (trident-hooks.ts:1741) mutates promptFile → prompt byte-exact + background:true in place.
+
+**THE WIRING (the 5-part T.E.B. machine):**
+1. wave-dispatch.ts — the batch = `{ description, promptFile, subagent_type }` ONLY (no prompt/placeholder/background).
+2. wave-constants.ts — the same 3-field batch type.
+3. trident-hooks.ts:1741 — the loader MUTATES the args in place (promptFile → prompt + background:true + strip).
+4. trident-hooks.ts:1896 — the wave-verbatim simplified to the prompt-file-passed check.
+5. trident-hooks.ts:2536 — the T.E.A. wipe DEFERRED to the full-wave dispatch.
+
+**THE ACTIVE BUILD:** the SHADOW-BRAIN 3-FIX PLAN (D-40, APPROVED): F1 the measured stall window (a shadow-health sqlite store; the window = avg × 3, [45s, 5m]); F2 the backoff retry (2× + 3s gap, no switching); F3 the density memory (the tracker persists the args; <0.7 ratio warns). Implementation pending — the next session resumes here.
+
+**THE HOST:** still runs the OLD dist (the user's terminal — the copy `dist/index.js → ~/.config/opencode/plugins/trident/dist/index.js` + restart is the deploy step).
+
+---
+
+## THE CHECKPOINT (2026-08-14 — TEB_MACHINE_3FIX_a8e99b06)
+
+**THE CHECKPOINT PATH:** `Checkpoints/TEB_MACHINE_3FIX_a8e99b06_2026-08-14/` — the FULL preserved state: src (the complete tree), dist/index.js (sha `a8e99b06579490ff0d7c5487f635e4b944371dc67c185ed20ad34eb65ccb93b3` — verified in dist/sha256.txt), the canon docs (context_management/ — 9 docs), DEBUG_LOG_V6.md + BUILD_REPORT_V6.md, container-test-results.json (the 3-fix 3/3 PASS), dist-manifest.json, AGENTS.md, package.json.
+
+**THE CHECKPOINT CONTENTS (the state it preserves):**
+1. THE T.E.B. MACHINE — the promptFile-only batch (`{ description, promptFile, subagent_type }`), the loader hook's in-place mutation (promptFile → prompt byte-exact + background:true + strip), the deferred T.E.A. wipe, the simplified wave-verbatim.
+2. THE SHADOW-BRAIN 3-FIX PLAN — F1 the measured stall window (shadow-health.ts), F2 the backoff retry, F3 the density memory (argSnapshot + the DENSITY WARNING).
+3. THE VERIFICATION — 443/443, tsc 0, the container 3/3 (ct-3fix-full): the generation completes under the measured window (no knife-edge timeout), the DENSITY WARNING fires on the 42% re-gen, the backoff wiring live.
+
+**THE RESTORE PATH (if ever needed):** copy the checkpoint's src/ back over the project src + dist/index.js → the project dist + rebuild if the source moved on. THE CURRENT LIVE STATE = the project's src/dist (a8e99b06) — the checkpoint is the preservation, the live tree is the truth.
+
+---
+
+## THE CHECKPOINT (2026-08-14 — FULL_STACK_c2061233 — the CURRENT)
+
+**THE CHECKPOINT PATH:** `Checkpoints/FULL_STACK_c2061233_2026-08-14/` — the FULL preserved state at dist `c2061233`: src (the complete tree), dist/index.js (sha `c2061233...` — verified in dist/sha256.txt), the canon docs, the logs, the container results, the manifest, AGENTS.md, package.json.
+
+**THE STATE IT PRESERVES (the full stack):**
+1. THE T.E.B. MACHINE — the promptFile-only batch + the loader's in-place mutation + the deferred wipe + the simplified verbatim.
+2. THE SHADOW-BRAIN 3-FIX PLAN — F1 the measured stall window, F2 the backoff retry, F3 the density memory.
+3. THE WARHEAD 20 (THE ASCII-EXPLANATION LAW) — landed (disk + inline + bundle).
+4. THE HOST VERIFICATION — the deployed dist c2061233 verified LIVE: the generate → the 3-field batch → the dispatch → the parentID lineage → the byte-exact injection (27179==27179) → the deferred wipe → the wave status → the subagent's independent forensic report (the emission contract confirmed at 607-629). The CT read verified against the CT_READ_BASELINE (byte-identical, the live offset/limit/monotonic/legacy-discipline all PASS).
+
+**THE SUPERSEDED CHECKPOINT:** `Checkpoints/TEB_MACHINE_3FIX_a8e99b06_2026-08-14` (the pre-WARHEAD-20 state) — kept for the history, superseded by this one.
+
+**THE RESTORE PATH:** copy the checkpoint's src back + dist/index.js → the project + rebuild if the live tree moves on. THE LIVE TREE = the truth (c2061233).
+
+---
+
+## THE CURRENT STATE (2026-08-14 — dist d752ab3a — the firewall disables)
+
+**THE TRUE DIST SHA: `d752ab3a3b6b191a103c0ea4cc43c26499b16ef38e4684281ffc4b029d0ce3df`.** THE BATTERY: 441/441 (27 files — from src/tests directly; the Checkpoints copies inflate the recursive glob to 884/54, NOT a regression), tsc 0.
+
+**THE DELTA FROM c2061233 (the host-deployed dist):** the two false-positive firewall disables:
+1. THE CTX-01 CONFIG-LOCK DISABLED (ct-anti-derailment.ts) — the config-fumbling family removed (the false positives: tsconfig.json cp + the tee redirects); CTX-02..08 stay live.
+2. THE SSTF VERIFY_INSPECT DISABLED (semantic-smoke-firewall.ts) — the block path dead (if false &&); INLINE_EXEC/HEADLESS/VERIFY_EXIST/HASH_AS_PROOF stay live.
+
+**THE STACK (all prior layers preserved):** the T.E.B. machine (the promptFile-only batch + the loader mutation + the deferred wipe) + the shadow-brain 3-fix (F1 the measured window / F2 the backoff / F3 the density memory) + the WARHEAD 20 (the ASCII-EXPLANATION LAW).
+
+**THE CHECKPOINT:** Checkpoints/FULL_STACK_c2061233_2026-08-14/ refreshed to d752ab3a (the src + dist + manifest updated). THE SHIP PACKAGE: SHIP_PACKAGE/ rebuilt at d752ab3a.
+
+---
+
+## THE CURRENT STATE (2026-08-15 — dist 0f14e9f5 — the RAM-bomb prevention)
+
+**THE TRUE DIST SHA: `0f14e9f5bac5408f0a1428654d18a94edb8a30cf52bea1f4e0eacae8e0f767b6`.** THE BATTERY: 447/447 (28 files — the memory-gate pins), tsc 0.
+
+**THE DELTA FROM d752ab3a:** the 3-layer RAM-bomb prevention: (A) WARHEAD 21 (THE MEMORY-EFFICIENT-DATA-RETRIEVAL LAW), (B) the MEMORY GATE (the bash tool.before blocks unsized inline reads), (C) the root-cause fix (15 unconditional debug writes → the gated+rotated hookDebugWrite helper). Full record: DEBUG_LOG_V6 M12 + BUILD_REPORT_V6 (the RAM-bomb section).
+
+**THE STACK (the complete dist):** the T.E.B. machine + the shadow-brain 3-fix + the WARHEAD 20 (the ASCII-EXPLANATION) + the WARHEAD 21 (the MEMORY-EFFICIENT) + the firewall disables (CTX-01 + VERIFY_INSPECT) + the memory-gate prevention.
+
+**THE SHIP PACKAGE:** SHIP_PACKAGE/ + Ship_Packages/SHIP_v4.4.2-wave-manager-async_0f14e9f5/ — both at 0f14e9f5. THE CHECKPOINT: Checkpoints/FULL_STACK_c2061233_2026-08-14/ refreshed to 0f14e9f5.
+
+**THE REMAINING:** the host deploy (the old dist still runs), the engine-log gating (the rotation covers the hook-debug log), the queued #25, the other sessions' firewall-discrimination patches.
+
+---
+
+## THE CURRENT STATE (2026-08-15 — dist 90aec04f, 469/469, tsc 0)
+
+**THE TRUE DIST SHA: `baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432` (16.19 MB). THE BATTERY: 469/469 (29 files — the input-classifier + the memory pins), tsc 0. THE CONTAINER: postcomp-ct2 (the 7/7 forward iteration) + postcomp-ct3 (the #25 S2-S4 + the two bug fixes).**
+
+**THE DELTA FROM 981a51b7 (the 2026-08-15 arc):**
+1. THE ENGINE-LOG GATING (src/utils.ts tridentLog v3): the DEBUG writes gated behind TRIDENT_DEBUG=1 + the ~10MB rotation — the 81MB growth bounded. CONTAINER-VERIFIED (the log at 174540 bytes).
+2. THE CTX-02 READ-VERB FIX (ct-anti-derailment.ts): stat added to the CT_READ_VERBS — the legit stat reads allowed. CONTAINER-VERIFIED.
+3. THE SQLITE3 NON_READ FIX (memory-read-lexicon.ts): the unguarded-open frame tightened to the open( function-call form — the 'opencode' path-substring false positive dead. CONTAINER-VERIFIED.
+4. THE T.E.B. INPUT CLASSIFIER (dispatch-input-lexicon.ts): the workspace-root + the token-shape lexicon (PATH/PROMPT/MIXED) + the PROMPTFILE_REMEDY_BULLET. CONTAINER-VERIFIED (S1).
+5. THE #25 FIREWALL-INTELLIGENCE (the approved design): the simple remedy bullets (the [WAVE MANDATE]/[WAVE VERBATIM]/[WAVE BATCH] — 'a filepath and nothing else'), the partial-dispatch reconcile (the adopted = accepted + recorded, the missing named), the derive-from-manifest (the WaveRegistry.derivedFromManifest).
+6. THE TWO CONTAINER-CAUGHT BUGS FIXED: the custom-waveId discriminator (findWaveRecordForAgent's content-aware wave-level shape — the alias waveIds no longer bypass the batch gate) + the recorded-status adopted-set (the reconcile bullet's split correct).
+7. THE MPSE → THE EVIDENCE TRIAD RENAME (the trident triplet's collision with the operator's math system dead).
+8. THE T.E.B. BIBLE: KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md (506 lines — the 5-part anatomy + the 6 machines + the replication recipes).
+
+**THE CHECKPOINT:** Checkpoints/FULL_STACK_90aec04f_2026-08-15/ (src + dist sha-verified + the docs + the logs + the design). THE FOUR-WAY: the workspace + SHIP_PACKAGE + the checkpoint + the Ship_Packages at 90aec04f (ONE unique sha). THE DEPLOYED HOST: the operator's action (the container gates all clear).

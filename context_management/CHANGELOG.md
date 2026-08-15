@@ -210,3 +210,13 @@ This document is the session's permanent record — append-only per the running-
 | The container agent's cuck reasoning ("I need to be careful about context budget... would consume enormous context") on the 258K-line bundle | src/identity/trident/WARHEADS.md + src/identity/index.ts | WARHEAD 15: THE ANTI-CONTEXT-BUDGET CUCK WARHEAD + THE DISPATCH-WAVE-FOR-SYNTHESIS MANDATE — the exact cuck phrases named as the derailment signal, the 1M/128K/infinite override, the wave-is-the-read mandate |
 | The directive buried at position 40/44 of the injected stack | src/hooks/trident-hooks.ts | The [TRIDENT] ANTI-CONTEXT-BUDGET LAW directive at the TOP of the contextLines + the OPERATING SCALE line strengthened with the exact phrases |
 | The batch-tool channel confusion (the operator: "this is a silent tool") | src/tools/wave-dispatch.ts + src/hooks/trident-hooks.ts | The directives name both channels: the batch tool when the runtime exposes it, otherwise ALL the task calls in ONE message — the identical wave |
+
+---
+
+## 5. THE T.E.B. MACHINE + THE SHADOW-BRAIN ARC (2026-08-14)
+| Issue | File | Change |
+|---|---|---|
+| The GLM derailment (the placeholder prompt → the 20-min SHA loop) | wave-dispatch.ts + wave-constants.ts + trident-hooks.ts:1741 | THE PROMPTFILE-ONLY BATCH: `{ description, promptFile, subagent_type }` ONLY; the T.E.B. loader hook MUTATES promptFile → prompt byte-exact + background:true + strips promptFile before the tool runs — the prompt NEVER passes through the model's output |
+| The premature prompt-file wipe | trident-hooks.ts:2536 | the T.E.A. wipe DEFERRED to the full-wave dispatch (the registry confirms calls.length == total && all accepted) |
+| The verbose wave-verbatim | trident-hooks.ts:1896 | simplified to the prompt-file-passed check (the SHA matches by construction) |
+| The SHADOW_BRAIN_TIMEOUT class (the 45s knife-edge) | shadow-brain.ts:58 + shadow-runner.ts:785 | THE 3-FIX PLAN (D-40, APPROVED): the measured stall window (avg × 3, [45s, 5m]), the backoff retry (2× + 3s gap, no switching), the density memory (the tracker persists the args; <0.7 ratio warns) — implementation pending |

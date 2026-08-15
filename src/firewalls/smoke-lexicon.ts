@@ -17,7 +17,7 @@
 //
 // THE ISE LAW (the spec's Governing law — WARHEAD 9, applied): the detection is
 // engineered as a LEXICON (the PatternFamily-style typed members) + a STATE
-// MACHINE (the classifySentence pipeline's steps) + the MPSE triplets
+// MACHINE (the classifySentence pipeline's steps) + the evidence triads
 // ({ Pattern, State, Evidence }) — the regex is the mechanical DETECTOR only
 // (the matcher field), the DECISION lives in the member's structure
 // (the triggerCondition + the severity + the remediationHook) + the evidence
@@ -96,7 +96,7 @@ export interface ClassifiedSpan extends Omit<SpanVerdict, 'evidenceVerdict'> {
 // C-2.3 — THE MEMBER ENUMERATION (the corpora — the full governance)
 // ════════════════════════════════════════════════════════════════════════════
 
-// THE MPSE TRIPLET NOTES: every member's matcher is the DETECTOR; the decision
+// THE EVIDENCE TRIAD TRIPLET NOTES: every member's matcher is the DETECTOR; the decision
 // (the claim-vs-not) is reached ONLY through the classifySentence pipeline's
 // state machine (the code-block → prediction → claim-word → negation →
 // no-claim → subject → evidence verdict → span kind). The matchers never

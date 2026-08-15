@@ -27,6 +27,10 @@
 // ============================================================================
 
 import { tridentLog } from '../../utils.ts';
+// F1 (2026-08-14 — the measured stall window): the shadow-health store —
+// the rolling first-event latency that drives the adaptive stall window
+// (the SHADOW-BRAIN 3-FIX PLAN, D-40).
+import { measuredShadowWindowMs, recordShadowLatency } from './shadow-health.ts';
 // BOTH resolvers — the baseUrl resolver was CALLED but never IMPORTED (the
 // endpoint-revert edit added the call without the import — a ReferenceError on
 // every brain call lacking an explicit baseUrl; the unit tests caught it, the
@@ -60,7 +64,13 @@ export const SHADOW_FETCH_STALL_MS = 45_000;
 // ── the transport types ──
 export interface ShadowChatMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  // THE MEDIA-CAPABLE WIDENING (2026-08-15 — the Omni-Vision v5.1.4 merge):
+  // the content may be the plain text OR the OpenAI-shaped media parts
+  // (image_url / video_url / input_audio — the VLM calls). The SSE transport
+  // passes the content as-is through the JSON body (the provider's
+  // OpenAI-compatible shape accepts both). The text callers (the shadow
+  // runner) are unaffected — they use the string form.
+  content: string | Array<Record<string, unknown>>;
 }
 
 export interface ShadowToolDef {
@@ -194,7 +204,7 @@ export async function opencodeShadowStreamFn(args: ShadowStreamFnArgs): Promise<
     if (args.signal.aborted) stallController.abort();
     else args.signal.addEventListener('abort', onExternalAbort, { once: true });
   }
-  const stallMs = args.stallTimeoutMs ?? SHADOW_FETCH_STALL_MS;
+  const stallMs = args.stallTimeoutMs ?? measuredShadowWindowMs();   // F1 (2026-08-14): the MEASURED window (avg × 3, [45s, 5m]) — the 45s knife-edge is dead
   const armStall = (): void => {
     if (stallTimer) clearTimeout(stallTimer);
     stallTimer = setTimeout(() => {
@@ -202,6 +212,17 @@ export async function opencodeShadowStreamFn(args: ShadowStreamFnArgs): Promise<
       stallController.abort();
     }, stallMs);
   };
+  // F1 (2026-08-14): the FIRST-EVENT LATENCY RECORD — the first SSE event's
+  // arrival time feeds the shadow-health store (the rolling avg that drives
+  // the next call's window). Recorded once per call, on the FIRST event.
+  let firstEventAt: number | null = null;
+  const recordFirstEvent = (): void => {
+    if (firstEventAt === null) {
+      firstEventAt = Date.now();
+      recordShadowLatency(firstEventAt - t0);
+    }
+  };
+  const t0 = Date.now();
   armStall();
   try {
     const resp = await fetch(`${args.baseUrl}/chat/completions`, {
@@ -277,6 +298,7 @@ export async function opencodeShadowStreamFn(args: ShadowStreamFnArgs): Promise<
             choices?: Array<{ delta?: { content?: string | null; reasoning_content?: string | null }; finish_reason?: string }>;
           };
           armStall(); // ANY event = the provider is alive — the idle window resets
+          recordFirstEvent(); // F1 (2026-08-14): the first-event latency feeds the health store
           const delta = evt.choices?.[0]?.delta;
           if (delta) {
             const dc = typeof delta.content === 'string' ? delta.content : '';

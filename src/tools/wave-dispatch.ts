@@ -213,7 +213,7 @@ export function buildCheckInText(waveId: string, count: number, etaMs: number): 
   // full state lives in the tracker + is retrieved via the ONE tool
   // (action=status waveId=<id>) — the ONLY in-memory vars are the wave id + the
   // alias; nothing else bloat the context.
-  return 'WAVE ' + waveId + ' (' + count + ' agents) READY — DISPATCH the returned batch form as ONE message. Track it via trident-wave-manager action=status waveId=' + waveId + ' — the full per-agent state is retrieved on demand (never stored in context).';
+  return 'WAVE ' + waveId + ' (' + count + ' agents) READY — DISPATCH the returned batch form as ONE message via the task tool (the promptFile path IS the prompt — the T.E.B. loader hook mutates promptFile → prompt byte-exact before the tool runs; the [WAVE VERBATIM] SHA check enforces the exact content). Track it via trident-wave-manager action=status waveId=' + waveId + ' — the full per-agent state is retrieved on demand (never stored in context).';
 }
 
 // THE NORMALIZATION (the front-end freeze — the flat single-agent args are a
@@ -302,6 +302,33 @@ export async function executeWaveDispatch(
   for (const spec of specs) {
     const err = validateAgentSpec(spec);
     if (err) throw new Error(err);        // the refusal names each thin field
+  }
+
+  // ═══ F3 — THE DENSITY MEMORY CHECK (2026-08-14 — the SHADOW-BRAIN 3-FIX
+  // PLAN, the class-2 thin-args-collapse fix from the Critical Failure Log
+  // 2026-08-14-wave-regeneration-thin-prompt-failure.md: "re-summarizing
+  // previously-dense args for a 'smaller' wave regenerates the density problem
+  // the first generation solved"). The prior generation's context-arg char
+  // totals live in the tracker's argSnapshot; a regeneration with the SAME
+  // agent name + args at <0.7 the original density appends the NAMED warning
+  // to the returned output (REUSE the original args verbatim — only the
+  // position/taskTargets change for the wave's shape). The warning never
+  // blocks — a genuinely-new wave (different mission, legitimately different
+  // scope) is always possible. ═══
+  const densityWarnings: string[] = [];
+  try {
+    for (const spec of specs) {
+      const newTotal = (spec.mission || '').length + (spec.knownContext || '').length + (spec.doctrine || '').length +
+        (spec.measurements || '').length + (spec.acceptance || '').length + (spec.taskTargets || '').length + (spec.position || '').length;
+      for (const prior of WaveTracker.getActiveWaves()) {
+        const priorTotal = prior.argSnapshot ? prior.argSnapshot[spec.name] : undefined;
+        if (typeof priorTotal === 'number' && priorTotal > 0 && newTotal < priorTotal * 0.7) {
+          densityWarnings.push('DENSITY WARNING (' + spec.name + '): the new context args are ' + Math.round((newTotal / priorTotal) * 100) + '% of the prior generation\'s density (' + newTotal + ' vs ' + priorTotal + ' chars on wave ' + prior.wave + ') — REUSE the original mission/knownContext/doctrine/measurements/acceptance args VERBATIM (the project\'s ground truth); change ONLY the position/taskTargets for the wave\'s shape. A thin re-derivation produces the thin-prompt collapse (the 83-line failure class).');
+        }
+      }
+    }
+  } catch (densityErr) {
+    tridentLog('WARN', 'wave-dispatch', 'the density-memory check failed (non-fatal): ' + (densityErr instanceof Error ? densityErr.message : String(densityErr)));
   }
 
   const tmpDir = resolveTmpDir(typeof args.dispatchDir === 'string' ? args.dispatchDir : opts.tmpDir);
@@ -525,6 +552,14 @@ export async function executeWaveDispatch(
       dispatchedAt: Date.now(),
       etaMs: etaPlaceholderMs,
       etaConfidence: 0,
+      // F3 (2026-08-14 — THE DENSITY MEMORY): the per-agent context-arg char
+      // totals — the snapshot that the regeneration's density check compares
+      // against (the class-2 thin-args-collapse fix).
+      argSnapshot: Object.fromEntries(specs.map((s) => {
+        const total = (s.mission || '').length + (s.knownContext || '').length + (s.doctrine || '').length +
+          (s.measurements || '').length + (s.acceptance || '').length + (s.taskTargets || '').length + (s.position || '').length;
+        return [s.name, total];
+      })),
       agents: Object.fromEntries(specs.map((s) => {
         const d = dispatched.find((x) => x.name === s.name);
         return [s.name, d ? {
@@ -551,17 +586,24 @@ export async function executeWaveDispatch(
   // path) — the children get the prompts + the leaf-node enforcement. The
   // t.e.a. wipe runs after the return (the prompts' lifetime = the batch).
   const checkIn = buildCheckInText(waveId, dispatched.length, etaPlaceholderMs);
-  // THE BACKGROUND DIRECTIVE (2026-08-12 — the background-only ruling): the
-  // batch dispatches background — the orchestrator continues working.
-  const finalCheckIn = checkIn + '\nThe wave runs in the BACKGROUND — dispatch the batch form as ONE message; the task calls return immediately with task_ids. CHECK IN every 5-10 minutes — POLL task_status(taskId) + READ the part stream (trident-wave-status sessionId); COLLECT if complete, and STEER a derailing agent (trident-wave-steer) wherever you have free space or deem it relevant. Manage the waves like a senior engineer. Continue with the rest of your tasks after dispatching this wave.';
-  // THE BATCH FORM — THE SHRUNK PAYLOAD (2026-08-12 — the bug-report's §6.5:
-  // the full inline prompts doubled the payload (6 × 30K chars ≈ 168KB) and
-  // TRUNCATED in the tool output — 5 of 6 prompts were lost to truncation (only
-  // the promptFile channel saved the dispatch). THE FIX: the batch entries carry
-  // ONLY the dispatch metadata + a SHORT placeholder prompt — the promptFile
-  // loader (trident-hooks.ts) REPLACES the placeholder with the file's byte-
-  // exact content BEFORE the firewalls validate (the [WAVE VERBATIM] SHA check
-  // passes by construction). The response drops from ~168KB to ~2KB.
+  // THE COMPACT CHECK-IN ONLY (2026-08-13 — the T1 battery finding): the OLD
+  // background wall (2026-08-12's append) survived the compact-context fix — it
+  // referenced the REMOVED tools (trident-wave-status + trident-wave-steer) and
+  // re-injected the poll/steer directives the compact design killed. THE FIX:
+  // the check-in IS the compact two-liner — the background fact rides in the
+  // batch form (background:true on every task call) + the status tool; nothing
+  // is appended (the anti-derailment: no directive wall, no dead tool names).
+  const finalCheckIn = checkIn;
+  // THE BATCH FORM — THE PROMPTFILE-ONLY PAYLOAD (2026-08-14 — the operator's
+  // exact spec: "THE PROMPTFILE SHOULD LITERALLY BE PASSED AS THE PROMPT
+  // VERBATIM NO PLACEHOLDER GARBAGE"). The batch entries carry ONLY the
+  // dispatch metadata + the promptFile PATH — there is NO prompt field at all
+  // (the old placeholder was the GLM derailment fuel: the model saw a prompt
+  // field and tried to reproduce/expand it). The T.E.B. loader hook
+  // (trident-hooks.ts:1741 — idTool === 'task' → loadPromptFileForDispatch)
+  // intercepts the task call, reads the promptFile's bytes, and MUTATES the
+  // args in place: promptFile → prompt (the byte-exact content) BEFORE the
+  // tool executes. The model NEVER sees any prompt text — only the path.
   const batchForm: WaveDispatchResult['batch'] = {
     tool: 'batch',
     parameters: {
@@ -569,20 +611,18 @@ export async function executeWaveDispatch(
         tool: 'task',
         parameters: {
           description: d.name,
-          prompt: 'EXECUTE THE TASK DEFINED IN THE GENERATED PROMPT FILE: ' + path.join(tmpDir, d.name + '.md') + ' — the promptFile loader injects the exact generated content (the SHA-verified verbatim).',
-          subagent_type: d.type,
-          // THE PROMPTFILE CHANNEL (2026-08-09 — the operator: 'agents STOP
-          // COMPRESSING/CONDENSING the fucking prompts'). The promptFile param
-          // references the generated prompt's FILE — the task tool loads the
-          // EXACT content (no reproduction, no truncation, no condensation —
-          // the SHA verification confirms it). The t.e.a. wipe preserves the
-          // prompt files for the dispatch window.
+          // THE PROMPTFILE PATH — THE ONLY PROMPT CARRIER (2026-08-14 — the
+          // operator: "the only thing the model should pass is the literal
+          // prompt file path generated by wave manager + subagent type and desc
+          // and thats it. the t.e.b machine handles the rest"). The model
+          // passes ONLY the path — the T.E.B. loader hook (trident-hooks.ts:1741)
+          // reads the file's byte-exact content, MUTATES promptFile → prompt in
+          // place, ADDS background:true, and strips promptFile — the task tool
+          // receives the full args it needs. NO prompt field, NO placeholder,
+          // NO background field in the batch — nothing for the model to
+          // reproduce, compress, or derail on.
           promptFile: path.join(tmpDir, d.name + '.md'),
-          // NEW (2026-08-12 — the background-only ruling): the batch ALWAYS
-          // dispatches background — the task calls return immediately with
-          // task_ids; the orchestrator polls task_status + the part streams and
-          // CONTINUES. task_status(task_id, wait=true) = sync-on-demand.
-          background: true,
+          subagent_type: d.type,
         },
       })),
     },
@@ -602,7 +642,7 @@ export async function executeWaveDispatch(
     dispatched,
     failed,
     tmpDir,
-    checkIn: finalCheckIn,
+    checkIn: finalCheckIn + (densityWarnings.length > 0 ? '\n\n' + densityWarnings.join('\n') : ''),
     telemetry,
     batch: batchForm,
   };

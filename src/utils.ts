@@ -68,7 +68,24 @@ export async function tridentLog(level: string, component: string, message: stri
   // log file (/tmp/trident-engine.log) is written here SYNCHRONOUSLY so the
   // diagnostics actually survive. The in-memory append remains (the merkle
   // chain), the file write is the durable record.
+  // v3 (2026-08-15 — THE ENGINE-LOG GATING, the Wave-B fix): the v2 write
+  // appended EVERY log line unconditionally — the DEBUG-level chatter grew
+  // /tmp/trident-engine.log to 81MB (the multi-GB bomb risk, the same class
+  // as the RAM-bomb incident's debug log). THE GATE: the DEBUG-level writes
+  // STOP unless TRIDENT_DEBUG=1 (the ERROR/WARN/INFO levels ALWAYS write —
+  // the loud-fail law: the errors are NEVER silent). THE ROTATION: the file
+  // > ~10MB renames to .1 (the growth bounded forever).
   try {
+    const isDebug = level === 'DEBUG';
+    if (isDebug && process.env.TRIDENT_DEBUG !== '1') {
+      return; // the DEBUG chatter gated behind the flag — never the errors
+    }
+    // THE ROTATION (the bounded growth): the current file > 10MB → rename to .1
+    try {
+      if (existsSync(TRIDENT_LOG_PATH) && statSync(TRIDENT_LOG_PATH).size > 10 * 1024 * 1024) {
+        renameSync(TRIDENT_LOG_PATH, TRIDENT_LOG_PATH + '.1');
+      }
+    } catch (rotErr) { /* the rotation failure is non-fatal — the append still proceeds */ }
     appendFileSync(TRIDENT_LOG_PATH,
       `[${new Date().toISOString()}] [${level}] [${component}] ${message}\n`, 'utf-8');
   } catch (fileErr) { /* the evidence-store path below is the fallback */ }
@@ -87,7 +104,7 @@ export async function getEvidenceStore(): Promise<EvidenceStoreHandle> {
 }
 
 // Re-export all existing utility functions unchanged
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, existsSync, statSync, renameSync } from 'node:fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Finding, SEVERITY, Severity } from './types.js';

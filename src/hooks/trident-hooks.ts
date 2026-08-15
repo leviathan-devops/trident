@@ -1,4 +1,4 @@
-import { appendFileSync, readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync, unlinkSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, readdirSync, mkdirSync, writeFileSync, statSync, unlinkSync, renameSync } from 'node:fs';
 // @ts-ignore — bun:sqlite ships no type package under tsc (the bun runtime provides it; the agent-state's shadow interface is the typing boundary — the same convention as the wave-1 migration)
 import { Database } from 'bun:sqlite';
 import { createHash } from 'node:crypto';
@@ -7,10 +7,40 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { orchestrator } from '../orchestrator.js';
+
+// ═══ THE GATED + ROTATED DEBUG WRITE (2026-08-15 — THE RAM-BOMB ROOT-CAUSE
+// FIX, TOOL_PATHOLOGY_readlines_RAM_BOMB_20260815.md): the OLD code wrote
+// UNCONDITIONAL appendFileSync debug traces on EVERY event (15 call sites) →
+// the /tmp/trident-hook-debug.log grew to 7.9GB → the agent's python
+// .readlines() on it → 14.6GB RAM → the host freeze. THE FIX: ONE helper,
+// gated behind the TRIDENT_DEBUG env flag (the writes STOP unless explicitly
+// enabled) + rotated at ~10MB (the log never grows unbounded again). Every
+// call site now routes through this — the writes only happen when the debug
+// flag is on, and the file stays bounded even then. ═══
+const HOOK_DEBUG_ENABLED = (typeof process !== 'undefined' && process.env && process.env.TRIDENT_DEBUG === '1') || false;
+const HOOK_DEBUG_MAX_BYTES = 10 * 1024 * 1024;   // the 10MB rotation bound
+function hookDebugWrite(line: string): void {
+  if (!HOOK_DEBUG_ENABLED) return;               // THE GATE — off unless TRIDENT_DEBUG=1
+  try {
+    const p = path.join(os.tmpdir(), 'trident-hook-debug.log');
+    // THE ROTATION — never let the file pass ~10MB (the bomb's size class):
+    try {
+      const st = statSync(p);
+      if (st.size > HOOK_DEBUG_MAX_BYTES) {
+        // rotate: the current → .1 (drop the oldest), then start fresh
+        try { unlinkSync(p + '.1'); } catch (r1) { /* absent */ }
+        try { renameSync(p, p + '.1'); } catch (r2) { /* best-effort */ }
+      }
+    } catch (stErr) { /* absent — the first write */ }
+    appendFileSync(p, line);
+  } catch (e) { /* debug non-fatal — the write never breaks the hook */ }
+}
+
 import { isToolAllowed as isToolAllowedAllowlist } from '../security/tool-allowlist.js';
 import { setCurrentAgent, getCurrentAgent, clearCurrentAgent, getToolsCalled, resetToolsCalled, incrementToolsCalled, getLastMessage, setLastMessage, getPendingL1Path, clearPendingL1Path, setContainerSkillLoaded, isContainerSkillLoaded, isContainerTestingCommand, setCurrentSessionModel, setPoseidonIntent, getPoseidonIntent, clearPoseidonIntent } from './agent-state.js';
 import { getClient } from '../artifacts/llm-generator.ts';
 import { tridentLog, getEvidenceStore } from '../utils.js';
+import { runDocDensityGate } from '../tools/doc-density-state.ts';
 import { IdentityLoader, formatIdentityHeader } from '../identity/index.js';
 import { isTridentAgent } from '../identity/agent-identity.js';
 import { createSessionHook } from './session-hook.js';
@@ -23,6 +53,9 @@ import { isGodLoopActive, isLeafNode } from '../poseidon/poseidon-state.js';
 import { checkPoseidonDerailment } from './poseidon-enforcer-hook.js';
 import { checkSmokeTestFirewall, sstfStateTracker, appendToContextWindow, getContextWindow as getSSTFContextWindow } from '../firewalls/semantic-smoke-firewall.js';
 import { classifyCtExec, buildCtConfigLockMessage } from '../firewalls/ct-anti-derailment.js';
+import { classifyMemoryRead, classifyDispatchMemoryRisk } from '../firewalls/memory-read-lexicon.ts';
+import { classifyDispatchInput } from '../firewalls/dispatch-input-lexicon.ts';
+import { omniVisionChainHook } from '../tools/omni-vision.ts';
 import {
   assessTaskBlock, loadPromptFileForDispatch, TASK_BLOCK_MESSAGE,
 } from '../tools/wave-dispatch.ts';
@@ -34,6 +67,7 @@ import { advancePlanOnEvent } from '../tools/wave-todowrite.ts';
 import {
   evaluateWaveBatchGate, confirmWaveRegistryCall, isTaskCallAccepted,
   deriveWaveStatus, readWaveRegistryFile, writeWaveRegistryFile,
+  type WaveRegistry,
 } from '../tools/wave-registry.ts';
 
 
@@ -1119,11 +1153,26 @@ function findWaveRecordForAgent(desc: string, sha: string): { wave: string; agen
       // record is .wave-manifest-wave-<digits>-<agent>.json. The agents.length
       // alone is ambiguous (a single-agent wave vs a per-agent record) — the
       // digits-only waveId part is the wave-level discriminator.
+      // ═══ THE WAVE-LEVEL DISCRIMINATOR FIX (2026-08-15 — the #25 S2 live
+      // container catch): the digits-only test (/^wave-\d+$/) MISSED the
+      // CUSTOM-named waveIds (e.g. wave-s2-partial-dispatch-1786810664183 —
+      // the generator ACCEPTS the waveId alias param) → the wave-level
+      // manifest was SKIPPED → findWaveRecordForAgent returned null → the
+      // [WAVE BATCH] registry gate NEVER ran → the registry stayed calls:[]
+      // → the re-fire protection starved → the duplicate dispatch (rc-ct-1
+      // ran twice — the live finding). THE CONTENT-AWARE FIX: the wave-level
+      // manifest is the one whose waveIdPart does NOT end with the
+      // agent-suffix (the per-agent record = .wave-manifest-wave-<id>-<agent>
+      // → the waveIdPart ends with '-' + the record's first agent name). The
+      // digits-only test remains the fallback for the empty-roster records.
       var waveIdPart = files[i].name.substring('.wave-manifest-'.length).replace(/\.json$/, '');
-      var isWaveLevelShape = /^wave-\d+$/.test(waveIdPart);
-      if (!isWaveLevelShape) continue;   // the per-agent records — skipped
       var parsed = JSON.parse(readFileSync(path.join(TRIDENT_TMP_DIR, files[i].name), 'utf-8')) as { wave?: string; agents?: Array<{ name: string; sha256?: string }> };
       var agents = parsed?.agents || [];
+      var firstName = agents.length > 0 ? agents[0].name : '';
+      var isWaveLevelShape = firstName.length > 0
+        ? !waveIdPart.endsWith('-' + firstName)
+        : /^wave-\d+$/.test(waveIdPart);
+      if (!isWaveLevelShape) continue;   // the per-agent records — skipped
       for (var a = 0; a < agents.length; a++) {
         if (agents[a].name === desc && agents[a].sha256 === sha) return { wave: typeof parsed.wave === 'string' ? parsed.wave : waveIdPart, agents };
       }
@@ -1249,7 +1298,7 @@ var sessionHookBase = createSessionHook();
 var sessionHook = async function(input: Record<string, unknown>) {
   try {
     var evt = cast<{ type?: string }>(input?.event);
-    try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SESSION_WRAP: event type=${evt && evt.type}\n`); } catch (e) { /* non-fatal */ }
+    try { hookDebugWrite(`[${Date.now()}] SESSION_WRAP: event type=${evt && evt.type}\n`); } catch (e) { /* non-fatal */ }
     if (evt && evt.type === 'session.created') {
       try {
         // ═══ THE PER-PROCESS MAIN-SESSION TETHER (2026-08-13 — the operator's
@@ -1303,11 +1352,11 @@ var sessionHook = async function(input: Record<string, unknown>) {
 
 var chatMessageHook = async function(input: Record<string, unknown>, output: Record<string, unknown>) {
   // DEBUG: chat.message trace
-  try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] CHAT_MESSAGE: fired | input keys: ${Object.keys(input || {}).join(',')}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+  try { hookDebugWrite(`[${Date.now()}] CHAT_MESSAGE: fired | input keys: ${Object.keys(input || {}).join(',')}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
   var sid = cast<InputMessage>(input)?.sessionID || 'default';
 
   var agent = (typeof input.agent === 'string' ? input.agent : '') || (typeof input.agentName === 'string' ? input.agentName : '') || cast<InputMessage>(input)?.info?.agent || cast<InputMessage>(input)?.message?.agent || getCurrentAgent(sid) || '';
-  try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] CHAT_AGENT_CHECK: agent="${agent}" isTrident=${isTridentAgent(agent)}\n`); } catch (e) { /* debug non-fatal */ }
+  try { hookDebugWrite(`[${Date.now()}] CHAT_AGENT_CHECK: agent="${agent}" isTrident=${isTridentAgent(agent)}\n`); } catch (e) { /* debug non-fatal */ }
   if (isTridentAgent(agent)) {
     setCurrentAgent(agent, sid);
     // THE CRON MAIN-SESSION TETHER (2026-08-13 — the live finding: the event
@@ -1465,10 +1514,11 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
       var docIsEdit = toolName === 'edit';
       if (docPath.toLowerCase().endsWith('.md') && (docContent.length > 0 || docIsEdit)) {
         var docLower = docPath.toLowerCase();
-        var docExempt = docLower.indexOf('/.trident/') !== -1
-          || docLower.indexOf('/context_management/') !== -1
-          || docLower.indexOf('/checkpoints/') !== -1
-          || docLower.indexOf('/generated_artifacts/') !== -1
+        // THE V4 EXEMPT SET (2026-08-14): the tool-generated artifacts + the deps
+        // stay fully exempt; the CANON/AUDIT/CHECKPOINTS domains now resolve their
+        // OWN floors via the DOC_FILTER_REGISTRY (the .trident/ + context_management/
+        // + checkpoints/ full-exemption REMOVED — the domain floors enforce them).
+        var docExempt = docLower.indexOf('/generated_artifacts/') !== -1
           || docLower.indexOf('/skills/') !== -1
           || docLower.indexOf('/node_modules/') !== -1;
         if (!docExempt) {
@@ -1485,178 +1535,25 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
           //                → the per-type floor + the structure markers apply, judged
           //                on the POST-STATE (for edits: the file with the replacement
           //                applied). The remedy names the chunked protocol.
-          var postState = docContent;
-          var docAmbiguousEdit = false;
-          if (docIsEdit) {
-            var docOld = typeof docArgs.oldString === 'string' ? docArgs.oldString : '';
-            try {
-              var curDoc = readFileSync(docPath, 'utf-8');
-              if (docOld && curDoc.indexOf(docOld) !== -1) {
-                // v3 (2026-08-07 — the post-state reconstruction's logic break):
-                // the replace-once approximation is WRONG for the multi-occurrence
-                // anchors (the edit tool replaces the FIRST occurrence) — the
-                // gate's line count + the classifier would run on a FALSE
-                // post-state. The multi-occurrence case: the post-state is
-                // UNDETERMINABLE from the hook → the gate skips the floor check
-                // (a WARN), never a wrong reconstruction.
-                var docOccurrences = curDoc.split(docOld).length - 1;
-                if (docOccurrences > 1) {
-                  docAmbiguousEdit = true;
-                  postState = curDoc;
-                } else {
-                  postState = curDoc.replace(docOld, docContent);
-                }
-              } else {
-                postState = curDoc; // the anchor not found — the edit will fail anyway
-              }
-            } catch (e2) { postState = docContent; }
+          // THE V4 STATEFUL GATE (2026-08-14 — the per-file state machine, the
+          // operator's directive: "finalize on the FILE's accumulated state at/over
+          // the floor, not the single write's content"): the floor binds on the
+          // FILE's total content (on disk + the edit's effect), never the single
+          // write; the DRAFTING/BUILDING transitions NEVER throw (the chunked
+          // protocol unbroken BY CONSTRUCTION); the INCONCLUSIVE ambiguity = the
+          // WARN-skip, never a wrong throw; the per-type filters resolve by the
+          // ordered chain (path → name → content — the DOC_FILTER_REGISTRY).
+          var docEval = runDocDensityGate({
+            filePath: docPath,
+            content: docContent,
+            isEdit: docIsEdit,
+            oldString: typeof docArgs.oldString === 'string' ? docArgs.oldString : undefined,
+          });
+          if (docEval.verdict === 'throw' && docEval.message) {
+            throw new Error(docEval.message);
           }
-          var docLines = postState.split('\n').length;
-          // ── THE DOC-TYPE LEXICON v3 (2026-08-07 — the operator's lexicon-
-          // intelligence mandate): the weighted marker SCORING replaces the
-          // v2 first-match if-else tower. The v2 breaks: (a) the FIRST regex
-          // hit won — "mission" (a high-frequency word in the Trident
-          // ecosystem) classified LOGs/COMPLETION docs as ARCHITECTURE (the
-          // 1000 floor); "acceptance criteria" mentioned in a REPORT
-          // classified it SPEC (the 3000 floor) — the misclassification; (b)
-          // the floors + the remedies were a magic ladder. v3: the type
-          // lexicon (the typed structure: the weighted markers + the floors +
-          // the structural checks + the name hints); the PRESENCE-scoring
-          // (a marker's weight counts once — a 30-"mission" doc scores 1, the
-          // stability); the highest score wins; the filename is the
-          // tie-breaker ONLY when the content is silent.
-          var DOC_TYPE_LEXICON = [
-            { id: 'SPEC', floor: 3000,
-              markers: [
-                { re: /FR-\d/, weight: 5 },
-                { re: /functional requirement/i, weight: 5 },
-                { re: /acceptance criteria/i, weight: 4 },
-                { re: /pass criteria/i, weight: 4 },
-                { re: /specification/i, weight: 3 },
-                { re: /verification protocol/i, weight: 2 },
-              ],
-              structural: [/FR-|acceptance|pass criteria|verification/i],
-              nameHints: [/spec/i] },
-            { id: 'AUDIT', floor: 100,
-              markers: [
-                { re: /VERDICT/i, weight: 4 },
-                { re: /claims table/i, weight: 3 },
-                { re: /frauds found/i, weight: 3 },
-                { re: /coverage/i, weight: 2 },
-              ],
-              structural: [/VERDICT/i, /coverage/i],
-              nameHints: [/audit/i] },
-            { id: 'ARCHITECTURE', floor: 1000,
-              markers: [
-                { re: /data flow/i, weight: 4 },
-                { re: /failure mode/i, weight: 4 },
-                { re: /interface/i, weight: 3 },
-                { re: /wiring/i, weight: 3 },
-                { re: /replication/i, weight: 3 },
-                { re: /contract/i, weight: 2 },
-                { re: /\bmission\b/i, weight: 1 },
-                { re: /\bpurpose\b/i, weight: 1 },
-              ],
-              structural: [/purpose|mission|contract|interface|data flow|wiring|failure|replication/i],
-              nameHints: [/architecture|macro|overhaul|breakdown/i] },
-            { id: 'LOG', floor: 100,
-              markers: [
-                { re: /^\s*\d{4}-\d{2}-\d{2}.*(INFO|WARN|ERROR|DEBUG)/m, weight: 5 },
-                { re: /(INFO|WARN|ERROR|DEBUG)\s+\d{4}-\d{2}-\d{2}/, weight: 5 },
-              ],
-              structural: [],
-              nameHints: [/log|changelog/i] },
-            { id: 'COMPLETION', floor: 2000,
-              markers: [
-                { re: /definition of done/i, weight: 4 },
-                { re: /the build is complete/i, weight: 4 },
-                { re: /completion summary/i, weight: 3 },
-                { re: /\bcompleted\b/i, weight: 1 },
-              ],
-              structural: [],
-              nameHints: [/completion/i] },
-            { id: 'REPORT', floor: 500,
-              markers: [
-                { re: /findings/i, weight: 3 },
-                { re: /results/i, weight: 2 },
-                { re: /review/i, weight: 2 },
-                { re: /recommendation/i, weight: 2 },
-              ],
-              structural: [],
-              nameHints: [/report|review|findings/i] },
-            { id: 'OVERVIEW', floor: 300,
-              markers: [
-                { re: /^# .*(index|overview|readme)/m, weight: 3 },
-                { re: /table of contents/i, weight: 2 },
-              ],
-              structural: [],
-              nameHints: [/readme|index|overview/i] },
-          ];
-          var docType = 'GENERIC';
-          var docFloor = 200;
-          var docTypeScore = 0;
-          for (var dti = 0; dti < DOC_TYPE_LEXICON.length; dti++) {
-            var dtEntry = DOC_TYPE_LEXICON[dti];
-            var dtScore = 0;
-            for (var dtm = 0; dtm < dtEntry.markers.length; dtm++) {
-              if (dtEntry.markers[dtm].re.test(postState)) dtScore += dtEntry.markers[dtm].weight;
-            }
-            if (dtScore > docTypeScore) { docTypeScore = dtScore; docType = dtEntry.id; docFloor = dtEntry.floor; }
-          }
-          if (docTypeScore === 0) {
-            // the filename tie-breaker (ONLY when the content is silent):
-            for (var dtn = 0; dtn < DOC_TYPE_LEXICON.length; dtn++) {
-              var dtHints = DOC_TYPE_LEXICON[dtn].nameHints || [];
-              for (var dth = 0; dth < dtHints.length; dth++) {
-                if (dtHints[dth].test(docLower)) { docType = DOC_TYPE_LEXICON[dtn].id; docFloor = DOC_TYPE_LEXICON[dtn].floor; }
-              }
-            }
-          }
-          // v3 (2026-08-07 — the re-save heuristic's logic break): the v2
-          // write-overwrite = finalize on EVERY re-save — a legitimate DRAFT
-          // REVISION (the second write, still building) threw the type floor
-          // and wasted the round (the live incident: the wave-overhaul spec's
-          // 1356-line revision threw the 3000 SPEC floor at a mid-build
-          // draft). v3: the re-save finalizes ONLY when the write's OWN
-          // content already clears the type floor — a draft revision (under
-          // the floor) stays a draft; the FINAL re-save (at/over the floor)
-          // finalizes. The draft-and-edit flow is unbroken; the floor fires
-          // exactly when the content proves it.
-          var docFinalize = docContent.indexOf('<!-- DOC-COMPLETE -->') !== -1
-            || (!docIsEdit && existsSync(docPath) && docLines >= docFloor);
-          if (docAmbiguousEdit) {
+          if (docEval.verdict === 'warn-skip') {
             tridentLog('WARN', 'trident-hooks', 'DOC DENSITY edit skip: the multi-occurrence anchor — the post-state is undeterminable; the floor check skipped for this edit');
-          } else if (!docFinalize) {
-            if (docLines < 20) {
-              throw new Error('[DOC DENSITY GATE] document under-specified: only ' + docLines + ' lines (min 20 — even a DRAFT carries real content). write the skeleton as a draft (allowed), then chunk-edit to the type floor, then finalize with the <!-- DOC-COMPLETE --> marker.');
-            }
-          } else {
-          // ── THE v2 CLASSIFIER REPLACED — the DOC_TYPE_LEXICON above (the
-          // weighted presence-scoring) IS the classifier now. THE ISE LAW:
-          // the regexes in the lexicon are the MECHANICAL DETECTORS ONLY (the
-          // detection layer — a marker's presence); the DECISION (the
-          // classification) is the weighted scoring + the highest-score rule
-          // (the decision layer) — the regex never decides alone. The 3x
-          // soft-warn signature (regex bodies + a classifier name + no
-          // decision layer) is avoided BY CONSTRUCTION — the scoring is the
-          // state machine's PARSED→ANALYZED→CLASSIFIED steps.
-            var docMissingMarkers: string[] = [];
-            if (docType === 'ARCHITECTURE' && !/purpose|mission|contract|interface|data flow|wiring|failure|replication/i.test(postState)) {
-              docMissingMarkers.push('the architecture sections (purpose/contracts/interfaces/data-flows/wiring/failure-modes/replication)');
-            }
-            if (docType === 'SPEC' && !/FR-|acceptance|pass criteria|verification/i.test(postState)) {
-              docMissingMarkers.push('the spec sections (FR-*/acceptance/pass-criteria/verification)');
-            }
-            if (docType === 'AUDIT' && !(/VERDICT/i.test(postState) && /coverage/i.test(postState))) {
-              docMissingMarkers.push('the audit sections (per-hunk VERDICT + the coverage map)');
-            }
-            if (docLines < docFloor || docMissingMarkers.length > 0) {
-              var docRemedy = 'build to the ' + docType + ' standard via the CHUNKED PROTOCOL — ' + docFloor + '+ lines of REAL engineering content (the interfaces, the file:line anchors, the data flows, the failure modes, the evidence, the replication detail — a fact appears ONCE, the density is the DATA, never reflow or pad). A single one-shot write CANNOT carry ' + docFloor + ' lines (the harness truncates oversized tool calls) — the skeleton draft is already allowed: edit-append the sections in rounds (5-8 edits per round, each ~150-250 lines, anchored to the previous content), then the FINAL edit adds the <!-- DOC-COMPLETE --> marker. The floor is judged on the completed document, not on every intermediate state.';
-              throw new Error('[DOC DENSITY GATE] ' + (docType || 'GENERIC') + ' document under-specified: ' +
-                (docLines < docFloor ? 'only ' + docLines + ' lines (min ' + docFloor + ' — the ' + docType + ' floor)' : '') +
-                (docMissingMarkers.length > 0 ? ' MISSING: ' + docMissingMarkers.join('; ') : '') +
-                '. ' + docRemedy);
-            }
           }
         }
       }
@@ -1837,6 +1734,25 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
     // docker-exec chains into a container) is the config-fumbling class by
     // another path — the same [TRIDENT CONFIG LOCK]. The reads + the
     // unrelated commands (builds, git, the deploy's own path) pass untouched.
+    // ═══ THE MEMORY-BOMB GATE (2026-08-15 — TOOL_PATHOLOGY_readlines_RAM_BOMB_20260815.md,
+    // rebuilt per the Lexicon_Grade_Intelligent_Systems_Engineering_Bible.md —
+    // the intent-savvy lexicon, the Poseidon model): a python3/node/bun inline
+    // read on an UNSIZED file is the RAM-bomb class (a 7.9GB log →
+    // .readlines() → 14.6GB RSS → the host freeze). THE DECISION = the
+    // classifyMemoryRead STATE MACHINE (the memory-read lexicon): the matchers
+    // DETECT, the machine DECIDES (BLOCK only the RAM_BOMB intent; ALLOW the
+    // sized reads, the lazy iteration, the streaming tools). The Poseidon
+    // pattern: the frames in priority order + the safe-context exclusions —
+    // never a single regex tower that misfires on every file touch. ═══
+    try {
+      var bombDecision = classifyMemoryRead(bashCmd || '');
+      if (bombDecision.action === 'BLOCK' && bombDecision.intent === 'RAM_BOMB') {
+        throw new Error(bombDecision.message);
+      }
+    } catch (bombErr) {
+      if (bombErr instanceof Error && bombErr.message.indexOf('[MEMORY GATE]') === 0) throw bombErr;
+      tridentLog('WARN', 'trident-hooks', 'the memory-bomb gate failed (non-fatal): ' + (bombErr instanceof Error ? bombErr.message : String(bombErr)));
+    }
     try {
       const bashLexVerdict = classifyCtExec(bashCmd);
       if (bashLexVerdict.verdict === 'BLOCK') {
@@ -1890,31 +1806,49 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
   }
 
   if (idTool === 'task') {
-    // ═══ THE PROMPT-FILE LOADER — RE-ENABLED (2026-08-09 — the operator: "the
-    // point is the generated prompt is loaded verbatim with 0 fucking slop in
-    // between get this working"). The wave-generator's batch form carries the
-    // promptFile param referencing the generated prompt's FILE. The task tool's
-    // schema lacks the promptFile param — the runtime DROPS it → the empty
-    // prompt → the [WAVE VERBATIM] mismatch (the container's live finding, S6).
-    // THIS loader loads the file + INJECTS the exact content into the task
-    // call's prompt BEFORE the firewalls validate — the generated prompt
-    // arrives byte-exact, 0 slop, 0 reproduction. The loadPromptFileForDispatch
-    // enforces the tmp-folder confinement + the DPL1 validation. The injection
-    // MUST run before the wave-verbatim SHA check below — the check then sees
-    // the EXACT content and the SHA matches by construction. NOTE: the old
-    // assessTaskBlock throw is NOT re-enabled — the operator's current firewalls
-    // (the wave-verbatim + the batch + the lines-gate) handle the prompt checks.
+    // ═══ THE PROMPT-FILE LOADER — THE T.E.B. MACHINE (2026-08-14 — the
+    // operator's exact spec: "A T.E.B HOOK JUST HAS A MACHINE/SCRIPT WIRED TO
+    // IT THAT INTERCEPTS THE PROMPT FILE PATH THE AGENT PASSES, READS IT,
+    // RETURNS THE PROMPT FILE CONTENTS TO THE TASK TOOL AND MUTATES THE PROMPT
+    // FILE PATH --> THE ACTUAL PROMPT IN PLACE BEFORE IT REACHES THE TOOL" +
+    // "the t.e.b machine handles the rest and converts it into whatever args
+    // the task tool needs in order to run"). The batch form carries ONLY the
+    // promptFile PATH (NO prompt, NO placeholder, NO background — the model
+    // passes ONLY the path + desc + type). THIS hook intercepts the task call
+    // BEFORE the tool executes and MUTATES the args IN PLACE into the full
+    // task-tool args: prompt = the file's byte-exact content + background =
+    // true (the background-only ruling) + promptFile DELETED (the task tool's
+    // schema has no promptFile). The model NEVER saw any prompt text — only
+    // the path — so the GLM compression derailment is structurally impossible.
+    // The injection MUST run before the wave-verbatim SHA check below — the
+    // check then sees the EXACT content and the SHA matches by construction.
+    // The old assessTaskBlock throw is NOT re-enabled — the operator's current
+    // firewalls (the wave-verbatim + the batch + the lines-gate) handle the
+    // prompt checks.
+    // ═══ THE PROMPTFILE-FIREWALL FLAG (2026-08-15 — the operator's
+    // simplification: "agents can literally just pass promptfile + desc +
+    // agent type and nothing else and the machine handles all this
+    // immediately... simplify the wave verbatim task firewall to a simple
+    // promptfile firewall"). tebHadPromptFile = the mechanical fact that the
+    // task call CARRIED the promptFile path (the loader fired). The firewall
+    // below blocks ANY wave-agent dispatch WITHOUT it — the inline-prompt
+    // derailment becomes structurally impossible. ═══
+    var tebHadPromptFile = false;
     try {
       var waveBlockArgs = cast<Record<string, unknown>>(output?.args || output || {});
       var wavePromptFile = typeof waveBlockArgs.promptFile === 'string' ? waveBlockArgs.promptFile : '';
       if (wavePromptFile && wavePromptFile.trim().length > 0) {
+        tebHadPromptFile = true;
         var loadedPrompt = loadPromptFileForDispatch(wavePromptFile.trim());
         if (output && typeof output === 'object') {
           var waveOutArgs = cast<Record<string, unknown>>(output.args || {});
-          waveOutArgs.prompt = loadedPrompt;
+          // THE IN-PLACE MUTATION — THE T.E.B. MACHINE PRODUCES THE FULL ARGS:
+          waveOutArgs.prompt = loadedPrompt;         // promptFile → the byte-exact content
+          waveOutArgs.background = true;             // the background-only ruling
+          delete waveOutArgs.promptFile;             // the task tool's schema has no promptFile — strip it
           cast<Record<string, unknown>>(output).args = waveOutArgs;
         }
-        tridentLog('INFO', 'trident-hooks', 'WAVE PROMPT FILE loaded + injected: ' + wavePromptFile.trim() + ' (' + loadedPrompt.split('\n').length + ' lines)');
+        tridentLog('INFO', 'trident-hooks', 'T.E.B. MACHINE: promptFile→prompt mutated + background:true (' + wavePromptFile.trim() + ' → ' + loadedPrompt.split('\n').length + ' lines, ' + loadedPrompt.length + ' chars)');
       }
     } catch (wbErr) {
       // The gates rethrow — the catch shields only the unexpected:
@@ -2030,43 +1964,79 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
             // the two paths by their USE: the skill for surgical dispatching
             // with extreme context precision, the wave manager for efficient
             // batch wave dispatch (the operator's framing, 2026-08-08).
-            if (!tfIsResume && !dispatchSkillLoads.has(tfSid0) && !dispatchSkillLoads.has('default') &&
-                !waveGeneratorUsed.has(tfSid0) && !waveGeneratorUsed.has('default')) {
-              throw new Error('[NO LAZY PROMPTS] the dispatch floor is DPL1: mission+acceptance, the reading order (absolute paths), per-task WHAT/HOW/WHY/EXPECTED, constraints, verification commands, the return format. GENERATE with trident-wave-manager OR skill(\"trident-dispatch-templates\") — dispatch the EXACT prompt verbatim (0 rewrite).');
-            }
+            // ── THE WAVE-MANDATE + THE PROMPTFILE FIREWALL (2026-08-15 — the
+            // operator's simplification: "we just mandate wave manager generate
+            // and we can cleanup the task firewalls for the new infra") ──
+            // [NO LAZY PROMPTS] + the skill-load demand + the DPL1 structural
+            // checks are SUPERSEDED. The wave manager is the ONLY dispatch
+            // path: a task dispatch MUST match a generated wave agent (the
+            // manifest record) AND MUST have carried the promptFile (the
+            // T.E.B. loader fired — the prompt was injected byte-exact from
+            // the file, never written by the model). The two checks are
+            // mechanical: waveAgentExists reads the preserved manifests;
+            // tebHadPromptFile is set by the loader above. Everything else —
+            // an inline prompt, a hand-written prompt, a non-wave dispatch —
+            // is BLOCKED with the wave-manager mandate.
             var tfArgs = cast<Record<string, unknown>>(output?.args || {});
             var tfPrompt = (typeof tfArgs.prompt === 'string' ? tfArgs.prompt : '')
               || (typeof tfArgs.text === 'string' ? tfArgs.text : '');
             if (!tfPrompt) tfPrompt = argsStr || '';
             var tfSid = sid || sessionId || 'default';
-            // ═══ THE WAVE-VERBATIM CHECK (2026-08-09 — the operator: 'agents STOP
-            // COMPRESSING/CONDENSING the fucking prompts what is allowing them to
-            // still be stupid like this'). THE SHA-256 VERBATIM VERIFICATION: the
-            // preserved .wave-manifest-*.json files record each generated prompt's
-            // sha256. A task dispatch whose DESCRIPTION matches a wave agent's name:
-            //   - the prompt's SHA == the manifest's sha256 → the EXACT generated
-            //     prompt → the DPL1 floor is SATISFIED BY CONSTRUCTION (the
-            //     generator validated the prompt — the dense long-line formats at
-            //     133-148 lines are exempt; the 150-line floor that rejected the
-            //     generated prompts is the exact bug the operator pasted) → PASS.
-            //   - the SHA mismatch → the prompt was COMPRESSED/CONDENSED → BLOCKED
-            //     with the named remedy. THE COMPRESSION IS STRUCTURALLY IMPOSSIBLE
-            //     NOW: any deviation from the batch form's prompt is a different
-            //     SHA → a different prompt → blocked.
-            var tfVerbatimEntry: { name: string; sha256: string; lines: number } | null = null;
+            var tfDesc = typeof tfArgs.description === 'string' ? tfArgs.description : '';
+            if (!tfIsResume && !waveAgentExists(tfDesc)) {
+              throw new Error('[WAVE MANDATE] the task call for "' + (tfDesc || '(no description)') + '" does NOT match any generated wave agent. WHAT WENT WRONG: the dispatch was not generated by trident-wave-manager. WHAT TO DO: RUN trident-wave-manager action=generate ONCE (the agents array + the context args) — then pass the returned prompt file\'s PATH (a filepath and nothing else) with the description + subagent_type. The wave manager generated the payload; you only pass its path.');
+            }
+            if (!tfIsResume && tfDesc && waveAgentExists(tfDesc) && !tebHadPromptFile) {
+              // ═══ THE T.E.B. INPUT CLASSIFIER (2026-08-15 — the #25 Part-1
+              // wiring): the block names WHAT the model passed (the input
+              // shape — the path vs the prompt) + the simple remedy bullet.
+              var tfInputShape = classifyDispatchInput(typeof tfArgs.prompt === 'string' ? tfArgs.prompt : argsStr || '');
+              var tfInputBullet = tfInputShape.action === 'BLOCK'
+                ? tfInputShape.message
+                : 'YOUR INPUT WAS A PROMPT, NOT A PATH. The task input is a FILEPATH and nothing else — pass the ACTUAL PATH of the prompt file the wave manager generated (the promptFile); do NOT write the prompt text.';
+              throw new Error('[WAVE VERBATIM] the task call for "' + tfDesc + '" did NOT carry the promptFile — the T.E.B. machine injects the prompt byte-exact from the file; the model passes ONLY description + promptFile + subagent_type. ' + tfInputBullet);
+            }
+            // ═══ THE DISPATCH MEMORY SCREEN (2026-08-15 — the operator: "what
+            // do we need to enhance so that subagents are not dispatched w/
+            // ram bombs" — the live incident: the wave-GENERATED prompt carried
+            // `grep -rn "export"` on the 16MB minified dist → the subagent's
+            // run re-emitted the whole bundle per match → the host RAM blow).
+            // The SAME lexicon (classifyDispatchMemoryRisk) screens the
+            // dispatched prompt's command lines — a bomb class (the recursive
+            // grep on a built artifact / the bundle execution) BLOCKS the
+            // dispatch with the named command + the bounded rewrite. The
+            // matchers DETECT; the machine DECIDES (the single source of
+            // truth — the classifyMemoryRead state machine). ═══
             if (!tfIsResume && tfPrompt) {
-              var tfDesc = typeof tfArgs.description === 'string' ? tfArgs.description : '';
-              if (tfDesc) {
-                try {
-                  var tfVerbatimSha = createHash('sha256').update(tfPrompt).digest('hex');
-                  tfVerbatimEntry = findWaveManifestEntry(tfDesc, tfVerbatimSha);
-                  // tfVerbatimEntry set = the EXACT generated prompt — the
-                  // structural checks + the line floor are EXEMPT below (the
-                  // generator validated the prompt; the dense 133-148-line
-                  // formats pass by construction).
-                  if (!tfVerbatimEntry && waveAgentExists(tfDesc)) {
-                    throw new Error('[WAVE VERBATIM] the dispatched prompt is NOT the exact generated prompt for "' + tfDesc + '" — the SHA mismatch. THE CAUSES: (a) a compressed/condensed prompt (DISPATCH THE BATCH FORM\'S PROMPT VERBATIM — 0 ignore, 0 condensation) OR (b) the prompt FILE was modified after the generation (REGENERATE the wave with the current generator + dispatch the returned batch form).');
-                  }
+              var tfMemRisk = classifyDispatchMemoryRisk(tfPrompt);
+              if (tfMemRisk.action === 'BLOCK') {
+                throw new Error('[DISPATCH MEMORY SCREEN] the prompt for "' + (tfDesc || '(no description)') + '" carries a memory-bomb command: ' + tfMemRisk.message);
+              }
+            }
+            // ═══ THE WAVE-VERBATIM CHECK — SIMPLIFIED (2026-08-14 — the operator:
+            // "wave verbatim can be simplified specifically to just match
+            // whether the prompt file was passed or not"). The T.E.B. machine
+            // (the loader hook above) already MUTATED the args: the prompt =
+            // the prompt file's byte-exact content (the loader read the file
+            // itself — the model NEVER wrote the prompt, so there is NOTHING to
+            // compress/condense). THE PROMPTFILE FIREWALL above (waveAgentExists
+            // + tebHadPromptFile) already BLOCKED the no-promptFile dispatch —
+            // the SHA check is subsumed (the loader injected the file's bytes,
+            // the SHA matches the manifest by construction). This section keeps
+            // the sha + the entry lookup for the [WAVE BATCH] call key + the
+            // verbatim exemption (the structural checks skip for the generated
+            // prompts — the generator validated the DPL1 structure).
+            var tfVerbatimEntry: { name: string; sha256: string; lines: number } | null = null;
+            if (!tfIsResume && tfPrompt && tfDesc) {
+              try {
+                var tfVerbatimSha = createHash('sha256').update(tfPrompt).digest('hex');
+                tfVerbatimEntry = findWaveManifestEntry(tfDesc, tfVerbatimSha);
+                // tfVerbatimEntry set = the prompt came from the prompt FILE
+                // (the T.E.B. machine injected the byte-exact content — the
+                // SHA matches the manifest by construction). The structural
+                // checks + the line floor are EXEMPT below (the generator
+                // validated the prompt; the dense 133-148-line formats pass
+                // by construction).
                   // ═══ THE [WAVE BATCH] ENFORCEMENT (2026-08-09 — the operator:
                   // 'they literally act as if they are dispatching parallel
                   // subagent waves and then do sequential one at a time'). A
@@ -2110,20 +2080,53 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
                     // stays atomic on the event loop — no awaits in between).
                     var tfReg = readWaveRegistryFile(TRIDENT_TMP_DIR, tfWaveRec.wave);
                     if (!tfReg) {
-                      throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') has ' + tfWaveRec.agents.length + ' agents but NO dispatch registry (generated before the registry fix). REGENERATE the wave with the current generator + dispatch the returned batch form verbatim — ALL ' + tfWaveRec.agents.length + ' task calls as the parts of ONE message (THE BATCH PROCESS — one concurrent pass).');
+                      // ═══ PART 4 — THE DERIVE-FROM-MANIFEST (2026-08-15 — the #25
+                      // fix): a wave generated BEFORE the registry fix (the manifest
+                      // present, the registry absent) DERIVES the registry from the
+                      // manifest — the dead-end "REGENERATE" directive (the ADM
+                      // 15-block loop) is structurally impossible. The derived
+                      // registry is marked for the audit trail. The fail-closed
+                      // edge (NO manifest AND NO registry) is already handled by
+                      // the wave-mandate above. ═══
+                      tfReg = {
+                        wave: tfWaveRec.wave,
+                        total: tfWaveRec.agents.length,
+                        calls: [],
+                        windowStart: null,
+                        status: 'ready',
+                        derivedFromManifest: true,
+                      };
+                      writeWaveRegistryFile(TRIDENT_TMP_DIR, tfReg);
+                      tridentLog('INFO', 'trident-hooks', 'WAVE REGISTRY DERIVED from the manifest: ' + tfWaveRec.wave + ' (total ' + tfReg.total + ')');
                     }
+                    var tfRegNonNull = tfReg as WaveRegistry;
                     // THE KEY: desc + waveId + sha — the wave-scoped dedupe
                     // (the same agent name in two waves = different keys).
                     var tfCallKey = tfDesc + '|' + tfWaveRec.wave + '|' + tfVerbatimSha;
-                    var tfDecision = evaluateWaveBatchGate(tfReg, tfCallKey, Date.now(), WAVE_DISPATCH_WINDOW_MS);
+                    var tfDecision = evaluateWaveBatchGate(tfRegNonNull, tfCallKey, Date.now(), WAVE_DISPATCH_WINDOW_MS);
                     if (tfDecision.action === 'block') {
+                      // ═══ PART 3 — THE PARTIAL-DISPATCH RECONCILE (2026-08-15 —
+                      // the #25 fix, the operator: "current blind regenerate is
+                      // retarded"): the block messages for the partial states carry
+                      // the RECONCILE bullet — the running agents are ADOPTED (never
+                      // re-fired, never regenerated); the MISSING agents are named +
+                      // dispatched with their prompt-file paths. THE ADOPTED SET =
+                      // the accepted + the RECORDED calls (the runtime's acceptance
+                      // confirmation lags the recording — the 2026-08-15 container
+                      // S2 catch: the recorded-only filter left the adopted list
+                      // empty + the missing list = the FULL roster). ═══
+                      var tfAdoptedNames = tfDecision.reg.calls
+                        .filter(function (c) { return c.status === 'accepted' || c.status === 'recorded'; })
+                        .map(function (c) { return c.key.split('|')[0]; });
+                      var tfAllNames = (tfWaveRec.agents || []).map(function (a) { return a.name; });
+                      var tfMissingNames = tfAllNames.filter(function (n) { return tfAdoptedNames.indexOf(n) === -1; });
                       if (tfDecision.reason === 'accepted') {
-                        throw new Error('[WAVE BATCH] the dispatch authorization for "' + tfDesc + '" is CONFIRMED — the task call was ACCEPTED by the runtime (the wave is dispatched). Do NOT re-fire the same call. If the wave must run again: REGENERATE the wave, or run trident-wave-manager action=release waveId=' + tfWaveRec.wave + ' to reset the authorization.');
+                        throw new Error('[WAVE BATCH] the dispatch for "' + tfDesc + '" is CONFIRMED — it was ACCEPTED by the runtime (the wave is dispatching). WHAT TO DO: do NOT re-fire it. If OTHER agents are missing (' + (tfMissingNames.join(', ') || 'none') + '): dispatch each one with its prompt file PATH (a filepath and nothing else) — the wave completes as the missing agents land.');
                       }
                       if (tfDecision.reason === 'in-flight') {
-                        throw new Error('[WAVE BATCH] "' + tfDesc + '" is mid-dispatch — its authorization was recorded within the current dispatch window (the batch is in flight). Do NOT re-fire the same call inside the window.');
+                        throw new Error('[WAVE BATCH] "' + tfDesc + '" is mid-dispatch — its authorization was recorded within the current dispatch window (the batch is in flight). WHAT TO DO: do NOT re-fire inside the window; the missing agents (' + (tfMissingNames.join(', ') || 'none') + ') dispatch next with their prompt file paths.');
                       }
-                      throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') was PARTIALLY dispatched (' + tfDecision.reg.calls.filter(function (c) { return c.status === 'accepted'; }).length + ' accepted) and the dispatch window expired — the one-at-a-time derailment pattern. REGENERATE the wave + dispatch the FULL batch — ALL ' + tfDecision.reg.total + ' task calls as the parts of ONE message, or run trident-wave-manager action=release waveId=' + tfWaveRec.wave + ' then re-dispatch the full batch.');
+                      throw new Error('[WAVE BATCH] the wave for "' + tfDesc + '" (' + tfWaveRec.wave + ') is PARTIALLY dispatched: ' + tfAdoptedNames.length + '/' + tfDecision.reg.total + ' adopted (the running agents: ' + (tfAdoptedNames.join(', ') || 'none') + '). WHAT TO DO: the running agents are ADOPTED — do NOT regenerate, do NOT re-fire them. DISPATCH THE MISSING AGENTS: ' + (tfMissingNames.join(', ') || 'none') + ' — pass each one\'s prompt file PATH (a filepath and nothing else) with the description + subagent_type.');
                     }
                     tfDecision.reg.status = deriveWaveStatus(tfDecision.reg);
                     writeWaveRegistryFile(TRIDENT_TMP_DIR, tfDecision.reg);
@@ -2132,100 +2135,19 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
                   if (tfVerbatimErr instanceof Error && (tfVerbatimErr.message.indexOf('[WAVE VERBATIM]') === 0 || tfVerbatimErr.message.indexOf('[WAVE BATCH]') === 0)) throw tfVerbatimErr;
                   tridentLog('WARN', 'trident-hooks', 'the wave-verbatim check failed (non-fatal): ' + (tfVerbatimErr instanceof Error ? tfVerbatimErr.message : String(tfVerbatimErr)));
                 }
-              }
             }
+            // ═══ THE STRUCTURAL CHECKS STRIPPED (2026-08-15 — the operator's
+            // cleanup: "no lazy prompts is not needed and we just mandate wave
+            // manager generate and we can cleanup the task firewalls for the
+            // new infra"). The WAVE-MANDATE + the PROMPTFILE FIREWALL above
+            // already guaranteed this dispatch matches a generated wave agent
+            // AND the T.E.B. loader injected the prompt file's byte-exact
+            // content. The prompt was validated by the generator (the DPL1
+            // structure) — the DPL1 structural checks + the line floor + the
+            // [NO LAZY PROMPTS] skill-load demand are DEAD for the allowed
+            // path (the verbatim exemption is now the ONLY path). The
+            // allowed-dispatch record below feeds the SSTF claim gate. ═══
             if (!tfIsResume && tfPrompt) {
-              // THE VERBATIM FLAG: the structural checks + the line floor are
-              // EXEMPT when the SHA matched the generated prompt (the generator
-              // already validated the DPL1 structure — the dense 133-148-line
-              // formats pass BY CONSTRUCTION).
-              var tfVerbatimOk = typeof tfVerbatimEntry !== 'undefined' && tfVerbatimEntry !== null;
-              var tfLines = tfPrompt.split('\n').length;
-              var tfMarkers = [
-                { re: /mission|objective/i, name: 'mission/objective' },
-                { re: /reading order|read.*before/i, name: 'reading order' },
-                { re: /what|how|why/i, name: 'WHAT/HOW/WHY' },
-                { re: /constraint|do not touch|frozen/i, name: 'constraints/do-not-touch' },
-                { re: /verification|verify/i, name: 'verification protocol' },
-                { re: /return format|report/i, name: 'return format' },
-              ];
-              var tfMissing: string[] = [];
-              var tfPresent = 0;
-              for (var tfm = 0; tfm < tfMarkers.length; tfm++) {
-                if (tfMarkers[tfm].re.test(tfPrompt)) {
-                  tfPresent++;
-                } else {
-                  tfMissing.push(tfMarkers[tfm].name);
-                }
-              }
-              // v4 (2026-08-04 — the operator's mandate): the TASK FIREWALL enforces
-              // the DPL1 STRUCTURE, not just the line count. The line count is there
-              // to force a proper DPL1-STYLE prompt — the same quality the DP L1 tool
-              // generates. A reflowed thin prompt (same content, more lines) and a
-              // bloated restatement prompt fail the structural checks the SAME way:
-              // (1) no unfilled [FILL] markers, (2) real absolute paths >= 3 (the
-              // reading order carries the actual files), (3) per-task
-              // WHAT/HOW/WHY/EXPECTED expansion (the density core — or the B2
-              // debugging-template escape), (4) concrete verification commands,
-              // (5) the unique-line ratio (a fact appears ONCE — restating is padding).
-              var tfStructural: string[] = [];
-              if (/\[FILL/.test(tfPrompt)) {
-                tfStructural.push('the prompt still contains [FILL] markers — the template was NOT filled; fill every [FILL] with the REAL project data');
-              }
-              var tfAbsPaths = (tfPrompt.match(/(?:\/home\/|\/root\/|\/tmp\/|\/var\/|\/usr\/|\/etc\/|\/opt\/|\/workspace\/|\/app\/|\/mnt\/|C:\\|\/Users\/)/g) || []).length;
-              if (tfAbsPaths < 3) {
-                tfStructural.push('fewer than 3 absolute file paths (the reading order must list the actual files, one per line, with the anchors)');
-              }
-              var tfWhat = (tfPrompt.match(/\bWHAT:/g) || []).length;
-              var tfWhy = (tfPrompt.match(/\bWHY:/g) || []).length;
-              var tfExpected = (tfPrompt.match(/\bEXPECTED:/g) || []).length;
-              var tfDebugEscape = /THE SYMPTOM/.test(tfPrompt) && /THE SUSPECTS/.test(tfPrompt) && /THE A\/B TESTS/.test(tfPrompt) && /THE FIX SPEC/.test(tfPrompt);
-              var tfExpansionOk = (tfWhat >= 3 && tfExpected >= 3 && tfWhy >= 2) || tfDebugEscape;
-              if (!tfExpansionOk) {
-                tfStructural.push('no per-task WHAT/HOW/WHY/EXPECTED expansion (3+ tasks each with the 4-part block — the density core; or the B2 debugging structure: THE SYMPTOM + THE SUSPECTS + THE A/B TESTS + THE FIX SPEC)');
-              }
-              var tfCmd = /(\b(?:bun|npm|npx|node|vitest|tsc|pytest|git|sha256sum)\s|\bgrep\s|\brg\s|\bread\s+\/|\bglob\s+)/.test(tfPrompt);
-              if (!tfCmd) {
-                tfStructural.push('no concrete verification commands ("grep X file", "bun test ...", "sha256sum ..." — a command, not "run the tests")');
-              }
-              var tfNonEmpty = tfPrompt.split('\n').filter(function (tfl: string) { return tfl.trim().length > 0; });
-              var tfUniqueSet = new Set(tfNonEmpty.map(function (tfl: string) { return tfl.trim().toLowerCase().replace(/\s+/g, ' '); }));
-              var tfUniqueRatio = tfNonEmpty.length > 0 ? tfUniqueSet.size / tfNonEmpty.length : 0;
-              if (tfUniqueRatio < 0.55) {
-                tfStructural.push('repetition detected — only ' + Math.round(tfUniqueRatio * 100) + '% of the lines are unique; a fact appears ONCE, restating is padding');
-              }
-              // v5 (2026-08-04 — the operator's 125 mandate + the fresh-container
-              // evidence): the DPL1 floor is CONDITIONAL. The fresh-container test
-              // showed the model's structurally-complete drafts landing at 87-120
-              // lines (6/6 markers, paths, expansion, commands, ratio — the blocks
-              // named ONLY the line count, zero structural failures) and burning
-              // 4 rounds on the 150 floor. The operator: "lower the firewall
-              // minimum to 125 so these stop barely getting rejected". The
-              // anti-cheat is preserved: when ANY structural check fails
-              // (reflow/bloat/unfilled/thin), the floor stays 150 — a thin prompt
-              // cannot fake the structure. When ALL structural checks pass (the
-              // density is proven), the floor is 125 — the operator's number.
-              var tfLineFloor = tfStructural.length === 0 ? 125 : 150;
-              // THE VERBATIM EXEMPTION (2026-08-09): the generated prompt's SHA
-              // matched the manifest — the generator validated the DPL1 structure,
-              // so the line floor + the structural checks do NOT apply (the dense
-              // 133-148-line formats are the generator's own output; the 150-floor
-              // that rejected them was the exact bug the operator pasted).
-              var tfToiletPaper = !tfVerbatimOk && (tfLines < tfLineFloor || tfPresent < 4 || tfStructural.length > 0);
-              if (tfToiletPaper) {
-                var tfCount = incrementSessionCount(taskFirewallCount, tfSid);
-                incrementSessionCount(taskFirewallCount, 'default'); // dual-write fallback key
-                var tfEscalate = tfCount >= 3 ? '\n\n[TASK FIREWALL ESCALATE] ' + tfCount + ' blocked — the thin-prompt loop is the derailment. RUN trident-wave-manager ONCE + dispatch its batch verbatim. Non-negotiable.' : '';
-                var tfMissingStr = tfMissing.length > 0
-                  ? tfMissing.join(', ')
-                  : (tfLines < tfLineFloor ? 'prompt is only ' + tfLines + ' lines (min ' + tfLineFloor + (tfStructural.length === 0 ? ' with the DPL1 structure complete — min 150 when the structure is incomplete' : ' — the structural checks failed, the density floor stays 150') + ')' : 'fewer than 4/6 section markers');
-                var tfStructuralStr = tfStructural.length > 0 ? ' STRUCTURAL FAILURES: ' + tfStructural.join('; ') : '';
-                throw new Error(
-                  '[TASK FIREWALL] under-specified dispatch — a subagent cannot execute what it was not told. Missing: ' +
-                  tfMissingStr + tfStructuralStr + '. THE DPL1 FLOOR: 125+ lines, 3+ absolute paths, per-task WHAT/HOW/WHY/EXPECTED, verification commands. GENERATE with trident-wave-manager + dispatch its batch verbatim (0 rewrite). ' +
-                  tfEscalate
-                );
-              }
               // Well-specified, allowed dispatch — record for the CLAIM GATE v3 gate.
               // THE ORDER MATTERS (2026-08-10 — the bet-your-life audit caught it):
               // the firstDispatchTs sets MUST run BEFORE the increments — the
@@ -2278,7 +2200,7 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
   // Fires BEFORE Layer 1-3 checks. Analyzes tool call intent to block smoke tests.
   var sstfBlockAction = '';  // hoisted — read by escalation block outside the try scope
   var sstfBlockCategory = '';
-  try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SSTF_PRE: tool=${toolName} | args_keys=${Object.keys(cast<Record<string, unknown>>(output?.args || {})).join(',')}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+  try { hookDebugWrite(`[${Date.now()}] SSTF_PRE: tool=${toolName} | args_keys=${Object.keys(cast<Record<string, unknown>>(output?.args || {})).join(',')}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
   try {
     const sstfResult = await checkSmokeTestFirewall({
       toolName: toolName,
@@ -2291,7 +2213,7 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
       verificationState: undefined as any,
       contextWindow: undefined as any,
     });
-    try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SSTF_RESULT: tool=${toolName} | action=${sstfResult.action} | category=${sstfResult.category} | reason=${sstfResult.reason}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+    try { hookDebugWrite(`[${Date.now()}] SSTF_RESULT: tool=${toolName} | action=${sstfResult.action} | category=${sstfResult.category} | reason=${sstfResult.reason}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
 
     if (sstfResult.action === 'BLOCK') {
       sstfBlockAction = sstfResult.action;
@@ -2564,6 +2486,19 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
 
   var executedTool = cast<string>(input && input.tool) || '';
 
+  // ═══ THE OMNI-VISION CHAIN HOOK (2026-08-15 — the v5.1.4 merge): the
+  // direct-mode batch-read directive injection. The v5.1.4's hook mutates
+  // output.output (the JSON) with the read/batch directive for the calling
+  // model to execute — the trident's hook layer calls it when the tool is
+  // omni_vision (the same surface the standalone plugin used). ═══
+  if (executedTool === 'omni_vision') {
+    try {
+      await omniVisionChainHook({ tool: 'omni_vision' }, output);
+    } catch (omniChainErr) {
+      tridentLog('WARN', 'trident-hooks', 'the omni-vision chain hook failed (non-fatal): ' + (omniChainErr instanceof Error ? omniChainErr.message : String(omniChainErr)));
+    }
+  }
+
   // ═══ THE CONTAINER-TEST STATE ADVANCE (2026-08-06 — the CT state machine) ═══
   // When the setup action returns testPlanValidated: true, the session's state
   // advances to SETUP_DONE — the ORDER GATE then permits the scenario actions
@@ -2573,7 +2508,7 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
       // DIAGNOSTIC (2026-08-06 — the third live iteration): log what the
       // tool.after actually receives for the container-test, so the advance
       // check can be verified mechanically.
-      try { const dbgIn = String(JSON.stringify((input && (input.args || input.arguments)) || {})); const dbgOut = typeof output === 'string' ? output : String(JSON.stringify(output || {})); appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] CT_AFTER: tool=${executedTool} inArgs=${dbgIn.substring(0, 120)} outType=${typeof output} outHead=${dbgOut.substring(0, 120)}\n`); } catch (e) { /* non-fatal */ }
+      try { const dbgIn = String(JSON.stringify((input && (input.args || input.arguments)) || {})); const dbgOut = typeof output === 'string' ? output : String(JSON.stringify(output || {})); hookDebugWrite(`[${Date.now()}] CT_AFTER: tool=${executedTool} inArgs=${dbgIn.substring(0, 120)} outType=${typeof output} outHead=${dbgOut.substring(0, 120)}\n`); } catch (e) { /* non-fatal */ }
       var ctAfterArgs = cast<Record<string, unknown>>((input && input.args) || (output && output.args) || {});
       var ctAfterAction = typeof ctAfterArgs.action === 'string' ? ctAfterArgs.action : '';
       // v4 (2026-08-06 — the third live-caught shape): the tool.after output is
@@ -2592,7 +2527,7 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
         var ctAfterSid = sessionId || 'default';
         ctSetupDone.add(ctAfterSid);
         ctSetupDone.add('default');
-        try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] CT_SETUP_DONE: session=${ctAfterSid} action=${ctAfterAction}\n`); } catch (e) { /* non-fatal */ }
+        try { hookDebugWrite(`[${Date.now()}] CT_SETUP_DONE: session=${ctAfterSid} action=${ctAfterAction}\n`); } catch (e) { /* non-fatal */ }
       }
     } catch (ctAdvErr) { /* non-fatal — the state stays unadvanced, the order gate holds */ }
   }
@@ -2606,7 +2541,7 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
   if (executedTool === 'task') {
     try {
       var triageOut = cast<Record<string, unknown>>(output);
-      try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] TASK_AFTER: tool=${executedTool} outKeys=${Object.keys(triageOut || {}).join(',')} outputType=${typeof triageOut.output} textLen=${(typeof triageOut.output === 'string' ? triageOut.output : '').length}\n`); } catch (e) { /* non-fatal */ }
+      try { hookDebugWrite(`[${Date.now()}] TASK_AFTER: tool=${executedTool} outKeys=${Object.keys(triageOut || {}).join(',')} outputType=${typeof triageOut.output} textLen=${(typeof triageOut.output === 'string' ? triageOut.output : '').length}\n`); } catch (e) { /* non-fatal */ }
       var triageText = (typeof triageOut.output === 'string' ? triageOut.output : '')
         || (typeof triageOut.title === 'string' ? triageOut.title : '')
         || '';
@@ -2679,31 +2614,61 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
     } catch (regConfErr) {
       tridentLog('WARN', 'trident-hooks', 'the wave-registry confirmation failed (non-fatal): ' + (regConfErr instanceof Error ? regConfErr.message : String(regConfErr)));
     }
-    // ═══ THE T.E.A. WIPE — REWIRED TO THE TASK TOOL (2026-08-10 — the operator:
-    // 'THIS DOES NOT WIPE ON FUCKING GENERATION THE WIPE IS WIRED TO THE TASK
-    // TOOL T.E.A W/ THE EXACT PROMPT FILE MATCH ON INPUT TRIGGERING THE WIPE ON
-    // TASK COMPLETION'). The wipe fires HERE — on the task's completion — with
-    // the exact prompt-file match on the task's input: the dispatched prompt
-    // file dies exactly when the task that consumed it completes (the closed
-    // loop's true end). The generator NEVER wipes — its files + the manifests
-    // survive for the dispatch window (the batch's sibling agents still need
-    // theirs). ═══
+    // ═══ THE T.E.A. WIPE — DEFERRED TO THE FULL-WAVE DISPATCH (2026-08-14 —
+    // the operator: "the t.e.a wipe doesnt happen until the full wave dispatch
+    // state machine completes and all task tools have been successfully
+    // dispatched. that way if theres any fuckery the promptfiles still exist
+    // on disk and are not prematurely wiped until after the full wave has been
+    // dispatched"). THE OLD WIPE (2026-08-10) fired on EACH task's completion
+    // deleting THAT task's prompt file — the PREMATURE wipe: in a 5-agent
+    // batch, if 3 dispatch + 2 hit fuckery, the 2 failed agents' prompt files
+    // were already destroyed (the retry/re-dispatch was impossible without a
+    // regenerate). THE FIX: the wipe fires ONLY when the wave's registry shows
+    // the FULL dispatch — calls.length == total && every call accepted. Until
+    // then the prompt files SURVIVE (the recovery path: a failed/rejected
+    // call re-fires against the still-present file). ═══
     try {
       var teaTaskArgs = cast<Record<string, unknown>>((input as any)?.args || {});
-      var teaTaskPromptFile = typeof teaTaskArgs.promptFile === 'string' ? teaTaskArgs.promptFile : '';
       var teaTaskDesc = typeof teaTaskArgs.description === 'string' ? teaTaskArgs.description : '';
-      var teaFiles2 = readdirSync(TRIDENT_TMP_DIR, { withFileTypes: true });
-      for (var tj = 0; tj < teaFiles2.length; tj++) {
-        var teaF2 = teaFiles2[tj];
-        if (!teaF2.isFile()) continue;
-        var teaName2 = teaF2.name;
-        var teaMatch = false;
-        if (teaTaskPromptFile && path.resolve(teaTaskPromptFile) === path.resolve(path.join(TRIDENT_TMP_DIR, teaName2))) teaMatch = true;
-        if (teaTaskDesc && teaName2 === teaTaskDesc + '.md') teaMatch = true;
-        if (teaMatch) {
-          try { unlinkSync(path.join(TRIDENT_TMP_DIR, teaName2)); } catch (teaU2) { /* best-effort */ }
-          tridentLog('INFO', 'trident-hooks', 'T.E.A. WIPE: the dispatched prompt file ' + teaName2 + ' removed on the task completion (the exact input match)');
+      // THE FULL-WAVE-DISPATCH CHECK: find the wave registry for this agent +
+      // verify the FULL batch was accepted BEFORE any file dies.
+      var teaWaveFullyDispatched = false;
+      try {
+        var teaFilesAll = readdirSync(TRIDENT_TMP_DIR, { withFileTypes: true });
+        for (var twi = 0; twi < teaFilesAll.length; twi++) {
+          var twF = teaFilesAll[twi];
+          if (!twF.isFile() || twF.name.indexOf('.wave-registry-') !== 0) continue;
+          try {
+            var twReg = JSON.parse(readFileSync(path.join(TRIDENT_TMP_DIR, twF.name), 'utf-8')) as { wave?: string; total?: number; calls?: Array<{ key?: string; status?: string }> };
+            if (!twReg || !Array.isArray(twReg.calls) || typeof twReg.total !== 'number') continue;
+            // the agent belongs to this wave: the call key is '<desc>|<wave>|<sha>'
+            var twBelongs = twReg.calls.some(function (c) { return typeof c.key === 'string' && c.key.indexOf(teaTaskDesc + '|') === 0; });
+            if (!twBelongs) continue;
+            // THE FULL DISPATCH: every planned call accepted + the count == total
+            var twAccepted = twReg.calls.filter(function (c) { return c.status === 'accepted'; }).length;
+            var twAllDispatched = twReg.calls.length === twReg.total && twAccepted === twReg.total && twReg.total > 0;
+            if (twAllDispatched) {
+              teaWaveFullyDispatched = true;
+              // WIPE THE WAVE'S PROMPT FILES (the FULL dispatch completed — the
+              // closed loop's true end; the files' lifetime = the wave's dispatch):
+              for (var twj = 0; twj < teaFilesAll.length; twj++) {
+                var twF2 = teaFilesAll[twj];
+                if (!twF2.isFile() || !twF2.name.endsWith('.md')) continue;
+                // the wave's prompt files are '<agent-name>.md' — the manifest
+                // names the agents; a safe containment: only the files whose
+                // agent name appears in this wave's registry keys die here.
+                var twIsWavePrompt = twReg.calls.some(function (c) { return typeof c.key === 'string' && c.key.indexOf('|' + twReg!.wave + '|') !== -1 && c.key.indexOf(twF2.name.replace(/\.md$/, '') + '|') === 0; });
+                if (twIsWavePrompt) {
+                  try { unlinkSync(path.join(TRIDENT_TMP_DIR, twF2.name)); } catch (twU) { /* best-effort */ }
+                  tridentLog('INFO', 'trident-hooks', 'T.E.A. WIPE (full-wave): ' + twF2.name + ' removed — wave ' + twReg.wave + ' FULLY dispatched (' + twAccepted + '/' + twReg.total + ' accepted)');
+                }
+              }
+            }
+          } catch (twParseErr) { /* a malformed registry is skipped */ }
         }
+      } catch (teaScanErr) { /* non-fatal */ }
+      if (!teaWaveFullyDispatched) {
+        tridentLog('INFO', 'trident-hooks', 'T.E.A. DEFERRED: ' + teaTaskDesc + ' completed but its wave is NOT fully dispatched — the prompt files survive (the retry/re-dispatch recovery path intact)');
       }
       // THE WAVE-RECORD HYGIENE (2026-08-10 — the operator's "clean this up"):
       // the manifests + the registries accumulate past the dispatch window —
@@ -2812,7 +2777,7 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
         // name + NO typescript/AST import — Order-1 triage wearing intelligence's uniform)
         var iseRegexCalls = (iseContent.match(/\.test\(|\.match\(|new RegExp/g) || []).length;
         if (iseRegexCalls >= 2 && /classif|detect|parse|score|classify/i.test(iseContent) && !/from ['"]typescript['"]/.test(iseContent)) {
-          iseWarns.push('regex-only classifier: ' + iseRegexCalls + ' regex bodies with a classifier/detector name and NO typescript/AST import — Order-1 triage wearing intelligence\'s uniform. REMEDIATION (the INTELLIGENT-SYSTEMS warhead): the PatternFamily (typed members with Order-2+ structural matchers) + the state machine (IDLE→PARSED→ANALYZED→CLASSIFIED→EVIDENCED→EMITTED) + the MPSE triplets. The regex flags candidates ONLY; the AST confirms; the types confirm; the runtime confirms.');
+          iseWarns.push('regex-only classifier: ' + iseRegexCalls + ' regex bodies with a classifier/detector name and NO typescript/AST import — Order-1 triage wearing intelligence\'s uniform. REMEDIATION (the INTELLIGENT-SYSTEMS warhead): the PatternFamily (typed members with Order-2+ structural matchers) + the state machine (IDLE→PARSED→ANALYZED→CLASSIFIED→EVIDENCED→EMITTED) + the evidence triads. The regex flags candidates ONLY; the AST confirms; the types confirm; the runtime confirms.');
         }
         // signature 2: the N-branch tower (5+ if-branches returning true — a decision
         // tower without a wall)
@@ -2827,7 +2792,7 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
           iseWarns.push('magic ladder: ' + iseLadder + ' adjacent magic-number comparisons with no named calibration. REMEDIATION: the named calibrated bands (e.g. GRADE_BANDS with the calib: source field) — every threshold references a documented calibration.');
         }
         if (iseWarns.length > 0) {
-          var iseAppend = '\n\n[ISE SOFT-WARN] the INTELLIGENT-SYSTEMS detection lexicon flagged ' + isePath + ':\n- ' + iseWarns.join('\n- ') + '\nThis is a SOFT WARN — the work proceeds; the architecture should be re-considered against the INTELLIGENT_SYSTEMS_ENGINEERING warhead (the PatternFamily + the state machine + the MPSE structures — src/identity/trident/INTELLIGENT_SYSTEMS_ENGINEERING_T1.md). If the regex IS the right tool (a mechanical detector), name why in the code comment. 3x the same signature in a session = BLOCK.';
+          var iseAppend = '\n\n[ISE SOFT-WARN] the INTELLIGENT-SYSTEMS detection lexicon flagged ' + isePath + ':\n- ' + iseWarns.join('\n- ') + '\nThis is a SOFT WARN — the work proceeds; the architecture should be re-considered against the INTELLIGENT_SYSTEMS_ENGINEERING warhead (the PatternFamily + the state machine + the evidence triad structures — src/identity/trident/INTELLIGENT_SYSTEMS_ENGINEERING_T1.md). If the regex IS the right tool (a mechanical detector), name why in the code comment. 3x the same signature in a session = BLOCK.';
           if (output && typeof output === 'object') {
             var iseOut = cast<Record<string, unknown>>(output);
             if (typeof iseOut.output === 'string') {
@@ -3024,16 +2989,16 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
 
 export const systemPromptHook = async function(input: Record<string, unknown>, output: Record<string, unknown>) {
   // DEBUG: Write trace to file for verification
-  try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] system.transform FIRED | input keys: ${Object.keys(input || {}).join(',')} | sessionId: ${cast<InputMessage>(input)?.sessionID}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+  try { hookDebugWrite(`[${Date.now()}] system.transform FIRED | input keys: ${Object.keys(input || {}).join(',')} | sessionId: ${cast<InputMessage>(input)?.sessionID}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
   var systemOut = cast<{ system?: string[] }>(output);
   if (!systemOut || !Array.isArray(systemOut.system)) {
-    try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] EARLY_RETURN: system array invalid\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+    try { hookDebugWrite(`[${Date.now()}] EARLY_RETURN: system array invalid\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
     return;
   }
 
   var sessionId = cast<InputMessage>(input)?.sessionID;
   if (!sessionId) {
-    try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] EARLY_RETURN: no sessionId\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+    try { hookDebugWrite(`[${Date.now()}] EARLY_RETURN: no sessionId\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
     return;
   }
 
@@ -3041,7 +3006,7 @@ export const systemPromptHook = async function(input: Record<string, unknown>, o
   var sessionAgent = getCurrentAgent(sessionId);
   if (!sessionAgent) return;
   if (!isTridentAgent(sessionAgent)) return;
-  try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] agent=${sessionAgent} | tridentCheck=${isTridentAgent(sessionAgent)} | system.length=${systemOut.system?.length}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
+  try { hookDebugWrite(`[${Date.now()}] agent=${sessionAgent} | tridentCheck=${isTridentAgent(sessionAgent)} | system.length=${systemOut.system?.length}\n`); } catch (e) { console.error('[TridentHooks] error:', e); }
 
   // Dedup: skip if trident identity already injected this session
   const hasTridentIdentity = systemOut.system.some((s: string) =>
@@ -3103,7 +3068,7 @@ export const systemPromptHook = async function(input: Record<string, unknown>, o
     '[TRIDENT] RUNTIME-GRADE TEST LAW: the container-testing skill protocol is LAW — plan-first (a 2000+ char plan with the 6 sections validated at setup, the diff+blast-radius mapped to scenarios), the behavioral tokens per scenario (passToken/failToken, tool-result-bound, never agent-typeable), the auth probe FIRST, the Phase E circuit breaker (the 10 checks), the results artifact (.trident/container-test-results.json with the per-scenario verdicts) REQUIRED before ANY "container tested" declaration. "Structural PASS", "PASS by design", "source-inspection as proof", "asserted the behavior" are THEATRICAL DECLARATIONS — BANNED. A scenario is PASS only when the passToken matched in a tool-result context + the failToken absent + the artifact recorded. Preflight the plan with trident-preflight target=ct. The wave audit verifies the claimed test like the claimed code.',
     '[TRIDENT] DOC-DENSITY LAW: every .md write is an ENGINEERING ARTIFACT with a per-type floor (ARCHITECTURE 1000+ lines, SPEC 3000+, COMPLETION 2000+, REPORT 500+, AUDIT 100+ with VERDICT+coverage, LOG 100+, OVERVIEW 300+, GENERIC 200+) and a per-type STRUCTURE (the interfaces, the file:line anchors, the data flows, the failure modes, the evidence — a fact appears ONCE, the density is the DATA). The DOC FIREWALL throws thin .md writes with the named shortfall — write to the floor with REAL content or the write is rejected. The senior-engineer test: would a senior devops engineer ship this as the permanent record?',
     '[TRIDENT] RUNNING-BUILD-DOCS LAW (the operator 2026-08-06): a DEBUG_LOG and a BUILD_REPORT exist for EVERY build — APPEND-ONLY, NEVER overwritten. Update them AT EVERY SIGNIFICANT MILESTONE: every bug found+fixed (the root cause, the mechanism, the verification), every design decision, every live test result, every operator ruling — IMMEDIATELY, while the work is fresh, BEFORE advancing the build. This is the agent equivalent of "write this down while it is still fresh in your brain so the rest of the team can learn from what you did" — the knowledge must NOT be lost in the data stream. The canon docs (POST-COMPACTION_PROMPT, CURRENT_STATE, BUILD_STATE, DECISION_CHAIN, EVIDENCE_STATE, CHANGELOG, TASK_QUEUE, NEXT_STEPS, COMPACTION_SURVIVAL) are the session-level state; the DEBUG_LOG + the BUILD_REPORT are the PERMANENT knowledge — a bug class solved once must be referenceable forever (the param-name-vs-schema bug class: the switch-model dual-name fix 2026-08-04 → the switch-agent SAME bug 2026-08-06 — caught late because the pattern was not abstracted into the log). A milestone without its log entry is an UNFINISHED milestone.',
-    '[TRIDENT] INTELLIGENT-SYSTEMS LAW (the operator 2026-08-06 — the anti-slop mandate): decision systems are engineered as LEXICONS + STATE MACHINES + ALGORITHMIC SYSTEMS by default, NEVER regex-slop towers. The regex is a mechanical DETECTOR only (the detection layer, never the decision layer) — name why in the code comment. THE SLOP SIGNATURES (the detection lexicon): the N-branch tower (5+ pass branches / default-pass), the regex-only classifier (regex bodies + a classifier name + no AST), the magic ladder (3+ unnamed numeric thresholds). THE REMEDIATION: the PatternFamily (typed members: id/kind/matcher(Order-2+)/triggerCondition/severity/messageTemplate/remediationHook) + the state machine (IDLE→PARSED→ANALYZED→CLASSIFIED→EVIDENCED→EMITTED; fail-state = INCONCLUSIVE, never PASS) + the MPSE triplets ({Pattern, State, Evidence: node+file:line}) — no triplet = no finding. The ISE soft-warn firewall flags the signatures in .ts writes — a soft warn names the slop + the remediation; 3x the same signature = BLOCK. The full warhead: src/identity/trident/INTELLIGENT_SYSTEMS_ENGINEERING_T1.md — read it before any decision-system work. The root cause the law kills: the pattern-matching bias (the regex is the shortest path to a "working" classification), the missing canon (the MPSE + the IntelligenceLexicon boilerplate exist in the KNOWLEDGE_LIBRARY — use them), the absent review gate (the audits caught behavior, never the decision architecture).',
+    '[TRIDENT] INTELLIGENT-SYSTEMS LAW (the operator 2026-08-06 — the anti-slop mandate): decision systems are engineered as LEXICONS + STATE MACHINES + ALGORITHMIC SYSTEMS by default, NEVER regex-slop towers. The regex is a mechanical DETECTOR only (the detection layer, never the decision layer) — name why in the code comment. THE SLOP SIGNATURES (the detection lexicon): the N-branch tower (5+ pass branches / default-pass), the regex-only classifier (regex bodies + a classifier name + no AST), the magic ladder (3+ unnamed numeric thresholds). THE REMEDIATION: the PatternFamily (typed members: id/kind/matcher(Order-2+)/triggerCondition/severity/messageTemplate/remediationHook) + the state machine (IDLE→PARSED→ANALYZED→CLASSIFIED→EVIDENCED→EMITTED; fail-state = INCONCLUSIVE, never PASS) + the evidence triads ({Pattern, State, Evidence: node+file:line}) — no triplet = no finding. The ISE soft-warn firewall flags the signatures in .ts writes — a soft warn names the slop + the remediation; 3x the same signature = BLOCK. The full warhead: src/identity/trident/INTELLIGENT_SYSTEMS_ENGINEERING_T1.md — read it before any decision-system work. The root cause the law kills: the pattern-matching bias (the regex is the shortest path to a "working" classification), the missing canon (the evidence triad + the IntelligenceLexicon boilerplate exist in the KNOWLEDGE_LIBRARY — use them), the absent review gate (the audits caught behavior, never the decision architecture).',
     '[TRIDENT] RATE-LIMIT SWITCH LAW: a rate limit ("Rate limit exceeded", "429", any provider quota error, a stalled retry loop) is a SIGNAL TO SWITCH THE MODEL — immediately, in-session, without asking. NEVER idle on a rate limit; NEVER report "blocked by quota". The procedure (two-step Enter — NEVER text+Enter in one keystroke): Escape twice → "/models" → wait 1s → Enter → wait 3s → type the DISPLAY name + provider as ONE string ("deepseek v4 flash (new) opencode go", "mimo v2.5 opencode go", "kimi k3 opencode go") → wait 2s → Enter → wait 2s → Enter AGAIN (the variant modal) → wait 6s → the status bar MUST show the new provider. If the filter text merges with a previous search, Escape, reopen /models, retype the full name. The provider order when exhausted: OpenCode Go → OpenCode Zen → OpenRouter free → back to OpenCode Go. Use the container-test switch-model action first (modelName + provider); when its verify races the variant modal (verified:false while the switch lands), the manual picker flow is the fallback — the STATUS BAR is the only ground truth. The switch takes 20 seconds. DO IT.',
     '[TRIDENT] WAVE DISPATCH FORM + THE BATCH TOOL: when a task decomposes into independent units (multiple files to explore, multiple disjoint changes, multiple research angles), dispatch them as a WAVE via THE BATCH TOOL — pass an array of {tool: "task", parameters: {description, prompt, subagent_type}} objects in ONE batch call. THE BATCH TOOL IS THE ONLY WAY parallel task calls are dispatched — it IS in the toolset; NEVER claim it does not exist. Each dispatch in the batch is a DPL1-grade template fill (150+ lines, disjoint file assignments, the dispatch standard). Single-subagent dispatch is for ONE indivisible unit ONLY. When in doubt: wave via the batch tool. THE SILENT-TOOL CHANNEL (2026-08-10 — the operator: "this is a silent tool"): the batch tool is wired in the reference build; on runtimes where it is not exposed in the function list, the SAME wave dispatches as ALL the task calls in ONE message (the runtime\'s native parallel channel) — the identical wave, 0 ignore, 0 hand-picking, never sequential. The WAVE is the unit, the channel follows the runtime.',
     '[TRIDENT] TOOL OUTPUT: After EVERY tool call, present the COMPLETE output to the user. Do NOT summarize. Do NOT describe what the tool did. Show the ACTUAL CONTENT returned. The user must see what the tool produced.',
@@ -3257,7 +3222,7 @@ var messagesTransformHook = async function(
     || 'default';
   try {
     var mapDump = JSON.stringify(Array.from((globalThis as any).__tridentAgentBySession?.entries?.() || []).map(function(e: any) { return [e[0], e[1]?.agent]; }));
-    appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] MSGTRANS_GATE: sessionID=${sessionId} agent=${getCurrentAgent(sessionId) || 'NONE'} map=${mapDump}\n`);
+    hookDebugWrite(`[${Date.now()}] MSGTRANS_GATE: sessionID=${sessionId} agent=${getCurrentAgent(sessionId) || 'NONE'} map=${mapDump}\n`);
   } catch (e) { /* debug non-fatal */ }
   // GATE: Agent identity set by chat.message, not system.transform input.
   var sessionAgent = getCurrentAgent(sessionId);
@@ -3274,7 +3239,7 @@ var messagesTransformHook = async function(
     // each step re-fires with the same history, so only append newer entries.
     try {
       var diagFirst = cast<Record<string, unknown>>(msgs[0]);
-      try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SSTF_POP: msgs=${msgs.length} firstKeys=${Object.keys(diagFirst || {}).join(',')} infoKeys=${Object.keys(cast<Record<string, unknown>>(diagFirst?.info) || {}).join(',')} role=${cast<string>(cast<Record<string, unknown>>(diagFirst?.info)?.role)}\n`); } catch (e) { /* debug non-fatal */ }
+      try { hookDebugWrite(`[${Date.now()}] SSTF_POP: msgs=${msgs.length} firstKeys=${Object.keys(diagFirst || {}).join(',')} infoKeys=${Object.keys(cast<Record<string, unknown>>(diagFirst?.info) || {}).join(',')} role=${cast<string>(cast<Record<string, unknown>>(diagFirst?.info)?.role)}\n`); } catch (e) { /* debug non-fatal */ }
       for (var mi = 0; mi < msgs.length; mi++) {
         var m = cast<Record<string, unknown>>(msgs[mi]);
         var mInfo = cast<Record<string, unknown>>(m?.info);
@@ -3315,7 +3280,7 @@ var messagesTransformHook = async function(
           }
         }
       }
-      try { appendFileSync(path.join(os.tmpdir(), 'trident-hook-debug.log'), `[${Date.now()}] SSTF_POP_DONE: windowSize=${getSSTFContextWindow(sessionId).length}\n`); } catch (e) { /* debug non-fatal */ }
+      try { hookDebugWrite(`[${Date.now()}] SSTF_POP_DONE: windowSize=${getSSTFContextWindow(sessionId).length}\n`); } catch (e) { /* debug non-fatal */ }
       // v4 ADDITION: detect ASSISTANT verification claims for Phase B claim gating.
       // Only the AGENT's own claims count — user words NEVER trigger blocking.
       for (var ci = 0; ci < msgs.length; ci++) {

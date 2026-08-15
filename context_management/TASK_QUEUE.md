@@ -198,3 +198,40 @@ The ship rejection + the "FIX ALL OF THIS AND FUCKING PROPERLY CONTAINER TEST" �
 ## THE QUEUE'S READER'S NOTE
 
 The queue is the live state — the next session's first task is T1 (the deep test); the gates' table is the enforcement map; the backlog is the prioritized future.
+
+---
+
+## THE 2026-08-14 QUEUE (the T.E.B. machine + the shadow-brain arc)
+
+### THE ACTIVE BUILD — THE SHADOW-BRAIN 3-FIX PLAN (D-40, APPROVED)
+| # | The fix | The mechanism | Status |
+|---|---|---|---|
+| F1 | THE MEASURED STALL WINDOW | a shadow-health sqlite store records the rolling first-event latency; the window = avg × 3, bounded [45s, 5m] — kills the 45s knife-edge that aborts healthy 35-50s generations | TODO |
+| F2 | THE BACKOFF RETRY | a timeout retries ONCE at 2× the measured window after a 3s gap (slow, not dead); NO provider/model switching | TODO |
+| F3 | THE DENSITY MEMORY | the tracker persists the context args that validated; a regeneration at <0.7 density appends the named warning (reuse the original args verbatim) | TODO |
+
+### THE QUEUED WORK (for later — do NOT derail the active build)
+- **#25 — THE FIREWALL-BACKEND INTELLIGENCE GAP** (tagged firewalls,wave-manager,derailment,ux,batch-dispatch): the live MPSE wave showed WAVE VERBATIM + WAVE BATCH as DUMB BLOCKERS — the block messages must carry the exact copy-pasteable call shape (the batch form's tools[0] parameters verbatim) so the model never reverse-engineers it from raw tool output; the batch gate must reconcile partial dispatches (1 running + 3 blocked → an adopt-the-running + dispatch-the-rest action); the pre-fix missing-registry wave should auto-derive the registry from the manifest (total = agents.length). The principle: a block that names a remedy requiring reverse-engineering is a block with a broken remedy.
+- **The WARHEAD 20 (THE ASCII-EXPLANATION LAW)** — drafted, awaiting the operator's explicit approval to land (per the warhead-writing law): explanation requests (any variation of "explain this to me"/"how did you"/"show me how"/"walk me through") open with the ascii-diagrams box-drawing diagram + full engineering detail — never prose-only, never jargon-slop.
+
+---
+
+## THE 2026-08-15 QUEUE (the post-compaction state — dist ce0434ee)
+
+### THE ACTIVE (GATE-1 approved — the continuation)
+| # | The task | The mechanism | Status |
+|---|---|---|---|
+| A1 | THE HOST VERIFICATION of ce0434ee | test the T.E.B. dispatch + the memory-lexicon gate + the density memory + the measured window on the deployed dist; verify the deployed-bundle markers | TODO (Wave A) |
+| A2 | THE ENGINE-LOG GATING | gate + rotate the tridentLog debug-level writes (the 81MB engine log — the same treatment as the hook-debug) | TODO (Wave B) |
+
+### THE GATED (GATE-2 required)
+| # | The task | The mechanism | Status |
+|---|---|---|---|
+| #25 | THE FIREWALL-BACKEND INTELLIGENCE | the block messages carry the exact call shape; the batch gate reconciles partial dispatches; the missing-registry wave derives the registry from the manifest | QUEUED (the design needs the operator's approval) |
+
+### THE BLOCKED / THE FOLLOW-UPS
+| The item | The blocker | The unblock path |
+|---|---|---|
+| Re-enable CTX-01 + VERIFY_INSPECT | the other sessions' proper-discrimination patches haven't landed | coordinate + land their fixes, then re-enable with the fixed logic |
+| The W-1 tracker gap (sessionId "") | the native-task spawn registration isn't wired | the #25 family — the wave-status needs the tracker propagation |
+| The memory-gate over-firing on the OLD dist | the THIS-session plugin loaded the pre-lexicon build | the deployed-bundle markers check → re-deploy ce0434ee |

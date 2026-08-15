@@ -21,8 +21,14 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'grep',
   'webfetch',
   'question',
+  // THE NATIVE TASK TOOL (the 2026-08-14 revert — the trident-task tangent
+  // UNDONE): the batch form emits the native task tool + the promptFile
+  // channel; the T.E.B. loader hook (trident-hooks.ts:1741) injects the
+  // file's byte-exact content into the prompt BEFORE the runtime executes.
+  // The native task tool runs background.start() (the job registry +
+  // task_status + the result injection — the PROVEN working baseline).
   'task',
-  'task_status', // ADD 2026-08-12 — the runtime's native background-task poll (the task tool's completion/result channel)
+  'task_status', // ADD 2026-08-12 — the runtime's native background-task poll (the native task tool's completion/result channel)
   'todowrite',
   'checkpoint',
   'skill',

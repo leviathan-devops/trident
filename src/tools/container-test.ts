@@ -416,16 +416,20 @@ function resolveStateSessionID(sessionID: string | null | undefined): string {
 function persistState(sessionID?: string | null): void {
   try {
     const sid = resolveStateSessionID(sessionID ?? STATE.currentSessionID);
+    // THE MODEL CACHE'S DEATH (2026-08-13 — the CT_TOOL_MODEL_CACHE_HOTFIX):
+    // the model_name column's write is REMOVED — the state persists the
+    // IDENTITY (agent_name) + the container + the plugin ONLY. The model is
+    // MANUAL-SET ONLY (the explicit switch-model action); nothing in the tool's
+    // state machinery caches, persists, restores, or re-applies it.
     getStateDb().run(
-      `INSERT INTO ct_state (session_id, agent_name, model_name, container_name, plugin_name, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?)
+      `INSERT INTO ct_state (session_id, agent_name, container_name, plugin_name, updated_at)
+       VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(session_id) DO UPDATE SET
          agent_name = excluded.agent_name,
-         model_name = excluded.model_name,
          container_name = excluded.container_name,
          plugin_name = excluded.plugin_name,
          updated_at = excluded.updated_at`,
-      [sid, STATE.agentName, STATE.modelName, STATE.containerName, STATE.pluginName, Date.now()],
+      [sid, STATE.agentName, STATE.containerName, STATE.pluginName, Date.now()],
     );
   } catch (e) { /* non-fatal — the in-memory state still guards the session */ }
 }
@@ -433,12 +437,16 @@ function persistState(sessionID?: string | null): void {
 function loadState(sessionID?: string | null): void {
   try {
     const sid = resolveStateSessionID(sessionID ?? STATE.currentSessionID);
+    // THE MODEL CACHE'S DEATH (2026-08-13 — the CT_TOOL_MODEL_CACHE_HOTFIX):
+    // the model_name's restore is REMOVED — the cache can NEVER re-apply a
+    // model. The restored fields: the IDENTITY (agent) + the container + the
+    // plugin only. A cached model from a drifted earlier session can never
+    // re-assert through the invisible restore path.
     const row = getStateDb().query(
-      `SELECT agent_name, model_name, container_name, plugin_name FROM ct_state WHERE session_id = ?`,
-    ).get(sid) as { agent_name?: string | null; model_name?: string | null; container_name?: string | null; plugin_name?: string | null } | null;
+      `SELECT agent_name, container_name, plugin_name FROM ct_state WHERE session_id = ?`,
+    ).get(sid) as { agent_name?: string | null; container_name?: string | null; plugin_name?: string | null } | null;
     if (!row) return;
     if (typeof row.agent_name === 'string' && row.agent_name) STATE.agentName = row.agent_name;
-    if (typeof row.model_name === 'string' && row.model_name && row.model_name !== 'default') STATE.modelName = row.model_name;
     if (typeof row.container_name === 'string' && row.container_name) STATE.containerName = row.container_name;
     if (typeof row.plugin_name === 'string' && row.plugin_name) STATE.pluginName = row.plugin_name;
   } catch (e) { /* non-fatal */ }
@@ -1125,10 +1133,9 @@ class ContainerTestEngine {
       } else if (STATE.agentName) {
         STATE.agentName = targetAgent;
       }
-      if (STATE.modelName && rSb && rSb.model && rSb.model.toLowerCase() !== STATE.modelName.toLowerCase()) {
-        const sm = await this.switchModel({ model: STATE.modelName, provider: params.provider });
-        if (sm.verified) persistState(STATE.currentSessionID);
-      }
+      // THE MODEL-RESTORE REMOVED (2026-08-13 — the CT_TOOL_MODEL_CACHE_HOTFIX):
+      // the deploy's post-restart model-restore is GONE — the deploy restores
+      // the IDENTITY (the agent) only. The model is MANUAL-SET ONLY.
       // re-read the status bar for the report (the post-restore truth)
       finalSb = rSb;
       try {
@@ -1172,10 +1179,10 @@ class ContainerTestEngine {
           identityRestored = sw.verified;
           if (identityRestored) { STATE.agentName = expectedAgent; persistState(STATE.currentSessionID); }
         }
-        if (STATE.modelName && STATE.modelName !== 'default' && sbBefore.model && sbBefore.model.toLowerCase() !== STATE.modelName.toLowerCase()) {
-          const sm = await this.switchModel({ model: STATE.modelName, provider: params.provider });
-          if (sm.verified) persistState(STATE.currentSessionID);
-        }
+        // THE MODEL-RESTORE REMOVED (2026-08-13 — the CT_TOOL_MODEL_CACHE_HOTFIX):
+        // the send's pre-send model-restore is GONE — the send is a PURE
+        // SENDER: the text + the Enter. The agent-restore is the ONE sanctioned
+        // exception (the identity's teeth). The model is MANUAL-SET ONLY.
       }
     } catch (e) { /* non-fatal — the send proceeds; the caller can verify */ }
 
@@ -2241,7 +2248,7 @@ class ContainerTestEngine {
     // (the WARHEAD 14's config-fumbling anti-pattern). The doctrine made
     // MECHANICAL: classifyCtExec() (the state machine — the regex = the
     // detector only) → the MUTATE verdict THROWS with the [TRIDENT CONFIG
-    // LOCK] + the MPSE. The reads + the unrelated execs pass untouched.
+    // LOCK] + the evidence triad. The reads + the unrelated execs pass untouched.
     const ctVerdict = classifyCtExec(String(cmd));
     if (ctVerdict.verdict === 'BLOCK') {
       return this.err('config_lock', buildCtConfigLockMessage(ctVerdict));

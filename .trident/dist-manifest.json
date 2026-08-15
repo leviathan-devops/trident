@@ -1,0 +1,30 @@
+{
+  "fingerprint": "ce0434ee8b356d460d93b7a4d10a0faac1f324e12a4fd9086b245ea512d6d82b",
+  "artifacts": {
+    "dist/index.js": "ce0434ee8b356d460d93b7a4d10a0faac1f324e12a4fd9086b245ea512d6d82b"
+  },
+  "minSizeKB": {
+    "dist/index.js": 15000
+  },
+  "shipDirs": [
+    "context_management",
+    ".trident"
+  ],
+  "ignore": [
+    "node_modules",
+    ".git",
+    "Checkpoints",
+    "checkpoints",
+    "SHIP_PACKAGE",
+    "Ship_Packages"
+  ],
+  "secrets": [],
+  "deploy": {
+    "containerPaths": {
+      "dist/index.js": "/home/leviathan/.config/opencode/plugins/trident/dist/index.js"
+    },
+    "gates": [
+      "sha256sum dist/index.js"
+    ]
+  }
+}

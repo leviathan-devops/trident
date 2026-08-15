@@ -1,6 +1,6 @@
 # CURRENT_STATE — THE ARCHITECTURE AS IT IS (2026-08-09)
 
-**THE DIST: 11fb42e76d2d10e110c8d5e75b620084afe2cd1989ba445d9aa888830a88f5c2 (16.0 MB). THE BATTERY: 175 pass / 0 fail / 638 expect.** This is the per-module status — built/solid/broken/open — with the file:line anchors. The architecture as it ACTUALLY is, every deviation from the original design noted.
+**THE DIST: baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432 (16.0 MB). THE BATTERY: 175 pass / 0 fail / 638 expect.** This is the per-module status — built/solid/broken/open — with the file:line anchors. The architecture as it ACTUALLY is, every deviation from the original design noted.
 > **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
@@ -202,3 +202,58 @@ The current state is the architecture AS IT IS — the modules' statuses, the pr
 2. The SHA: sha256sum dist/index.js == 416ccff7 (the BUILD_STATE/EVIDENCE_STATE agreement; the four-way hash = 1 unique — the project/checkpoint/ship-package/canonical-ship).
 3. The battery: cd src/tests && bun test == 175/0.
 4. The container: alive + the Go model (the status bar).
+
+---
+
+## 14. THE 2026-08-15 STATE — THE FULL STACK AT DIST ce0434ee (the current truth)
+
+**THE DIST: `baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432` (16.19MB, 436 modules). THE BATTERY: 451/451 (28 files — the memory-lexicon pins added), tsc 0.** The container evidence: .trident/container-test-results.json (the 3-fix 3/3 PASS).
+
+### THE MODULES' CURRENT STATE (with the anchors)
+
+| The module | The file:line | The state |
+|---|---|---|
+| THE T.E.B. EMISSION (the promptFile-only batch) | wave-dispatch.ts:607-629 | SOLID — `{ tool: "task", parameters: { description, promptFile, subagent_type } }` ONLY (no prompt/background); the loader mutates promptFile → prompt byte-exact + background:true + strips it (trident-hooks.ts the loader gate); the deferred wipe (trident-hooks.ts:2536); the simplified wave-verbatim (trident-hooks.ts:1896). CONTAINER-PROVEN (ct-revert-verify: 27179==27179 byte-exact + the parentID lineage). |
+| THE SHADOW-BRAIN F1 (the measured window) | shadow-health.ts (the sqlite store) + shadow-brain.ts:197/:212 | SOLID — the rolling first-event avg × 3, [45s, 5m]; the store records every call's latency; the 45s knife-edge dead. CONTAINER-PROVEN (ct-3fix-full: 'recorded first-event 732ms' + the generation completed). |
+| THE SHADOW-BRAIN F2 (the backoff) | shadow-runner.ts:785-789 | SOLID — the round-1 timeout retries ONCE at 2× the measured window after a 3s gap; NO provider/model switching (the operator's ruling). |
+| THE SHADOW-BRAIN F3 (the density memory) | wave-tracker.ts:59 + wave-dispatch.ts:318-331/:558/:645 | SOLID — the argSnapshot persists; the <0.7 re-gen fires the DENSITY WARNING. CONTAINER-PROVEN (the 42% re-gen warning). |
+| THE WARHEAD 20 (the ASCII-EXPLANATION) | src/identity/trident/WARHEADS.md + src/identity/index.ts | SOLID — the explanation requests open with the box-drawing diagram. |
+| THE WARHEAD 21 (the MEMORY-EFFICIENT) | src/identity/trident/WARHEADS.md + src/identity/index.ts | SOLID — stat before ANY python read; the streaming tools for >100MB; `for line in open()` only. |
+| THE MEMORY-READ LEXICON | src/firewalls/memory-read-lexicon.ts | SOLID — the classifyMemoryRead state machine (RAM_BOMB block vs SIZED_READ/LAZY_ITERATE/STREAM_TOOLS/NON_READ allow). 22/22 pins. |
+| THE GATED + ROTATED DEBUG WRITES | trident-hooks.ts (the hookDebugWrite helper) | SOLID — the 15 unconditional writes → ONE helper gated behind TRIDENT_DEBUG=1 + rotated at ~10MB. |
+| THE FIREWALL DISABLES | ct-anti-derailment.ts (CTX-01 removed) + semantic-smoke-firewall.ts (VERIFY_INSPECT dead) | SOLID — the config-fumbling + the bundle-inspection false positives disabled; CTX-02..08 + INLINE_EXEC/HEADLESS/VERIFY_EXIST/HASH_AS_PROOF live. |
+
+### THE OPEN / THE BROKEN (the current gaps)
+
+| The gap | The failure mode | The last insight |
+|---|---|---|
+| THE ENGINE-LOG GATING | /tmp/trident-engine.log is 81MB (the tridentLog channel — NOT gated; only the hook-debug writes are) | Wave B (the next session): gate + rotate the tridentLog debug-level writes — the same treatment as the hook-debug |
+| THE QUEUED #25 | the firewalls as dumb blockers (the MPSE live failure) | the block messages must carry the exact call shape; the batch gate must reconcile partial dispatches — GATE-2 required |
+| THE W-1 TRACKER GAP | the wave-status shows sessionId "" for native-task spawns | the tracker propagation for task-dispatched sessions — the #25 family |
+| THE OTHER SESSIONS' PATCHES | the CTX-01 + the VERIFY_INSPECT proper discrimination pending | coordinate + land their fixes, then re-enable |
+
+### THE PROVEN-MACHINERY INVENTORY (what NOT to re-open + why)
+
+1. THE T.E.B. MACHINE (the emission + the loader + the deferred wipe) — the operator's 2026-08-14 spec, container-proven, the GLM-derailment kill. NEVER re-open.
+2. THE SHADOW-BRAIN 3-FIX (F1/F2/F3) — the operator's approved plan, container-proven. NEVER re-open.
+3. THE WARHEAD 20/21 — the identity law. NEVER re-open.
+4. THE MEMORY-READ LEXICON — the operator's rebuild demand (the bible's PatternFamily + the Poseidon model), 22/22. NEVER re-open.
+5. THE FIREWALL DISABLES — the operator's "clearly broken" ruling. NEVER re-enable until the proper patches land.
+6. THE GATED DEBUG WRITES — the RAM-bomb root-cause fix. NEVER revert to the unconditional writes.
+
+---
+
+## 15. THE 2026-08-15 CURRENT STATE — DIST 90aec04f (the full stack)
+
+**THE DIST: `90aec04f...` (16.19 MB). THE BATTERY: 469/469 (29 files), tsc 0.** The stack: the T.E.B. machine (the promptFile-only batch + the loader mutation + the deferred wipe) + the shadow-brain 3-fix (the measured window / the backoff / the density memory) + the WARHEAD 20/21 + the memory-read lexicon (the typed PatternFamily + the OUTPUT_BOMB/BUNDLE_EXEC classes) + the firewall disables (CTX-01 + VERIFY_INSPECT) + the engine-log gating (the DEBUG gate + the 10MB rotation) + the T.E.B. input classifier (the path vs prompt lexicon) + the #25 firewall-intelligence (the simple remedy bullets + the partial reconcile + the derive-from-manifest) + the two container-caught bug fixes (the custom-waveId discriminator + the recorded-status adopted-set).
+
+**THE MODULES' STATE (the additions to the §14 table):**
+| The module | The file:line | The state |
+|---|---|---|
+| THE ENGINE-LOG GATING | src/utils.ts (tridentLog v3) | SOLID — the DEBUG gate + the 10MB rotation; the errors never silent |
+| THE T.E.B. INPUT CLASSIFIER | src/firewalls/dispatch-input-lexicon.ts | SOLID — the workspace-root + the token-shape lexicon; 8 pins + the container S1 |
+| THE #25 RECONCILE | trident-hooks.ts (the [WAVE BATCH] bullets) | SOLID — the adopted = accepted + recorded; the missing named with their paths; the container S2 |
+| THE #25 DERIVE | trident-hooks.ts (the registry branch) + wave-registry.ts | SOLID — the manifest-derived registry (derivedFromManifest); the dead-end regenerate dead |
+| THE WAVE-LEVEL DISCRIMINATOR | trident-hooks.ts (findWaveRecordForAgent) | SOLID — the content-aware shape (the custom waveIds resolve); the container-caught bypass fixed |
+
+**THE OPEN / THE REMAINING:** the CTX-01/VERIFY_INSPECT re-enable (the other sessions' patches), the canon docs' next refresh, the deployed host (the operator's action).

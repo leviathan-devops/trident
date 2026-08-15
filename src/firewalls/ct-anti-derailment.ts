@@ -3,11 +3,11 @@
 // YOU FUCKING WITH THE CONFIG... WHY IS THIS NOT BANNED AND BLOCKED BY THE
 // TOOL" + "blocks all variations of this config fucking and other stupid shit").
 // Per the ISE law (INTELLIGENT_SYSTEMS_ENGINEERING_T1.md): the PatternFamily +
-// the state machine + the MPSE. THE REGEX = THE MECHANICAL DETECTOR ONLY — the
+// the state machine + the evidence triad. THE REGEX = THE MECHANICAL DETECTOR ONLY — the
 // regex cannot DECIDE intent from the unstructured command text (it would be
 // the regex-only classifier slop); it only CANDIDATES the (path, verb) pairs.
 // The classifyCtExec() state machine DECIDES. The fail-state = INCONCLUSIVE →
-// BLOCK (fail-closed, never PASS — the ISE law). Every block = an MPSE triplet
+// BLOCK (fail-closed, never PASS — the ISE law). Every block = an evidence triad
 // (Pattern/State/Evidence). The reads + the unrelated execs pass untouched —
 // the surgical filter.
 
@@ -31,19 +31,20 @@ export interface CtMutationPattern {
 
 // THE PATTERNFAMILY — one member per derailment class from the previous
 // session. The targets + the verbs are the PAIR — a block requires BOTH.
+// ═══ CTX-01 (THE CONFIG FUMBLING) DISABLED (2026-08-14 — the operator's
+// ruling: the CTX-01 config-lock is "clearly broken", a different session is
+// patching it). THE FALSE-POSITIVE EVIDENCE (this session): the classifier
+// fired on (a) `cp tsconfig.json <dst>` (the FILENAME matches the config.json
+// pattern — a build config copy, not the opencode config), (b) `tee
+// <sha256>.txt` inside a compound copy (the `>` redirect + a path whose
+// basename contains 'config' — the sha256.txt of a checkpoint is not a config
+// write), (c) a checkpoint copy whose command string contained 'config.json'
+// as a data path. THE TARGET REGEX (config\.json|\.config\/opencode) is too
+// broad — it matches ANY path/name containing the token, not just the
+// protected opencode config. CTX-02..08 (the auth/db/install/staging/apiKey
+// classes) stay LIVE — the config-fumbling class alone is disabled until the
+// proper discrimination lands. ═══
 const CT_MUTATION_PATTERN_BASE: CtMutationPattern[] = [
-  {
-    id: 'CTX-01',
-    kind: 'ct-exec-mutation',
-    familyName: 'THE CONFIG FUMBLING (the opencode config.json writes)',
-    // The 'i' flag: the scan is lowercased — the verbs' keywords must match
-    // case-insensitively (the UPDATE/INSERT class caught the lowercase scan
-    // bug in the first matrix run).
-    target: /(?:\.config\/opencode(?:\/|$)|config\.json)/i,
-    mutationVerb: /(?:>>|\>\s|cat\s+>|\btee\b|sed\s+-i|open\s*\([^)]*['"]w['"]|json\.dump|writeFileSync|writeFile\s*\(|writeTextFile|createWriteStream|base64\s+-d\s*>|\b(?:cp|mv)\b[^;]*(?:config\.json|\/root\/\.config\/opencode|~\/\.config\/opencode)|\brm\s+(?:-rf\s+)?(?:config\.json|\/root\/\.config\/opencode|~\/\.config\/opencode)|\b(?:curl|wget)\b[^;]*-o\s+[^;]*(?:config\.json|auth\.json))/i,
-    severity: 'BLOCK',
-    remedy: 'THE SANCTIONED PATH: the deploy action (trident-container-test deploy) + the pre-built master image — NEVER a direct config write. THE READS (cat/md5sum/json.load/SELECT) are always allowed — the inspection surface is intact.',
-  },
   {
     id: 'CTX-02',
     kind: 'ct-exec-mutation',
@@ -154,7 +155,7 @@ export const CT_MUTATION_PATTERNS: CtMutationPattern[] = CT_MUTATION_PATTERN_BAS
 // The MUTATION verbs still fire FIRST (the pair test's order): a python3 with
 // open-w/json.dump against the protected paths = the pair → BLOCK regardless
 // of the runner's presence.
-const CT_READ_VERBS = /(?:^|[;&|]\s*)\b(?:cat|md5sum|ls|grep|find|wc|head|tail|python3?|node|bun)\b|json\.load|open\s*\([^)]*['"]r['"]|\bSELECT\b|\bsed\s+-n\b|\bawk\b/i;
+const CT_READ_VERBS = /(?:^|[;&|]\s*)\b(?:cat|md5sum|ls|grep|find|wc|head|tail|python3?|node|bun|stat)\b|json\.load|open\s*\([^)]*['"]r['"]|\bSELECT\b|\bsed\s+-n\b|\bawk\b/i;
 
 export type CtExecVerdict =
   | { verdict: 'ALLOW'; reason: 'READ' | 'UNRELATED' }
@@ -221,7 +222,7 @@ export function classifyCtExec(command: string): CtExecVerdict {
     anyTarget = true;
     const verbMatch = scan.match(p.mutationVerb);
     if (verbMatch) {
-      // CLASSIFIED: MUTATE → EVIDENCED → EMITTED: BLOCK (the MPSE).
+      // CLASSIFIED: MUTATE → EVIDENCED → EMITTED: BLOCK (the evidence triad).
       return {
         verdict: 'BLOCK',
         family: p.id,
@@ -236,17 +237,19 @@ export function classifyCtExec(command: string): CtExecVerdict {
   if (CT_READ_VERBS.test(scan)) return { verdict: 'ALLOW', reason: 'READ' };
   // THE FAIL-STATE: the protected path present + no read verb + no mutation
   // verb → INCONCLUSIVE → BLOCK (fail-closed — the ISE law: never PASS on the
-  // unparseable command touching the protected state).
+  // unparseable command touching the protected state). THE CTX-01 REFERENCE
+  // REMOVED (2026-08-14 — the CTX-01 family is disabled): the fail-closed
+  // falls to the generic family id (the pattern families still enforce it).
   return {
     verdict: 'BLOCK',
-    family: 'CTX-01',
+    family: 'CTX-02',
     familyName: 'THE FAIL-CLOSED (the protected path present + the intent unparseable)',
     matchedVerb: '(unparseable)',
     evidence: 'the protected opencode path present + no read verb + no mutation verb → INCONCLUSIVE → BLOCK (ct-anti-derailment.ts:classifyCtExec — the fail-closed per the ISE law)',
   };
 }
 
-// THE BLOCK MESSAGE (the MPSE + the operator's ruling verbatim + THE
+// THE BLOCK MESSAGE (the evidence triad + the operator's ruling verbatim + THE
 // PER-FAMILY WARHEAD — 2026-08-10: each family's block names the sanctioned
 // path, never a generic remedy):
 export function buildCtConfigLockMessage(v: Extract<CtExecVerdict, { verdict: 'BLOCK' }>): string {

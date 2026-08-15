@@ -202,3 +202,61 @@ The operator's ship rejection (the host reverted to the GNR dist) + the "FIX ALL
 2. The checkpoint/package sync (T3) — after the deep test.
 3. The canon docs' final refresh — after the sync.
 4. The operator's deploy + the host's direct tests — the operator's action + the follow-up.
+
+---
+
+## THE NEXT STEPS (2026-08-14 — the shadow-brain 3-fix plan)
+
+1. **F1 — THE MEASURED STALL WINDOW:** create src/tools/shadow/shadow-health.ts (the sqlite store: first-event rolling avg, ~60 lines); wire shadow-brain.ts:197 + :492 to read `measuredWindowMs()` (avg × 3, clamped [45s, 5m]); record every call's latency on completion.
+2. **F2 — THE BACKOFF RETRY:** shadow-runner.ts:785-789 — the round-1 timeout retries ONCE at 2× the measured window after a 3s gap; the brain's call gains the stallTimeoutMs override. NO provider/model switching.
+3. **F3 — THE DENSITY MEMORY:** wave-tracker.ts (the argSnapshot field on WaveTrack) + wave-dispatch.ts (persist the args at registerWave + the <0.7 ratio warning on regeneration).
+4. **Verify all 3:** the unit pins (the clamp math, the backoff, the density ratio) + the container (a multi-agent generate under concurrent load completes; a genuinely-stalled provider still fails ≤ the bounded floor; a thin re-gen warns with the ratio).
+5. **Then:** the host deploy (the user's terminal), the ship-package regen, the queued #25 (the firewall-intelligence) + the WARHEAD 20 approval.
+
+---
+
+## THE NEXT STEPS (2026-08-14 — the 3-fix completion)
+
+1. **THE HOST DEPLOY:** copy `dist/index.js` (sha `a8e99b06`) → `~/.config/opencode/plugins/trident/dist/index.js` + restart — the user's terminal.
+2. **THE SHIP-PACKAGE REGEN** (after the redeploy — the redaction-aware audit fix needs the deployed tool).
+3. **THE QUEUED #25 — THE FIREWALL-BACKEND INTELLIGENCE** (the MPSE live failure): the block messages must carry the exact copy-pasteable call shape + the batch gate must reconcile partial dispatches.
+4. **THE WARHEAD 20 (THE ASCII-EXPLANATION LAW)** — drafted, awaiting the operator's explicit approval to land.
+
+---
+
+## THE IMMEDIATE NEXT STEPS (2026-08-15 — the post-compaction plan, dist ce0434ee)
+
+### WAVE A — THE HOST VERIFICATION (GATE-1 approved — the continuation)
+1. Test everything on the deployed dist ce0434ee directly: the T.E.B. dispatch (generate → the 3-field batch → the native task dispatch → the byte-exact injection → the deferred wipe), the memory-lexicon gate (the bomb blocked + the safe reads allowed), the density memory, the measured window.
+2. Verify the deployed-bundle markers: classifyMemoryRead + RAM_BOMB present, CTX-01 = 0, MEMORY-EFFICIENT present, the sha = ce0434ee.
+3. THE PASS BAR: the host tests all pass + the markers verified + the results artifact written.
+
+### WAVE B — THE ENGINE-LOG GATING (GATE-1 approved — the documented follow-up)
+4. Gate + rotate the tridentLog debug-level writes (the /tmp/trident-engine.log is 81MB — the same treatment as the hook-debug writes).
+5. THE FILES: src/utils.ts (the tridentLog implementation — the TRIDENT_DEBUG gate + the ~10MB rotation; ONLY the DEBUG level gated — the ERROR/WARN levels never silent).
+6. THE PASS BAR: the engine log stops growing without the debug flag + rotates at 10MB with it; the battery 451/451 + tsc 0.
+
+### WAVE C — THE QUEUED #25 (the firewall-intelligence — GATE-2 REQUIRED)
+7. THE DESIGN (the operator's approval required before the implementation): the block messages carry the exact copy-pasteable call shape (the batch form's tools[0] parameters verbatim); the batch gate reconciles partial dispatches (adopt-the-running + dispatch-the-rest); the missing-registry wave derives the registry from the manifest (total = agents.length).
+8. THE PRINCIPLE: a block whose remedy requires reverse-engineering is a block with a broken remedy.
+
+### THE CROSS-CUTTING
+9. The battery + tsc + the build after every change; the container verification before the host deploy (the operator's ruling); the four-way sha sync; the checkpoint + the docs at the end.
+
+---
+
+## THE NEXT STEPS (2026-08-15 — dist 90aec04f, the post-completion state)
+
+### DONE (this session's arc)
+- WAVE A (the host verification of the T.E.B. + the firewalls + the memory gate) — DONE + the template-bomb bug found + fixed.
+- WAVE B (the engine-log gating) — DONE + container-verified (the log at 174540 bytes).
+- WAVE C / #25 (the firewall-intelligence) — DONE + container-verified (the input classifier + the bullets + the reconcile + the derive + the two bug fixes). GATE-2 APPROVED + executed.
+- The T.E.B. bible — DONE (KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md).
+- The container forward iteration (7/7) + the #25 S2-S4 (the reconcile + the re-fire) — DONE.
+- The checkpoint (FULL_STACK_90aec04f_2026-08-15) + the four-way sync + the docs.
+
+### THE REMAINING
+1. THE HOST DEPLOY of 90aec04f — the operator's action (the container gates all clear; copy the dist → ~/.config/opencode/plugins/trident/dist/index.js + restart). ⚠ the deployed bundle is the operator's multi-branch testing (3 branches) — the deploy overwrites their current test build.
+2. THE CTX-01/VERIFY_INSPECT RE-ENABLE — blocked on the other sessions' proper-discrimination patches.
+3. THE NEXT COMPACTION PREP — when the operator's ready (the canon docs + the POST-COMPACTION_PROMPT refresh to 90aec04f).
+4. THE QUEUED ITEMS (the task queue: #21 the code-audit LSP overhaul, #20 the firstDispatchTs persistence, #19 the wave-audit scan scope, #18 the bundle findings, #16 the Qwen audit sectors, #15 the LSP harvest, #14 the wave-audit gate write stitching, #13 the NaN bug, #12 the runaway loop, #11 the shadow-brain fix land, #10-#6 the phase-1 battery, #3 the internal SQLite task queue, #2 the question-tool overhaul, #1 the DPL1 construction).

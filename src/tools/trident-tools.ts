@@ -21,6 +21,9 @@ import { createShipPackageTool } from './trident-ship-package.js';
 import { createPreflightTool } from './trident-preflight.ts';
 
 import { createWaveManagerTool } from './wave-dispatch.ts';
+// THE TRIDENT-TASK IMPORT REMOVED (2026-08-14 — the tangent undone): the
+// wrapper tool is gone; the native task tool + the T.E.B. loader hook is the
+// dispatch path (see the registration comment at 'trident-wave-manager').
 import { createWaveProbeTool } from './wave-probe-tool.ts';
 import { contextSynthesisEngine } from '../modes/context-synthesis-engine.js';
 import * as fsSync from 'fs';
@@ -2742,6 +2745,16 @@ ${specs.map(s => `  - ${s.name} [${s.type}]: ${s.lines} lines [${s.status}]`).jo
     // spawns). THE SINGLE TOOL — the legacy generator/dispatch names are NOT
     // registered (the operator's mandate: ONE wave manager tool):
     'trident-wave-manager': createWaveManagerTool(),
+    // THE TRIDENT-TASK TOOL REGISTRATION REMOVED (2026-08-14 — the trident-task
+    // tangent UNDONE): the batch form emits the NATIVE task tool + the promptFile
+    // channel; the T.E.B. loader hook (trident-hooks.ts:1741) injects the file's
+    // byte-exact content into the prompt BEFORE the runtime executes. The native
+    // task tool then runs background.start() (the job registry + task_status +
+    // the result injection — the PROVEN working baseline). trident-task as a
+    // separate plugin tool DROPPED background (the SubtaskPartInput schema has no
+    // background field → the runtime's handleSubtask never forwarded it → the job
+    // registry stayed empty → task_status broke). The wrapper tool is gone; the
+    // native task tool + the loader hook is the working path.
     // THE PHASE-0 PROBE TOOL (Part 8/18 — the temporary load-bearing verifications):
     'trident-wave-probe': createWaveProbeTool(),
     // THE TASK-PREFLIGHT TOOL REMOVED (2026-08-08 — the operator: "we should

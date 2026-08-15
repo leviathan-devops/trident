@@ -33,7 +33,13 @@ describe('CT-LEXICON: the read-passes (the inspection surface INTACT)', () => {
   }
 });
 
-describe('CT-LEXICON: CTX-01 the config fumbling (the 11 variations)', () => {
+describe('CT-LEXICON: CTX-01 the config fumbling — DISABLED (2026-08-14 — the operator: "clearly broken", the false positives: the tsconfig.json cp + the tee redirects)', () => {
+  // THE DISABLED CLASS: the config-write variations now ALLOW (the CTX-01
+  // family is removed from the pattern array until the proper discrimination
+  // lands — the OTHER session's patch). The false positives it caused: a
+  // build-config copy (tsconfig.json) + a checkpoint's sha256.txt tee were
+  // blocked as "config fumbling" — the target regex matched ANY path/name
+  // containing 'config', not just the protected opencode config.
   const WRITES: Array<[string, string]> = [
     ['the direct redirect', "echo 'x' > /root/.config/opencode/config.json"],
     ['the append redirect', "echo 'x' >> /root/.config/opencode/config.json"],
@@ -51,10 +57,11 @@ describe('CT-LEXICON: CTX-01 the config fumbling (the 11 variations)', () => {
     ['the var indirection', 'CFG=/root/.config/opencode/config.json; echo x > $CFG'],
   ];
   for (const [name, cmd] of WRITES) {
-    test('CTX-01 BLOCK: ' + name, () => {
+    test('CTX-01 DISABLED (ALLOW): ' + name, () => {
       const v = classifyCtExec(cmd);
-      expect(v.verdict).toBe('BLOCK');
-      if (v.verdict === 'BLOCK') expect(v.family).toBe('CTX-01');
+      // The disabled class no longer blocks the config path — the OTHER
+      // families (the auth/db/install/apiKey) still enforce their own.
+      expect(v.verdict).toBe('ALLOW');
     });
   }
 });
@@ -106,10 +113,9 @@ describe('CT-LEXICON: CTX-04 the install fumbling', () => {
 
 describe('CT-LEXICON: the DECODE-SCAN (the base64-obscured writes — MY OWN fumbling pattern)', () => {
   const WRITES: Array<[string, string]> = [
-    [
-      'the base64 config-write script',
-      'echo ' + b64("json.dump(c, open('/root/.config/opencode/config.json','w'))") + ' | base64 -d > /tmp/cfgfix.py && python3 /tmp/cfgfix.py',
-    ],
+    // THE CTX-01 REMOVAL (2026-08-14): the base64 config-write now ALLOWs —
+    // the disabled class. The OTHER families (the auth + the session-DB)
+    // still decode-scan + block.
     [
       'the base64 auth-write script',
       'echo ' + b64("open('/root/.local/share/opencode/auth.json','w').write('k')") + ' | base64 -d > /tmp/authfix.py && python3 /tmp/authfix.py',
@@ -128,20 +134,22 @@ describe('CT-LEXICON: the DECODE-SCAN (the base64-obscured writes — MY OWN fum
 });
 
 describe('CT-LEXICON: the fail-closed + the message', () => {
-  test('the unparseable-with-path → INCONCLUSIVE → BLOCK', () => {
-    const v = classifyCtExec('export CFG=/root/.config/opencode/config.json');
+  test('the unparseable-with-auth-path → the fail-closed fallback (the STILL-ACTIVE family)', () => {
+    // CTX-01 (the config class) is disabled — the config path no longer
+    // triggers any family. The fail-closed still fires for the ACTIVE
+    // families (the auth path here): the protected path present + the
+    // intent unparseable → BLOCK.
+    const v = classifyCtExec('export AUTH=/root/.local/share/opencode/auth.json');
     expect(v.verdict).toBe('BLOCK');
     if (v.verdict === 'BLOCK') expect(v.familyName).toContain('FAIL-CLOSED');
   });
   test('the message names the ruling + the warhead + the evidence', () => {
-    const v = classifyCtExec("echo 'x' > /root/.config/opencode/config.json");
+    const v = classifyCtExec("echo 'x' > /root/.local/share/opencode/auth.json");
     if (v.verdict === 'BLOCK') {
       const msg = buildCtConfigLockMessage(v);
       expect(msg).toContain('[TRIDENT CONFIG LOCK]');
-      expect(msg).toContain('CTX-01');
-      expect(msg).toContain('WHY ARE YOU FUCKING WITH THE CONFIG');
       expect(msg).toContain('SANCTIONED PATH');
-      expect(msg).toContain('THE READS');
+      expect(msg.toLowerCase()).toContain('the reads');   // the family remedy's phrasing (case-insensitive)
     } else {
       throw new Error('expected a block verdict');
     }
@@ -150,7 +158,9 @@ describe('CT-LEXICON: the fail-closed + the message', () => {
     // THE EXPANSION (the Dragon bypass methods): the staging cheat (CTX-05),
     // the opencode.json content rewrite (CTX-06), the setup-script staging
     // (CTX-07), the apiKey fumbling (CTX-08) — each carries its own warhead.
-    expect(CT_MUTATION_PATTERNS.length).toBe(8);
+    // THE CTX-01 REMOVAL (2026-08-14 — the disabled config class): the family
+    // count is now 7 (CTX-02..08).
+    expect(CT_MUTATION_PATTERNS.length).toBe(7);
     for (const p of CT_MUTATION_PATTERNS) {
       expect(p.severity).toBe('BLOCK');
       expect(p.kind).toBe('ct-exec-mutation');
@@ -169,12 +179,14 @@ describe('CT-LEXICON: the fail-closed + the message', () => {
     const rewrite = classifyCtExec("python3 -c \"json.dump(d, open('/root/.config/opencode/opencode.json','w'))\"");
     expect(rewrite.verdict).toBe('BLOCK');
   });
-  test('the pattern family is complete (8 members)', () => {
-    expect(CT_MUTATION_PATTERNS.length).toBe(8);
+  test('the pattern family is complete (7 members — CTX-01 removed)', () => {
+    expect(CT_MUTATION_PATTERNS.length).toBe(7);
     for (const p of CT_MUTATION_PATTERNS) {
       expect(p.severity).toBe('BLOCK');
       expect(p.kind).toBe('ct-exec-mutation');
     }
+    // the CTX-01 id must be ABSENT (the disabled class):
+    expect(CT_MUTATION_PATTERNS.some((p) => p.id === 'CTX-01')).toBe(false);
   });
 });
 
@@ -203,8 +215,9 @@ describe('CT-LEXICON: the anti-false-positive corpus (the 2026-08-11 session blo
     });
   }
   const STILL_BLOCKED: Array<[string, string]> = [
-    // The core's purpose — the real fumbles still blocked.
-    ['the direct config write', "echo 'x' > /root/.config/opencode/config.json"],
+    // The core's purpose — the real fumbles still blocked (CTX-01 removed:
+    // the plain config write now ALLOWs — the disabled class; the OTHER
+    // families still enforce their own targets).
     ['the install fumble', 'npm install -g opencode-ai'],
     ['the staging cheat', 'sudo cp /tmp/new-config.json /tmp/dragon-project/deploy/dragon-opencode.json'],
     ['the auth write', "python3 -c \"json.dump(d, open('/root/.config/opencode/auth.json','w'))\""],

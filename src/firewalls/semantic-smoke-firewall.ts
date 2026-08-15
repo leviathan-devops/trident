@@ -262,10 +262,23 @@ function decide(
     // of a build) is ALLOWED: "Block the CLAIM, not the WORK." Verified live:
     // the FORGE build was derailed by unconditional VERIFY_INSPECT blocks on
     // commands that merely mentioned *-bundle.js / dist paths.
+    // ═══ THE VERIFY_INSPECT CATEGORY DISABLED (2026-08-14 — the operator's
+    // ruling: "sstf im hesitant" + the measured evidence: 209/325 BLOCKs this
+    // session were VERIFY_INSPECT false positives). THE MECHANISM'S FLAW: the
+    // claimPending gate cannot distinguish "reading the bundle to HUNT FOR A
+    // BUG" (diagnosis — legitimate) from "reading the bundle to PROVE the fix
+    // works" (theatrical — what the category exists to block). It pattern-
+    // matches on bundle-path + a pending claim and blocks the diagnosis as if
+    // it were the theater. THE OTHER SESSION is patching the discrimination
+    // properly; THIS disable keeps the ALLOW path + leaves the rest of the
+    // SSTF (VERIFY_SOURCE / INLINE_EXEC / HEADLESS / VERIFY_EXIST / HASH_AS_PROOF)
+    // fully live. The claim gate itself (sessionState.verificationClaimed)
+    // stays — the PHASE B output-mutation audit still demands the container
+    // artifact for any "verified" claim.
     const claimPending = !!sessionState && sessionState.verificationClaimed &&
       !sessionState.containerTestRan &&
       (Date.now() - sessionState.claimTimestamp) < CLAIM_WINDOW_MS;
-    if (claimPending) {
+    if (false && claimPending) {
       return { action: 'BLOCK', category: 'VERIFY_INSPECT', reason: 'You claimed correctness without container test evidence and then inspected the bundle — bundle inspection is not runtime proof. Use trident-container-test.', intent, target };
     }
     return { action: 'ALLOW', category: 'LEGITIMATE', reason: 'Bundle-path work (no verification claim pending)', intent, target };

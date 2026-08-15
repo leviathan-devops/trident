@@ -60,6 +60,8 @@ import {
   type ShadowBrainResult,
 } from './shadow-brain.ts';
 import { resolveShadowApiKey } from './shadow-secrets.ts';
+// F2 (2026-08-14 — the backoff retry): the measured window for the 2× retry.
+import { measuredShadowWindowMs } from './shadow-health.ts';
 import { ShadowMemory, type PromptRecord } from './shadow-memory.ts';
 import {
   tetherSession,
@@ -177,6 +179,9 @@ export interface ShadowRunnerBrain {
     messages: ShadowChatMessage[],
     maxTokens: number,
     signal?: AbortSignal,
+    // F2 (2026-08-14 — the backoff retry): the stall-window override — the
+    // retry passes 2× the measured window (the slow-not-dead case).
+    stallTimeoutMs?: number,
   ): Promise<ShadowBrainResult>;
 }
 
@@ -468,7 +473,7 @@ function recordFileState(fileStates: FileState[], details: unknown): void {
 
 function defaultRunnerBrain(options: { apiKey?: string; baseUrl?: string; timeoutMs?: number; streamFn?: ShadowStreamFn } = {}): ShadowRunnerBrain {
   return {
-    async call(messages: ShadowChatMessage[], maxTokens: number, signal?: AbortSignal): Promise<ShadowBrainResult> {
+    async call(messages: ShadowChatMessage[], maxTokens: number, signal?: AbortSignal, stallTimeoutMs?: number): Promise<ShadowBrainResult> {
       // THE SECRET (D-SH-2 / AP-4): the injected configured secret first, then
       // the env — NEVER hardcoded, NEVER logged.
       const apiKey = options.apiKey && options.apiKey.length > 0 ? options.apiKey : resolveShadowApiKey();
@@ -506,6 +511,9 @@ function defaultRunnerBrain(options: { apiKey?: string; baseUrl?: string; timeou
           baseUrl: options.baseUrl ?? SHADOW_BASE_URL,
           maxTokens,
           signal: controller.signal,
+          // F2 (2026-08-14 — the backoff retry): the retry's 2×-window override
+          // flows through to the transport's stall detector.
+          stallTimeoutMs,
         });
         resultPromise.catch((err: unknown) => {
           void tridentLog('WARN', 'shadow-runner', 'the streamFn promise rejected after the race settled: ' + (err instanceof Error ? err.message : String(err)));
@@ -782,10 +790,20 @@ async function runPiLoop(opts: {
     // stall/overload, NOT an input error) is retried ONCE. The live proof: the
     // identical wave input failed at 180s then succeeded on retry in 361s. The
     // retry produces what the primary produces — never a substitute artifact.
+    // THE BACKOFF (F2 — 2026-08-14, the slow-not-dead distinction): a timeout
+    // means the provider is SLOW (the documented 35-50s first-event for the
+    // 384K shape), not dead. The retry waits a 3s breathing gap (the load
+    // case) + passes the 2× measured window (the slow case) — the SAME
+    // window retry under load stalls identically. NO provider/model switching
+    // (the operator: "no model switching ever. provider as well only backup is
+    // direct deepseek api but this should NEVER BE USED unless there is a
+    // legit server failure of opencode go").
     if (!r.ok && round === 1 && typeof r.error === 'string' &&
         (r.error.indexOf('SHADOW_BRAIN_TIMEOUT') !== -1 || r.error.indexOf('SHADOW_BRAIN_HTTP_500') !== -1)) {
-      void tridentLog('WARN', 'shadow-runner', 'PI round ' + round + ' transient failure (' + r.error + ') — the round retries ONCE');
-      r = await opts.brain.call(messages, PI_MAX_TOKENS, opts.signal);
+      void tridentLog('WARN', 'shadow-runner', 'PI round ' + round + ' transient failure (' + r.error + ') — the round retries ONCE at 2× the measured window after a 3s gap');
+      // THE 3S BREATHING GAP (the load case — a loaded provider needs the queue to drain):
+      await new Promise<void>((res) => setTimeout(res, 3000));
+      r = await opts.brain.call(messages, PI_MAX_TOKENS, opts.signal, measuredShadowWindowMs() * 2);
     }
     if (!r.ok) {
       errors.push('PI round ' + round + ': ' + (r.error || 'SHADOW_BRAIN_FAIL'));

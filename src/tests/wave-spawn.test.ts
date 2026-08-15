@@ -98,12 +98,13 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
     // The prompt file written to the tmp:
     const fileContent = fs.readFileSync(path.join(sandbox, 'file-src.md'), 'utf-8');
     expect(fileContent).toContain('EXECUTE THE FOLLOWING');
-    // THE BATCH FORM (2026-08-12 — the SHRUNK payload, the bug-report §6.5):
-    // the inline prompt is the placeholder; the promptFile channel carries the
-    // byte-exact content (the loader injects it before the gates — 0 ignore).
-    const batchParams = result.batch?.parameters?.tools?.[0]?.parameters as { prompt?: string; promptFile?: string } | undefined;
-    expect(batchParams?.prompt).toContain('EXECUTE THE TASK DEFINED IN THE GENERATED PROMPT FILE:');
-    expect(batchParams?.promptFile).toContain('file-src.md');
+    // The batch form carries the promptFile PATH ONLY (2026-08-14 — the
+    // operator: "THE PROMPTFILE SHOULD LITERALLY BE PASSED AS THE PROMPT
+    // VERBATIM NO PLACEHOLDER GARBAGE") — NO prompt field; the T.E.B. loader
+    // hook mutates promptFile → prompt byte-exact before the tool executes.
+    const spawnParams = result.batch?.parameters?.tools?.[0]?.parameters as { promptFile?: string; prompt?: string } | undefined;
+    expect(spawnParams?.promptFile).toContain('file-src.md');
+    expect(spawnParams?.prompt).toBeUndefined();       // NO placeholder garbage
     // THE AP-1 RULE: the WaveAgentSpec has NO prompt field — the args cannot carry it:
     expect('prompt' in makeValidAgent('file-src')).toBe(false);
   });

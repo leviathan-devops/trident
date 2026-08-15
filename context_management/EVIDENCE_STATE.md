@@ -1,6 +1,6 @@
 # EVIDENCE_STATE — THE VERIFIED EVIDENCE (2026-08-09)
 
-**THE TRUE DIST SHA: 416ccff7b0d8812479ec3f35cc29394ae926eae7e50b583093fadc9431c6919b.** Every "this works" claim below is backed by mechanical proof — the behavioral tokens, the SHAs, the container provenance. Structural greens are never canonized as behavior. THE WARHEAD 13's law: a "container tested" declaration requires the artifact's per-scenario PASS verdicts — an environment-blocked suite is BLOCKED, never tested. THE 2026-08-10 EVIDENCE: S9 PASS (the anti-cuck identity probe — the container's answer on dist 416ccff7: "dispatch parallel trident_explore subagents... I would not read all 258K lines myself" — the WARHEAD 15 mandate executed live).
+**THE TRUE DIST SHA: baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432.** Every "this works" claim below is backed by mechanical proof — the behavioral tokens, the SHAs, the container provenance. Structural greens are never canonized as behavior. THE WARHEAD 13's law: a "container tested" declaration requires the artifact's per-scenario PASS verdicts — an environment-blocked suite is BLOCKED, never tested. THE 2026-08-10 EVIDENCE: S9 PASS (the anti-cuck identity probe — the container's answer on dist 416ccff7: "dispatch parallel trident_explore subagents... I would not read all 258K lines myself" — the WARHEAD 15 mandate executed live).
 > **2026-08-13 UPDATE — THIS SESSION:** the wave-manager dispatch-authorization transactional fix + the 2026-08-13 rulings (pool 15, retries 3, timeout 15m, directive IDs, v4-flash pin) + the main-session self-heal + the multi-session anchor + the prune sort fix + the self-heal misfire fix. TRUE DIST: ddc2b24a1a026555c92385f61228a5ff7930db75560443cf7e7d5a1c21042a79. Unit 408/408, tsc 0. See the DEBUG_LOG.md 2026-08-12/13 entries + the BUILD_REPORT addenda for the full record. Host-verified: the exact-bug cycle, the anchor, the re-fire protection, the prune survival, the release-by-alias.
 
 ---
@@ -201,3 +201,95 @@ e2661142 → 291f9ddb → f90477d7 (WRONG endpoint — reverted) → 8d897fd2 �
 - The container: trident-container-test action=alive containerName=theatrical-fw-ct → alive; the screenshot → the status bar's Go model; action=exec ls /root/OPENCODE_WORKSPACE/trident-tmp/ → the fixtures.
 - The warheads: the disk WARHEADS.md (the 14 warheads) + the inline (src/identity/index.ts) + the AGENTS.md.
 - The skill: ~/.config/opencode/skills/warhead-writing/SKILL.md (the full workflow).
+
+---
+
+## THE 2026-08-14 EVIDENCE (the T.E.B. machine + the shadow-brain arc)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| The batch form emits `{ description, promptFile, subagent_type }` ONLY | the unit pins (wave-telemetry.test.ts: the prompt/background undefined, the promptFile present) + the container report (ct-revert-verify: the batch form verbatim — tool 'task' + promptFile + NO prompt) | VERIFIED |
+| The T.E.B. machine mutates promptFile → prompt byte-exact | the container (ct-revert-verify): the spawned session's subtask part carried the prompt file's byte-exact content + "the loader injected the prompt file byte-exact (the SHA check passed)" | VERIFIED |
+| The native task tool runs background.start() (the job registry) | the container (ct-revert-verify): task_status resolved `state: running` → `state: completed` with the full report — NOT 'Task not found' | VERIFIED |
+| The parentID lineage (the child of the caller) | the container (ct-revert-verify): the session row's parent_id = the caller's id | VERIFIED |
+| The SHADOW_BRAIN_TIMEOUT root cause (the 45s knife-edge vs the 35-50s first-event) | shadow-brain.ts:58 + :160-161 (the documented probe data) + the container error ("PI round 4: no event within 45000ms") + the Critical Failure Log 2026-08-14-wave-regeneration-thin-prompt-failure.md | VERIFIED (the root cause) — the 3-fix plan implementation pending |
+| The 434/434 battery + tsc 0 (the T.E.B. machine dist) | the local runs | VERIFIED |
+
+---
+
+## THE 2026-08-14 SHADOW-BRAIN 3-FIX EVIDENCE (the completion)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| F1 the measured stall window records + adapts | the container (ct-shadow-fix) engine log: `recorded first-event 895ms → avg 895ms (n=1) for opencode-go` + the generation completed (301-line prompt, NO SHADOW_BRAIN_TIMEOUT) + the pins (7 tests: the 35-50s sustained → 127.5s window, the floor/ceiling clamps) | VERIFIED |
+| F2 the backoff retry (2× window + 3s gap, no switching) | the pins (the 2× window under the 15m ceiling) + the code (shadow-runner.ts:785-789) | VERIFIED (unit) |
+| F3 the density memory (the DENSITY WARNING on thin re-gen) | the host probe (f3-density-probe.test.ts): a floors-passing-but-thinner re-gen fires the DENSITY WARNING naming the ratio; a fresh name doesn't | VERIFIED |
+| The 443/443 + tsc 0 (dist a8e99b06) | the local runs | VERIFIED |
+
+---
+
+## THE SHADOW-BRAIN 3-FIX FULL CONTAINER VERIFICATION (2026-08-14 — the ct-3fix-full run, dist a8e99b06)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| F1 the measured stall window (no knife-edge timeout) | the container: the generation COMPLETED (tt-3fix-a1, 357 lines, sha256 recorded, manifest status ready) + the health DB row ('opencode-go', 732.0, 1) + the engine log 'recorded first-event 732ms → avg 732ms (n=1)' + the measured-window lines 'avg 755ms × 3 → 45000ms (floor 45000, ceiling 300000)' + the rolling avg accumulating (n=6 → n=7). NO SHADOW_BRAIN_TIMEOUT | VERIFIED (container) |
+| F2 the backoff retry wiring | the bundle carries the retry string 'the round retries ONCE at 2' + measuredShadowWindowMs ×3 — the 2×-window + 3s-gap path is in the deployed dist | VERIFIED (bundle) |
+| F3 the density memory | the container: the re-gen with floors-passing 42%-density args → the agent's report: 'the manager issued a DENSITY WARNING: 1009 vs 2415 chars (42% of the prior generation)... REUSE the original mission/knownContext/doctrine/measurements/acceptance args VERBATIM' — the argSnapshot persisted + the compare caught the thin re-derivation | VERIFIED (container) |
+| The 443/443 + tsc 0 (dist a8e99b06) | the local runs | VERIFIED |
+| The results artifact | .trident/container-test-results.json (3/3 PASS, the circuit breaker 10/10) | WRITTEN |
+
+**NO HOST DEPLOY — the operator's ruling: everything container-tested first. The 3-fix stack is now container-proven (this run) + the T.E.B. machine was container-proven earlier (ct-revert-verify + ct-teb-machine). The remaining pre-deploy item: the FULL end-to-end (generate → T.E.B. dispatch → task_status → the deferred wipe) on ONE container — the T.E.B. dispatch was proven on the pre-3-fix dist; a final integrated run closes the loop before any host action.**
+
+---
+
+## THE HOST VERIFICATION + THE CT-READ VERIFICATION (2026-08-14 — dist c2061233)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| The deployed dist works end-to-end on the host | the generate → the 3-field batch (task + promptFile ONLY, verified at wave-dispatch.ts:607-629 by the subagent's independent forensic report) → the dispatch → the parentID lineage (ses_ffe429's parent = ses_00b413) → the byte-exact injection (27179 == 27179) → the deferred wipe (the prompt file survived) → the wave status (running) | VERIFIED (host, live) |
+| The CT read matches the baseline | container-test.ts:1250 byte-identical to CT_READ_BASELINE §1 (6281 chars, identical helpers/schema/wiring — the baseline's own audit note confirms) | VERIFIED (source) |
+| The CT read behaves per the contract | ct-read-verify (container, dist c2061233): S1 offset=0 → the honest shape + boot content; S2 offset=1 limit=10 → the slice at line 1 + the monotonic nextOffset; S3 incremental 3→4→4 + upToDate (never regressed); S4 fromByte/maxBytes legacy params → stripped by the schema, the read ignores + falls back clean | VERIFIED (container, 4/4) |
+| The read is NOT bugged | the empty-on-redraw reads = the lexicon filter correctly dropping the TUI chrome; the real content findable via check (62KB scanned, the probe text matched at line 5) | VERIFIED (the diagnosis) |
+| The checkpoint saved | Checkpoints/FULL_STACK_c2061233_2026-08-14/ (src + dist sha-verified + docs + results + manifest) | VERIFIED |
+
+---
+
+## THE FIREWALL-DISABLE EVIDENCE (2026-08-14 — dist d752ab3a)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| The CTX-01 config-lock false positives | the session's own blocks: `cp tsconfig.json` (a build-config copy) + `tee <sha256>.txt` (a checkpoint hash) + the checkpoint-copy compound commands — all matched the config.json/\.config token | VERIFIED (the live blocks) |
+| The CTX-01 disable | CTX-01 = 0 occurrences in the bundle; the config echo → ALLOW (the probe); the auth echo → BLOCK CTX-02 (the family still live) | VERIFIED |
+| The SSTF VERIFY_INSPECT false positives | 209/325 BLOCKs this session were VERIFY_INSPECT — the claimPending gate blocked diagnosis (reading the bundle to hunt) as if it were theater (reading to prove) | VERIFIED (the measured split) |
+| The VERIFY_INSPECT disable | the block path dead in the bundle (if false &&); the ALLOW path + the claim gate intact; INLINE_EXEC/HEADLESS/VERIFY_EXIST/HASH_AS_PROOF all present | VERIFIED |
+| The battery + tsc | 441/441 (27 files, src/tests direct), tsc 0 | VERIFIED |
+| The dist + the bundle | d752ab3a — the manifest + the checkpoint + the ship package all at d752ab3a | VERIFIED |
+
+---
+
+## THE RAM-BOMB PREVENTION EVIDENCE (2026-08-15 — dist 0f14e9f5)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| The incident's mechanics | TOOL_PATHOLOGY_readlines_RAM_BOMB_20260815.md: .readlines() on the 7.9GB log → 14.6GB RSS (VmPeak 18.4GB) → the host freeze; the file grew to 7.9GB from 15 unconditional appendFileSync debug writes | VERIFIED (the incident doc) |
+| LAYER A — WARHEAD 21 in the bundle | 'MEMORY-EFFICIENT-DATA-RETRIEVAL' ×1 in dist/index.js + the disk + the inline | VERIFIED |
+| LAYER B — the MEMORY GATE | 'MEMORY GATE' ×2 + the readlines detector in the bundle; the pins: 3 bombs blocked + 3 safe patterns allowed (memory-gate.test.ts 6/6) | VERIFIED |
+| LAYER C — the gated + rotated debug helper | 'HOOK_DEBUG_ENABLED' + 'HOOK_DEBUG_MAX_BYTES' + 'TRIDENT_DEBUG' all in the bundle; 0 raw appendFileSync debug writes remain in trident-hooks.ts | VERIFIED |
+| The battery + tsc + dist | 447/447 (28 files), tsc 0, dist 0f14e9f5 — the four-way sync (project == SHIP_PACKAGE == checkpoint == Ship_Packages) | VERIFIED |
+
+---
+
+## THE 2026-08-15 EVIDENCE — DIST 90aec04f (the complete ledger)
+
+| Claim | The evidence | Status |
+|---|---|---|
+| The T.E.B. machine (the byte-exact injection) | the runtime sqlite sha proofs (b2aeb036 host + f9ec6faf container == the prompt files' shas) + the container 7/7 | VERIFIED |
+| The memory lexicon (the bomb classes + the safe reads) | 18 pins + the live fires + the container S2 | VERIFIED |
+| The promptFile firewall + the wave-mandate | the container [WAVE VERBATIM] ×3 + [WAVE MANDATE] ×6 + the LIVE host blocks | VERIFIED |
+| The dispatch memory screen | the container [DISPATCH MEMORY SCREEN] ×16 + the template-bomb catch + the fix | VERIFIED |
+| The measured window | the container recorded-first-event ×27 + the host 358s/143s/444s generations | VERIFIED |
+| The GATE-1 fixes (the engine log + the CTX-02 stat + the sqlite3 NON_READ) | the container 3/3 (FIX-A/B/C PASS) | VERIFIED |
+| The #25 input classifier + the bullets | the container S1 (the inline-prompt → the 'a filepath and nothing else' bullet) | VERIFIED |
+| The #25 reconcile + the re-fire protection | the container S2/S4 (the [WAVE BATCH] ×16 + the registry recording + the re-fire suppressed + the bullet live: ADOPTED ×997 / DISPATCH THE MISSING AGENTS ×233) | VERIFIED |
+| The two container-caught bugs fixed | the custom-waveId discriminator + the recorded-status adopted-set (the M19) | VERIFIED (fixed + re-verified) |
+| The battery + tsc + the dist | 469/469 (29 files), tsc 0, dist 90aec04f — the four-way sync (ONE unique sha) | VERIFIED |

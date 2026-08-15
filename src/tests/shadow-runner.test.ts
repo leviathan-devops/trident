@@ -229,7 +229,7 @@ function buildMockPrompt(filepaths: string[], extraRounds = 45): string {
   L.push('');
   L.push('THE VERIFICATION');
   L.push('read ' + filepaths[0] + ' (full pass, offset=0) — the file read to completion');
-  L.push('grep -rn "export" ' + filepaths[0]);
+  L.push('grep -c "export" ' + filepaths[0]);
   L.push('bun test src/tests/shadow-runner.test.ts');
   L.push('sha256sum ' + filepaths.join(' '));
   L.push('');
@@ -259,7 +259,7 @@ function makeMockBrain(script: (callIndex: number, messages: ShadowChatMessage[]
     async call(messages: ShadowChatMessage[], _maxTokens: number): Promise<{ content: string; model: string; ok: boolean; error?: string }> {
       log.calls += 1;
       const firstUser = messages.find((m) => m.role === 'user');
-      if (firstUser) log.demands.push(firstUser.content);
+      if (firstUser) log.demands.push(typeof firstUser.content === 'string' ? firstUser.content : String(firstUser.content.length));
       return { ...script(log.calls, messages), model: SHADOW_MODEL };
     },
   };

@@ -808,6 +808,23 @@ export function createShipPackageTool() {
         if (redacted.length > 0) {
           tridentLog('WARN', 'spg', 'REDACTED secrets in package: ' + redacted.map(r => r.file + ' (' + r.count + ')').join(', '));
         }
+        // THE REDACTION-AWARE ARTIFACT TABLE (2026-08-13 — the ship-audit fix):
+        // the redaction pass REWRITES the packaged artifacts (the embedded keys
+        // -> the REDACTED marker), so the artifact table must carry the
+        // PACKAGED files' ACTUAL SHAs (the deployable fingerprints) — otherwise
+        // the post-generation audit compares the redacted file against the
+        // un-redacted source SHA and FAILS by design on every secret-bearing
+        // dist. The recompute runs ONLY when the redaction actually changed
+        // something (the packaged files differ from the source copies).
+        if (redacted.length > 0) {
+          for (const art of artifactTable) {
+            const pkgPath = path.join(libDir, art.path);
+            if (fsSync.existsSync(pkgPath)) {
+              art.sha = sha256(pkgPath);
+              art.sizeKB = Math.round(fsSync.statSync(pkgPath).size / 1024);
+            }
+          }
+        }
 
         // ── Phase 4: Generate deterministic files ──
         tridentLog('INFO', 'spg', 'Phase 4: Writing deterministic files');

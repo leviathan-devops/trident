@@ -48,6 +48,15 @@ export interface WaveTrack {
   agents: Record<string, AgentTrack>;
   checkIns: { count: number; lastAt: number | null; nextDue: number | null };
   todoRowId: string | null;
+  // F3 (2026-08-14 — THE DENSITY MEMORY, the SHADOW-BRAIN 3-FIX PLAN): the
+  // context args that PRODUCED the validated prompts — a per-agent char-total
+  // snapshot. The regeneration with the same agent name compares the new args'
+  // char total against this snapshot (< 0.7 → the named density warning — the
+  // class-2 thin-args-collapse fix from the Critical Failure Log
+  // 2026-08-14-wave-regeneration-thin-prompt-failure.md: "re-summarizing
+  // previously-dense args for a 'smaller' wave regenerates the density problem
+  // the first generation solved").
+  argSnapshot?: Record<string, number>;   // agent name → the total arg chars
   archiveIndex?: number;                 // the archive slot (the last-10 pruning)
 }
 

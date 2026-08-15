@@ -64,6 +64,7 @@ export interface WaveRegistry {
   calls: WaveRegistryCall[];
   windowStart: number | null;   // null until the first dispatch call (the gate opens it)
   status: WaveRegistryStatus;
+  derivedFromManifest?: boolean; // 2026-08-15 — the #25 Part-4 flag: the registry was DERIVED from the manifest (the pre-registry-fix wave)
 }
 
 export interface GateDecision {
