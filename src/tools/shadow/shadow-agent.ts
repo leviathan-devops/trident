@@ -68,11 +68,11 @@ export const SHADOW_MODEL = 'nemotron-3.5-lightning-30b-a3b';
 // THE KEYS (the operator's granted credentials, base64-encoded — the
 // plaintext appears NOWHERE in the source; AP-4). The pi providers' native
 // envApiKeyAuth reads the env vars; the class seeds them once at construction.
-const NVIDIA_KEY_B64 = 'bnZhcGktTzJ6TU5vT3dOMkkwRFBkMzItV0o1VE9adGhLc05TRUM2U0JtN3RYMXQyc0ZxM09oUjE4UWJxYmlzOWF2MVI1cQ==';
-const OPENCODE_KEY_B64 = 'c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==';
-const OPENCODE_GO_KEY_B64 = 'c2stWkhja0RIelZ0SGpmQVQ1b3VEeGZXQTVnUjF3aTlWM1RNb2RpYkNRaDJydDV3cHRUd3pHZEVzalROQlpqd2N0aA==';  // the GO key (sk-ZHck...) — the opencode-go rung's OWN env slot, never the zen cycler
-const OPENROUTER_KEY_B64 = 'c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==';
-const INFERX_KEY_B64 = 'aXhfMjY1ZjQzNzFmN2UxMmY3MzAzZTQwOThlNzUxZGE4YTMxM2Q1NjcxOWRiZjBiMTc3MGE4OGQyMmU1MjEyMTE3MQ==';
+const NVIDIA_KEY_B64 = 'bnZhcGktUExBQ0VIT0xERVItTlZJRElBLUtFWQ==';
+const OPENCODE_KEY_B64 = 'c2stUExBQ0VIT0xERVItWkVOLUtFWS01';
+const OPENCODE_GO_KEY_B64 = 'c2stUExBQ0VIT0xERVItR08tS0VZ';  // the GO key (sk-ZHcREDACTED...) — the opencode-go rung's OWN env slot, never the zen cycler
+const OPENROUTER_KEY_B64 = 'c2stb3ItUExBQ0VIT0xERVItT1BFTlJPVVRFUi1LRVk=';
+const INFERX_KEY_B64 = 'aXgtUExBQ0VIT0xERVItSU5GRVJYLUtFWQ==';
 
 /** THE ROUNDS — the checkpoint's decision tree (the operator: "a cap to break
  *  degeneracy, not rounds forced"): ROUNDS 1-2 MANDATORY (the first edit + the
@@ -127,11 +127,11 @@ const RETRYABLE_RE = /429|rate.?limit|too many|quota|5\d\d/i;
 // Round-robin across calls; a 429 on one key advances to the next. Only when
 // ALL 5 are exhausted does the chain fall through to nvidia.
 const ZEN_KEYS: string[] = [
-  'sk-hzzyXqigLO0PVsBlzmiA1bTPXUor6TrpwlhBLVoSbO95gshcqKbJs0RgpGMBFois',
-  'sk-zlzZ3X26j7lBP8i4ZQpfDyzPTJyBP0Eei4hmPimXUgTPSKuJRJCxvt989kJ37Owf',
-  'sk-ZHckDHzVtHjfAT5ouDxfWA5gR1wi9V3TModibCQh2rt5wptTwzGdEsjTNBZjwcth',
-  'sk-9BsmoeL3bz03P5TAwqUDI9BNutDLkISB7paI2OjBSKPenC3KkMKiBP7sVDmkqTWk',
-  'sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb',
+  'sk-PLACEHOLDER-ZEN-KEY-1',
+  'sk-PLACEHOLDER-ZEN-KEY-2',
+  'sk-PLACEHOLDER-GO-KEY',
+  'sk-PLACEHOLDER-ZEN-KEY-4',
+  'sk-PLACEHOLDER-ZEN-KEY-5',
 ];
 let zenKeyIndex = 0;
 
@@ -785,3 +785,12 @@ function validateFinalText(text: string): boolean {
   if (inferenceTail.length < 100) return false;
   return hasMission && hasReading && hasWhatHowWhy && hasConstraints && hasVerification && hasReturn;
 }
+
+// ═══ THE PUBLIC-REPO KEY POLICY ═══
+// This file in the PUBLIC repository carries PLACEHOLDER keys ONLY
+// ('sk-PLACEHOLDER-*', 'nvapi-PLACEHOLDER-*'). The REAL keys live exclusively
+// in the private deployment environment (the host env vars — the env contract:
+// OPENCODE_GO_API_KEY / OPENCODE_API_KEY / NVIDIA_API_KEY / OPENROUTER_API_KEY /
+// INFERX_API_KEY + ZEN_KEYS_POOL for the cycler). The embedded constants are
+// developer-convenience fallbacks for LOCAL runs — replace them with your own
+// keys or export the env vars. See README §1.5 THE KEY CONTRACT.

@@ -131,7 +131,7 @@ THE BUILD: npm run build:bun   (bun build src/index.ts --outdir dist --target bu
            — NOT npm run build:esbuild (that fails on bun:sqlite)
 THE BATTERY: cd src/tests && bun test   (the scoped run — the project-root run's errors are the Checkpoints' copies)
 THE ENV: the shadow brain's key: process.env.OPENCODE_API_KEY → the .env files → the EMBEDDED FALLBACK
-         (the base64 in shadow-secrets.ts decodes to the operator's key sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb)
+         (the base64 in shadow-secrets.ts decodes to the operator's key sk-PLACEHOLDER-ZEN-KEY-5)
 THE ENDPOINT: https://opencode.ai/zen/go/v1  (the opencode-go — the shadow brain + the container's session model)
 THE CONTAINER: theatrical-fw-ct (runtime-grade-container-sandbox:master) — the session model: DeepSeek V4 Flash (2x usage) via OpenCode Go
 ```

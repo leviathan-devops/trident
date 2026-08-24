@@ -694,7 +694,7 @@ append-only with a per-entry SHA anchor; (d) the M1/M2/M3 flags stay at the top 
 
 **F-22 THE S8's HOST-PLUGIN GAP:** the CT tool's actions run from the HOST's deployed plugin — the host runs the reverted GNR (no lexicon!) — the S8's config-write exec RAN (the container's config corrupted!). THE FIX: the host's deploy of 68e4f377 (the operator's action) + the container's config restored.
 
-**F-21 RESOLVED (2026-08-09 — dist 53394af0):** the omni-vision's literal (src/tools/omni-vision.ts:24) → the base64-decoded-at-runtime (the shadow-secrets' pattern). The dist's plaintext 'sk-lkZj...' = 0 occurrences (verified across the live/checkpoint/package!). The key now exists ONLY in the base64 form. The ship-package's redaction (SPG_SECRET_PATTERN) still runs at distribution.
+**F-21 RESOLVED (2026-08-09 — dist 53394af0):** the omni-vision's literal (src/tools/omni-vision.ts:24) → the base64-decoded-at-runtime (the shadow-secrets' pattern). The dist's plaintext 'sk-lkZREDACTED...' = 0 occurrences (verified across the live/checkpoint/package!). The key now exists ONLY in the base64 form. The ship-package's redaction (SPG_SECRET_PATTERN) still runs at distribution.
 
 ---
 
@@ -769,7 +769,7 @@ append-only with a per-entry SHA anchor; (d) the M1/M2/M3 flags stay at the top 
 
 **THE DIRECT VERIFICATIONS (host session, dist 3b7c622b):**
 1. THE BATTERY: 707 pass / 10 fail (the 10 = the stale Checkpoints/7.3 snapshots — 0 in src; the gate + probe tests included). ZERO regressions.
-2. THE KEY CLEANLINESS (F-21): the plaintext sk-lkZjcgry9 = 0 occurrences in the dist.
+2. THE KEY CLEANLINESS (F-21): the plaintext sk-lkZREDACTED = 0 occurrences in the dist.
 3. THE WAVE-AUDIT GATE CIRCULARITY (the remedy-channel exemption): the write to .trident/wave-audit/live-exempt-verify.md LANDED with the dispatch count > 0 — the audit path is the exempt channel, the gate did NOT throw. The remedy is executable — LIVE.
 4. THE STALE-AUDIT FIX (the freshness probe): the shipping write (docs/live-shipping-verify.md) LANDED with the fresh audit present (wave-1786332727886.md, mtime 08:05 >= the first dispatch ~07:35) — the gate ALLOWED it, the correct post-audit behavior. The stale rejection (the Aug 4-8 audits) is mechanically proven by the unit matrix (wave-audit-gate.test.ts + probe-iso.test.ts — 23 tests, 316 expects).
 5. THE PROBE'S FS FIX: the battery's gate tests green (the ReferenceError class dead).

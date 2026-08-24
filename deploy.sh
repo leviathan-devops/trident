@@ -10,7 +10,7 @@ docker kill $CONTAINER 2>/dev/null || true
 docker rm $CONTAINER 2>/dev/null || true
 
 docker run -d --name $CONTAINER \
-  -e OPENCODE_GO_API_KEY="sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb" \
+  -e OPENCODE_GO_API_KEY="sk-PLACEHOLDER-ZEN-KEY-5" \
   $IMAGE timeout 7200 bash -c 'while true; do sleep 60; done'
 
 docker exec $CONTAINER bash -c "apt-get update -qq && apt-get install -y -qq tmux > /dev/null 2>&1"
@@ -23,7 +23,7 @@ docker cp "$SCRIPT_DIR/config/auth.json" $CONTAINER:/root/.config/opencode/auth.
 
 # Write local share auth (critical — opencode reads from here)
 docker exec $CONTAINER bash -c 'cat > /root/.local/share/opencode/auth.json << '"'"'INNEREOF'"'"'
-{"opencode-go":{"type":"api","key":"sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb"}}
+{"opencode-go":{"type":"api","key":"sk-PLACEHOLDER-ZEN-KEY-5"}}
 INNEREOF'
 
 EXPECTED_SHA=$(cat "$SCRIPT_DIR/dist/sha256.txt")

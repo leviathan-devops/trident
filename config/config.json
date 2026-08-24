@@ -8,7 +8,7 @@
     "opencode-go": {
       "type": "api",
       "url": "https://api.opencode.ai",
-      "apiKey": "sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb",
+      "apiKey": "sk-PLACEHOLDER-ZEN-KEY-5",
       "models": { "deepseek-v4-flash": { "maxOutputTokens": 32768 } }
     }
   },
