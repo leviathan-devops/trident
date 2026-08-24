@@ -1,67 +1,98 @@
 // src/tools/main-session-heal.ts — the DROPPED-GENERATION detector + the
-// MINIMAL KICK (2026-08-13 — the operator's design, verbatim rulings):
+// MINIMAL KICK (2026-08-13 the operator's design; 2026-08-16 the operator's
+// override — the SHADOW-MODEL BINARY DECISION):
 //
 //   THE SIGNAL: the main agent's generation can DROP mid-sentence — the
 //   provider cuts the stream, the runtime FINALIZES the partial message (the
-//   ▣ timestamp renders — "Trident · DeepSeek V4 Flash (2x usage) · 20.3s"),
-//   and the agent goes IDLE with the work stuck. The detector: the LAST
-//   assistant text is OBVIOUSLY incomplete (the incompletion lexicon) AND the
-//   message is FINALIZED (no pending step-start/reasoning — the agent is
-//   idle, NOT processing). That discriminator kills the slow-vs-frozen
-//   ambiguity: a slow HEALTHY generation has a pending step-start (in flight —
-//   never kicked); a DROPPED generation is finalized + incomplete.
+//   ▣ timestamp renders), and the agent goes IDLE with the work stuck.
+//
+//   THE OPERATOR'S OVERRIDE (verbatim — 2026-08-16): "why is this not
+//   literally ready the most recent 5 lines of prose and making an intelligent
+//   shadow model based decision on if this is failing mid generation or
+//   completed text this should be very fucking easy and simple binary yes/no
+//   classifier w/ basic model intelligence" — THE REGEX LADDER IS DEAD. The
+//   incompletion lexicon (the trailing-ellipsis / dangling-connective /
+//   unclosed-fence / unbalanced-bracket regexes) is SLOP — a mechanical
+//   DETECTOR tower making DECISIONS. The decision is now the SHADOW MODEL's
+//   binary judgment: the last 5 lines of prose → "dropped" (yes/no) via the
+//   model's intelligence. THE ISE LAW: the regex is the mechanical DETECTOR
+//   ONLY (the FINALIZED pre-check — the state machine's discriminator); the
+//   DECISION layer is the model classifier.
 //
 //   THE KICK (the operator: "just needs a simple 'continue' or even ' ' empty
 //   space enter kick to reactivate it"): a minimal 'continue' chat message via
-//   the TUI input (appendPrompt + submitPrompt — the same channel the human
-//   typing in the TUI uses). NO interrupt path, NO model switch, NO re-issue
-//   framing (the operator's rulings 2026-08-13 — removed entirely).
-//
-//   THE ISE LAW: the incompletion lexicon is the mechanical DETECTOR only (the
-//   regexes flag CANDIDATES); the DECISION is the state machine
-//   (READ → PARSED → ANALYZED → CLASSIFIED → EVIDENCED → EMITTED; the
-//   fail-state = not-dropped, never a false kick) + the cooldown.
+//   the TUI input (appendPrompt + submitPrompt). NO interrupt path, NO model
+//   switch.
 
 import { readSessionStream } from './wave-status.ts';
 import { tridentLog } from '../utils.js';
+import { callShadow } from './shadow/shadow-brain.ts';
 
-// ═══ THE INCOMPLETION LEXICON — the mechanical DETECTOR (the ISE law: the
-// regexes flag CANDIDATES only; the state machine decides — the lexicon is
-// the detection layer, never the decision layer). THE 2026-08-13 HARDENING
-// (the host misfire: the detector kicked a LIVE generation — a streaming text
-// part was read as 'finalized' + a plain-word report ending was read as a
-// 'mid-sentence-cut'). THE FIX: (1) the FINALIZED check now requires the
-// COMPLETION SIGNAL (the part's time.end / a step-finish) — a streaming text
-// is NEVER finalized; (2) the BARE mid-sentence-cut is REMOVED — a legit
-// report can end with a plain word — a REAL drop shows a dangling connective,
-// a trailing ellipsis, or an unclosed fence. ═══
-const TRAILING_ELLIPSIS = /(?:\.\.\.|\u2026)\s*$/;                          // the operator's example — the sentence cut + "..." or "…"
-const DANGLING_CONNECTIVE = /\b(the|and|or|but|because|of|to|with|for|on|at|from|by|a|an|is|are|was|were|that|which|this|these|if|then|so|as|in|it|its|their|his|her|our|your|we|they|he|she|not|no|yes)\s*$/i;  // a dangling connective — the sentence never landed
-const UNCLOSED_FENCE = /```[^`]*$/;                                        // an unclosed code fence
-const UNBALANCED_OPEN = (t: string): boolean => {
-  const open = (t.match(/\(/g) || []).length + (t.match(/\[/g) || []).length;
-  const close = (t.match(/\)/g) || []).length + (t.match(/\]/g) || []).length;
-  return open > close;
-};
+// ═══ THE CLASSIFIER PROMPT — the model's binary judgment on the prose tail. ═══
+// The last ~5 lines of the agent's text → "is this a DROPPED generation
+// (cut mid-stream by the provider) or COMPLETE text (a finished message)?"
+// The model answers with ONE word: dropped / complete. The output contract is
+// BINARY — the model's intelligence decides, never a regex.
+const DROPPED_CLASSIFIER_SYSTEM =
+  'You are the dropped-generation classifier for the Trident self-heal. ' +
+  'You receive the LAST FEW LINES of an agent\'s message text. ' +
+  'Decide: was this message CUT MID-GENERATION (the provider dropped the ' +
+  'stream — the text ends abruptly, mid-sentence, mid-code, or mid-thought, ' +
+  'with no natural completion) or is it COMPLETE (a finished message)? ' +
+  'Reply with EXACTLY ONE WORD: "dropped" or "complete". ' +
+  'No explanation. No punctuation beyond the word. ' +
+  'A message that ends a natural paragraph, report, or answer is COMPLETE — ' +
+  'even if it has no trailing period. A message that stops mid-sentence, ' +
+  'mid-code-fence, mid-list, or mid-word is DROPPED.';
 
-// ═══ THE DETECTION (the pure state machine — the stream reader injectable for
-// the tests; the production uses the real readSessionStream). ═══
 export interface HealStreamReader {
   (sessionId: string, opts?: { limit?: number; beforeId?: string }): ReturnType<typeof readSessionStream>;
 }
 
 export interface HealDetection {
-  dropped: boolean;                  // the dropped-generation signature
-  reason: string | null;             // 'in-flight' | 'complete' | 'trailing-ellipsis' | 'mid-sentence-cut' | 'dangling-connective' | 'unclosed-code-fence' | 'unbalanced-brackets' | 'no-text' | null (fail-safe)
-  tail: string;                      // the EVIDENCE — the last 120 chars of the analyzed text
-  newestPartType: string | null;     // the EVIDENCE — the stream's newest part type (the finalized signal)
+  dropped: boolean;                  // the model's binary decision (or the fail-safe false)
+  reason: string | null;             // 'in-flight' | 'model-dropped' | 'model-complete' | 'no-text' | null (fail-safe)
+  tail: string;                      // the EVIDENCE — the last ~5 lines analyzed
+  newestPartType: string | null;     // the EVIDENCE — the stream's newest part type
 }
+
+// THE MODEL JUDGE — injectable for the tests (the production uses callShadow;
+// the test injects a fake judge to avoid the network):
+export type DroppedJudge = (tail: string) => Promise<{ dropped: boolean }>;
+
+const defaultJudge: DroppedJudge = async (tail: string) => {
+  try {
+    const r = await callShadow(
+      'The last lines of an agent message:\n\n"""\n' + tail + '\n"""\n\nIs this dropped mid-generation or complete? Answer with exactly one word: dropped or complete.',
+      DROPPED_CLASSIFIER_SYSTEM,
+      8,
+      { retryBackoffMs: 1 },
+    );
+    if (!r.ok || r.content.length === 0) {
+      tridentLog('WARN', 'main-session-heal', 'the dropped-classifier call failed (fail-safe — no kick): ' + (r.error ?? 'empty'));
+      return { dropped: false };
+    }
+    const answer = r.content.trim().toLowerCase();
+    return { dropped: answer.startsWith('dropped') };
+  } catch (e) {
+    tridentLog('WARN', 'main-session-heal', 'the dropped-classifier threw (fail-safe — no kick): ' + (e instanceof Error ? e.message : String(e)));
+    return { dropped: false };
+  }
+};
 
 export function detectDroppedMainGeneration(
   sessionId: string,
-  opts: { stream?: HealStreamReader } = {},
+  opts: { stream?: HealStreamReader; judge?: DroppedJudge } = {},
 ): HealDetection {
   const reader = opts.stream ?? readSessionStream;
+  const judge = opts.judge ?? defaultJudge;
+  // ── THE PURE-ASYNC PROBLEM: the detect is called from the cron's tick;
+  // the model call is async. THE FIX: the detect returns the SYNC part (the
+  // finalized pre-check) + the model decision is made by the CALLER via a new
+  // async function (the cron awaits it). The legacy sync signature stays for
+  // the pre-check (the dropped:false fast-path when in-flight/no-text) — the
+  // model decision only runs when the message is FINALIZED.
+  void sessionId; void judge;
   try {
     // ── READ — the session's part stream (the newest 25 parts) ──
     const page = reader(sessionId, { limit: 25 });
@@ -70,13 +101,10 @@ export function detectDroppedMainGeneration(
     }
     const newest = page.parts[page.parts.length - 1];
     // ── ANALYZED — THE FINALIZED CHECK (the state machine's discriminator) ──
-    // THE END-SIGNAL (2026-08-13 — the host misfire fix): a message is
-    // FINALIZED ONLY when it carries the COMPLETION signal — a 'step-finish'
-    // part OR a text part with the time.end present (rec.completed — the ▣
-    // timestamp rendered, the runtime stopped the generation). A STREAMING
+    // A message is FINALIZED ONLY when it carries the COMPLETION signal — a
+    // 'step-finish' part OR a text part with the time.end present. A STREAMING
     // text part (no time.end, no step-finish yet) is a LIVE generation — the
-    // agent is PROCESSING — NEVER kicked (the host misfire: the cron read a
-    // streaming partial text as 'finalized' and kicked mid-generation).
+    // agent is PROCESSING — NEVER kicked.
     const newestCompleted = newest.type === 'step-finish' || (newest.type === 'text' && newest.completed === true);
     if (!newestCompleted) {
       return { dropped: false, reason: 'in-flight', tail: '', newestPartType: newest.type };
@@ -92,29 +120,45 @@ export function detectDroppedMainGeneration(
     if (lastText.length === 0) {
       return { dropped: false, reason: 'no-text', tail: '', newestPartType: newest.type };
     }
-    const tail = lastText.trimEnd();
-    const tailSnippet = tail.length > 120 ? tail.slice(-120) : tail;
-    // ── CLASSIFIED — THE INCOMPLETION LEXICON (the mechanical DETECTOR) ──
-    // THE BAR (2026-08-13 — the misfire hardening): a REAL drop shows a
-    // dangling connective, a trailing ellipsis, an unclosed fence, or an
-    // unbalanced bracket. The BARE 'mid-sentence-cut' (a plain-word ending
-    // without a terminal) is REMOVED — a legitimate report can end with a
-    // plain word; flagging it produced the false kick.
-    let reason: string | null = null;
-    if (TRAILING_ELLIPSIS.test(tail)) reason = 'trailing-ellipsis';
-    else if (UNCLOSED_FENCE.test(tail)) reason = 'unclosed-code-fence';
-    else if (UNBALANCED_OPEN(tail)) reason = 'unbalanced-brackets';
-    else if (DANGLING_CONNECTIVE.test(tail)) reason = 'dangling-connective';
-    if (!reason) {
-      return { dropped: false, reason: 'complete', tail: '', newestPartType: newest.type };
-    }
-    // ── EVIDENCED + EMITTED ──
-    return { dropped: true, reason, tail: tailSnippet, newestPartType: newest.type };
+    // ── THE TAIL — the last ~5 lines of prose (the operator's spec) ──
+    const lines = lastText.trimEnd().split('\n');
+    const tail = lines.slice(-5).join('\n');
+    const tailSnippet = tail.length > 600 ? tail.slice(-600) : tail;
+    // ── THE MODEL DECISION (the operator's override) — the binary classifier.
+    // The SYNC detect cannot await the model; the caller (the cron) calls the
+    // async classifyDroppedTail AFTER this pre-check. The pre-check returns
+    // the tail + reason 'pending-model' so the cron knows to run the judge.
+    return { dropped: false, reason: 'pending-model', tail: tailSnippet, newestPartType: newest.type };
   } catch (e) {
-    // THE FAIL-SAFE — a detection failure NEVER kicks (the false-kick is the
-    // derailment fuel the operator flagged):
-    tridentLog('WARN', 'main-session-heal', 'the dropped-generation detection failed (fail-safe — no kick): ' + (e instanceof Error ? e.message : String(e)));
+    // THE FAIL-SAFE — a detection failure NEVER kicks:
+    tridentLog('WARN', 'main-session-heal', 'the dropped-generation pre-check failed (fail-safe — no kick): ' + (e instanceof Error ? e.message : String(e)));
     return { dropped: false, reason: null, tail: '', newestPartType: null };
+  }
+}
+
+// ═══ THE MODEL-BASED BINARY DECISION (the operator's override) — the async
+// classifier the cron awaits: the pre-check passed (the message finalized +
+// the tail extracted) → the model judges "dropped" or "complete". ═══
+export async function classifyDroppedTail(
+  sessionId: string,
+  opts: { stream?: HealStreamReader; judge?: DroppedJudge } = {},
+): Promise<HealDetection> {
+  const pre = detectDroppedMainGeneration(sessionId, opts);
+  if (pre.reason !== 'pending-model') return pre;   // in-flight / no-text / fail-safe — no model call
+  const judge = opts.judge ?? defaultJudge;
+  try {
+    const decision = await judge(pre.tail);
+    return {
+      dropped: decision.dropped,
+      reason: decision.dropped ? 'model-dropped' : 'model-complete',
+      tail: pre.tail,
+      newestPartType: pre.newestPartType,
+    };
+  } catch (e) {
+    // THE FAIL-SAFE — a throwing judge NEVER kicks (the false-kick is the
+    // derailment fuel):
+    tridentLog('WARN', 'main-session-heal', 'the dropped-classifier judge threw (fail-safe — no kick): ' + (e instanceof Error ? e.message : String(e)));
+    return { dropped: false, reason: null, tail: pre.tail, newestPartType: pre.newestPartType };
   }
 }
 

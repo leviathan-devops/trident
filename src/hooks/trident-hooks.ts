@@ -37,7 +37,7 @@ function hookDebugWrite(line: string): void {
 }
 
 import { isToolAllowed as isToolAllowedAllowlist } from '../security/tool-allowlist.js';
-import { setCurrentAgent, getCurrentAgent, clearCurrentAgent, getToolsCalled, resetToolsCalled, incrementToolsCalled, getLastMessage, setLastMessage, getPendingL1Path, clearPendingL1Path, setContainerSkillLoaded, isContainerSkillLoaded, isContainerTestingCommand, setCurrentSessionModel, setPoseidonIntent, getPoseidonIntent, clearPoseidonIntent } from './agent-state.js';
+import { setCurrentAgent, getCurrentAgent, clearCurrentAgent, getToolsCalled, resetToolsCalled, incrementToolsCalled, getLastMessage, setLastMessage, getPendingL1Path, clearPendingL1Path, setContainerSkillLoaded, isContainerSkillLoaded, isContainerTestingCommand, classifyContainerCommand, setCurrentSessionModel, setPoseidonIntent, getPoseidonIntent, clearPoseidonIntent } from './agent-state.js';
 import { getClient } from '../artifacts/llm-generator.ts';
 import { tridentLog, getEvidenceStore } from '../utils.js';
 import { runDocDensityGate } from '../tools/doc-density-state.ts';
@@ -53,12 +53,27 @@ import { isGodLoopActive, isLeafNode } from '../poseidon/poseidon-state.js';
 import { checkPoseidonDerailment } from './poseidon-enforcer-hook.js';
 import { checkSmokeTestFirewall, sstfStateTracker, appendToContextWindow, getContextWindow as getSSTFContextWindow } from '../firewalls/semantic-smoke-firewall.js';
 import { classifyCtExec, buildCtConfigLockMessage } from '../firewalls/ct-anti-derailment.js';
-import { classifyMemoryRead, classifyDispatchMemoryRisk } from '../firewalls/memory-read-lexicon.ts';
+import { classifyMemoryRead, classifyDispatchMemoryRisk, repairMemoryBomb } from '../firewalls/memory-read-lexicon.ts';
 import { classifyDispatchInput } from '../firewalls/dispatch-input-lexicon.ts';
 import { omniVisionChainHook } from '../tools/omni-vision.ts';
 import {
   assessTaskBlock, loadPromptFileForDispatch, TASK_BLOCK_MESSAGE,
 } from '../tools/wave-dispatch.ts';
+// ═══ THE DEGENERACY-LOOP KILLER (2026-08-16 — the operator's directive: the
+// ACTOR_ENGINE_ADAPTER_CONTAINER_MODEL backend intelligence that changes the
+// actual firewall message + fires a chat-message kick into the session per
+// POSEIDON_CHAT_KICK_MECHANICS). The adapter (observe/observeSuccess) wraps
+// the THREE task blocks below (the wave mandate / the wave verbatim / the
+// dispatch memory screen) + the pass path. The kick (fireKick) is the
+// session.prompt REAL-turn — the ONLY sanctioned kick channel. ═══
+import {
+  observe as loopKillerObserve,
+  observeSuccess as loopKillerObserveSuccess,
+  fireKick as loopKillerFireKick,
+  defaultLoopActor,
+  type LoopObserveOutcome,
+  type KickClientLike,
+} from '../loop-killer/index.ts';
 import { ReminderQueue } from '../tools/wave-reminder-queue.ts';
 import { SHADOW_TOOLS, TRIDENT_TMP_DIR } from '../tools/wave-constants.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
@@ -754,6 +769,19 @@ var firstDispatchTs = new Map<string, number>();     // the first successful dis
 var questionRoundCount = new Map<string, number>();  // question calls per session (cap 3)
 var dispatchSkillLoads = new Set<string>();          // sessions that loaded trident-dispatch-templates (the skill-load-demand gate — the operator's 2026-08-04 mandate: DPL1-grade construction is the DEFAULT, not the adaptation. The first dispatch in a session that has NOT loaded the templates skill is turned with the directive BEFORE any prompt is written.)
 var waveGeneratorUsed = new Set<string>();           // sessions that USED trident-wave-manager (the EITHER/OR — 2026-08-08, the operator: "the DISPATCH SKILL REQUIRED demand needs to be an either/or on the dispatch skill + wave manager tool. either one fulfills the criteria dont hardcode the skill... stupid to have an error block if the tool is used over the skill". The wave manager produces the SAME DPL1-grade prompts the skill teaches — a session that used the tool has satisfied the standard without loading the skill.)
+// ═══ THE FIREWALL-BLOCK FLAG (2026-08-16 — the operator's basic logic: "if
+// boolean throw error = true boolean registry update = false; if boolean throw
+// error = false boolean registry update = true. basic logic"). THE BUG IT
+// FIXES: a [WAVE VERBATIM]-blocked task call was recorded as 'accepted' in the
+// wave registry (isTaskCallAccepted mis-read the blocked output as accepted →
+// the registry showed the wave 'dispatched' → the T.E.A. wipe fired → the
+// prompt file died BEFORE a subagent ever spawned). THE FIX: the tool.before's
+// firewall throws SET this flag; the tool.after's registry confirmation READS
+// it — if the flag is set for this call, the confirmation is REJECTED (the
+// firewall ran FIRST, the dispatch NEVER happened). THE FLAG RESETS after the
+// tool.after reads it (per-call). THE OPERATOR'S LOGIC, MECHANICALLY: throw →
+// registry update = FALSE. No throw → registry update = the acceptance probe. ═══
+var taskFirewallBlocked = new Map<string, string>();  // tool-call-key → the block reason (the per-call firewall-block flag)
 var ctSetupDone = new Set<string>();                 // sessions with a VALIDATED container-test setup (the CT state machine — the operator's 2026-08-06 mandate: the ad-hoc send/check bypass is dead; the setup with a validated plan runs FIRST)
 
 // ── GATE-STATE PERSISTENCE (Fix 9 — 2026-08-05, the M7/M8 lesson) ──
@@ -814,6 +842,36 @@ function saveGateState(): void {
 }
 
 loadGateState();
+
+// ═══ THE DEGENERACY-LOOP KILLER — THE SESSION KICK HELPER (2026-08-16) ═══
+// The adapter's observe returns shouldKick at rung 3 (ESCALATE). The hook
+// fires the kick — the session.prompt REAL-turn carrying the
+// [DEGENERACY LOOP - STOP] message (the operator's rename, verbatim) — via
+// fireKick (src/loop-killer/kick.ts, the POSEIDON_CHAT_KICK_MECHANICS
+// channel). THE BANS RESPECTED: NO chat.message assistant injection, NO
+// text.complete stream mutation — the session.prompt REAL-turn is the ONLY
+// sanctioned kick. The client is the plugin's live client (getClient from
+// src/artifacts/llm-generator.ts — set at plugin load via setClientGetter);
+// the kick's failure path logs + propagates (the kick is the side effect,
+// and the side effect precedes the success claim).
+async function loopKillerKickSession(sessionId: string, message: string): Promise<void> {
+  try {
+    const outcome = await loopKillerFireKick({
+      sessionId: sessionId || 'default',
+      message,
+      getClient: () => (typeof getClient === 'function' ? getClient() : null) as KickClientLike | null,
+    });
+    if (!outcome.kicked) {
+      // THE LOUD-FAIL LAW: a dead kick is a dead ladder rung — the escalation
+      // promised a behavior change, and the change must not be silent. Log the
+      // failure; the dispatch continues its enforcement path (the message was
+      // already prefixed — the model sees the escalation either way).
+      tridentLog('ERROR', 'trident-hooks', 'LOOP-KILLER KICK FAILED for session ' + (sessionId || 'default') + ': ' + outcome.detail);
+    }
+  } catch (kickErr) {
+    tridentLog('ERROR', 'trident-hooks', 'LOOP-KILLER KICK threw for session ' + (sessionId || 'default') + ': ' + (kickErr instanceof Error ? kickErr.message : String(kickErr)));
+  }
+}
 
 // ── THE WAVE CRON REGISTRATION (Part 24 — the plugin's load path) ──
 // The 10m silent clock — the anti-fire-and-forget guardrail. The single
@@ -1099,10 +1157,15 @@ async function checkTheatricalPatterns(toolName: string, input: Record<string, u
 var WAVE_RECORD_WINDOW_MS = 60 * 60 * 1000;
 var WAVE_RECORD_CAP = 20;
 // THE NAMED CALIBRATION (2026-08-10 — the ISE soft-warn's remediation): the
-// 125-line threshold = the DPL1 dispatch floor (the wave manager's validated
-// prompts are 125+ lines; a record below it is NOT a wave-generator record →
-// the exemption does NOT apply). Named ONCE, referenced everywhere.
-var WAVE_RECORD_MIN_LINES = 125;
+// 96-line threshold = the DPL1 dispatch ENFORCEMENT floor (the operator's
+// 2026-08-19 ruling: relax the enforcement to 96 so good prompts pass, keep
+// 125 as the generation reference). Prompts below 96 are NOT wave-generator
+// records → the wave-audit gate does not count them.
+// ⚠️ INTENTIONAL RELAXATION — NOT A REGRESSION: 96, not 125, per the
+// 2026-08-19 ruling. The 125 reference is in the polisher text + the
+// generation demands. DO NOT restore 125 — it re-breaks the clean-but-short
+// host prompts (118/119 lines, structurally complete).
+var WAVE_RECORD_MIN_LINES = 96;
 // THE WAVE-DISPATCH WINDOW (2026-08-10 — the registry design's calibration):
 // the batch's N task calls land in ONE message — the tool loop fires the
 // per-call hooks within SECONDS of each other. The one-at-a-time derailment's
@@ -1202,7 +1265,7 @@ function readWaveRegistry(waveId: string): { wave: string; total: number; calls:
 // SHA-mismatch = a condensation → the [WAVE VERBATIM] block.
 // THE LINES-GATE (2026-08-09 — the operator's live catch: the exemption must
 // NOT trust a manifest record of a SLOP prompt — the wave manager's validated
-// prompts are 125+ lines; a manifest entry recording fewer is NOT a
+// prompts are 96+ lines (the ENFORCEMENT floor — the 2026-08-19 ruling); a manifest entry recording fewer is NOT a
 // wave-generator record → the exemption does NOT apply → the structural checks
 // fire → the slop is BLOCKED by the [TASK FIREWALL]).
 function findWaveManifestEntry(desc: string, sha: string): { name: string; sha256: string; lines: number } | null {
@@ -1722,11 +1785,21 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
       // trident-container-test tool (action-based API with test plan enforcement,
       // stream offset tracking, and evidence collection). Raw bash docker/tmux is
       // the theatrical path — it bypasses plan validation and produces no tracked evidence.
-      // Infrastructure commands (docker ps/images/stop/rm/logs/inspect) remain allowed.
+      // THE 5-LAYER CLASSIFIER (2026-08-19): tokenize → wrapper-strip → verb-class →
+      // target-check → fail-closed. The evidence triad (verb + target + tokenIndex)
+      // names the EXACT token so the message teaches the boundary. docker exec|run|cp
+      // + tmux send-keys|pipe-pane|capture-pane = MUTATION → blocked by verb, always.
+      // Infrastructure (docker ps/images/inspect/logs/version/info) remain allowed.
+      const ctDetail = classifyContainerCommand(bashCmd);
+      const ev = ctDetail.evidence;
+      const detailLine = ev
+        ? '  VERB: ' + ev.verb + (ev.target ? ' | TARGET: ' + ev.target : '') + ' | TOKEN#' + ev.tokenIndex + '\n  ' + ev.reason
+        : '';
       throw new Error(
         '[TRIDENT CT TOOL REQUIRED] Raw docker/tmux test cmds FORBIDDEN.\n' +
+        (detailLine ? detailLine + '\n' : '') +
         'Use trident-container-test: setup|deploy|send|read|check|suite.\n' +
-        'Infra (docker ps/images/stop/rm/logs/inspect) allowed.');
+        'Infra (docker ps/images/inspect/logs/version/info) allowed.');
     }
     // THE ANTI-DERAILMENT LEXICON (2026-08-09 — the operator: "WHY IS THIS NOT
     // BANNED AND BLOCKED BY THE TOOL") — the HOST-side bash surface: a bash
@@ -1834,9 +1907,63 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
     // below blocks ANY wave-agent dispatch WITHOUT it — the inline-prompt
     // derailment becomes structurally impossible. ═══
     var tebHadPromptFile = false;
+    var loopKillerOutcome: LoopObserveOutcome | null = null;
     try {
       var waveBlockArgs = cast<Record<string, unknown>>(output?.args || output || {});
+      // ═══ THE RAW-ARGS DEBUG DUMP (2026-08-16 — the direct-test instrumentation,
+      // the operator: "test this directly w/ an attached debug log so you can
+      // see the raw tool data the agent is sending and verify if this is
+      // actually working correctly"). ALWAYS writes (console.error — not
+      // gated) so the test sees EXACTLY what the agent passed: the path string
+      // in the prompt arg (the VAL carrier) or the degenerate content. REMOVE
+      // AFTER the test confirms. ═══
+      try {
+        console.error('[T.E.B. RAW-ARGS] ' + JSON.stringify({ tool: 'task', args: waveBlockArgs }).substring(0, 800));
+      } catch (rawErr) { /* non-fatal */ }
+      // ═══ THE DEGENERACY-LOOP OBSERVE — MOVED TO THE TOP (2026-08-16 — the
+      // container caught the ORDER bug live): the observe sat AFTER the
+      // loader's file-read (line ~2088), so an ENOENT promptFile (the T.E.A.
+      // wipe) threw the [TRIDENT PROMPT FILE] gate BEFORE the ladder saw the
+      // dispatch → the identical re-fires never escalated. THE FIX: the
+      // observe runs FIRST (before the loader), so EVERY dispatch — including
+      // the ENOENT-blocked ones — hits the ladder. The input key is the
+      // NORMALIZED DISPATCH IDENTITY (the description + the promptFile path —
+      // the VAL-carrier normalization: the path-VAL form and the name+promptFile
+      // form hash to the SAME key).
+      try {
+        var lkDesc = typeof waveBlockArgs.description === 'string' ? waveBlockArgs.description : '';
+        var lkPromptFile = typeof waveBlockArgs.promptFile === 'string' ? waveBlockArgs.promptFile : '';
+        var lkPrompt = typeof waveBlockArgs.prompt === 'string' ? waveBlockArgs.prompt : '';
+        if (!lkPromptFile && lkPrompt && lkPrompt.indexOf(TRIDENT_TMP_DIR) === 0) lkPromptFile = lkPrompt;
+        var lkInputKey = (lkDesc || '(no description)') + '|' + (lkPromptFile || lkPrompt || '');
+        loopKillerOutcome = loopKillerObserve({
+          actor: defaultLoopActor,
+          input: lkInputKey,
+          sessionId: sid || sessionId || 'default',
+          message: lkPrompt || '',
+        });
+      } catch (lkObsErr) {
+        tridentLog('WARN', 'trident-hooks', 'LOOP-KILLER observe failed (non-fatal — the ladder is additive): ' + (lkObsErr instanceof Error ? lkObsErr.message : String(lkObsErr)));
+      }
       var wavePromptFile = typeof waveBlockArgs.promptFile === 'string' ? waveBlockArgs.promptFile : '';
+      // ═══ THE PROMPT-AS-PATH FAILSAFE (2026-08-16 — the W1 prime fix, the
+      // operator's exact spec: "there needs to be 2nd branch that fires as well
+      // when the promptFile string (correct) is passed as the prompt arg
+      // (incorrect) that does the same thing... the issue is that glm is
+      // passing the promptfile correctly, but is fucking up by passing it as a
+      // prompt arg instead of a promptfile arg... literally the exact same
+      // trigger just a slightly different input"). When promptFile is absent
+      // but the prompt string IS an existing file path inside TRIDENT_TMP_DIR,
+      // the prompt-as-path is treated as the promptFile — the SAME mechanics
+      // fire (load + inject + set the flag). The model's wrong-var shape is
+      // absorbed, never a "pass it the right way" error. ═══
+      if (!wavePromptFile || wavePromptFile.trim().length === 0) {
+        var wavePromptAsPath = typeof waveBlockArgs.prompt === 'string' ? waveBlockArgs.prompt.trim() : '';
+        if (wavePromptAsPath && wavePromptAsPath.indexOf(TRIDENT_TMP_DIR) === 0 && existsSync(wavePromptAsPath)) {
+          wavePromptFile = wavePromptAsPath;
+          tridentLog('INFO', 'trident-hooks', 'T.E.B. FAILSAFE: the prompt param carried the file path — treated as the promptFile (' + wavePromptAsPath + ')');
+        }
+      }
       if (wavePromptFile && wavePromptFile.trim().length > 0) {
         tebHadPromptFile = true;
         var loadedPrompt = loadPromptFileForDispatch(wavePromptFile.trim());
@@ -1849,6 +1976,9 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
           cast<Record<string, unknown>>(output).args = waveOutArgs;
         }
         tridentLog('INFO', 'trident-hooks', 'T.E.B. MACHINE: promptFile→prompt mutated + background:true (' + wavePromptFile.trim() + ' → ' + loadedPrompt.split('\n').length + ' lines, ' + loadedPrompt.length + ' chars)');
+        try {
+          console.error('[T.E.B. MUTATED] prompt=' + loadedPrompt.substring(0, 120) + '... background=true promptFile=DELETED (loaded from ' + wavePromptFile.trim() + ')');
+        } catch (mutErr) { /* non-fatal */ }
       }
     } catch (wbErr) {
       // The gates rethrow — the catch shields only the unexpected:
@@ -1983,8 +2113,27 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
             if (!tfPrompt) tfPrompt = argsStr || '';
             var tfSid = sid || sessionId || 'default';
             var tfDesc = typeof tfArgs.description === 'string' ? tfArgs.description : '';
+            // ═══ THE DEGENERACY-LOOP PREFIX ON THE WAVE-MANDATE BLOCK ═══
+            // THE OBSERVE RAN AT THE TOP (before the loader — the ENOENT cannot
+            // preempt the ladder); loopKillerOutcome holds the rung decision.
+            // At a BLOCK rung (count 4+), the block error carries the
+            // [DEGENERACY LOOP - STOP] prefix — the model sees the refusal +
+            // the loop identification in one error.
             if (!tfIsResume && !waveAgentExists(tfDesc)) {
-              throw new Error('[WAVE MANDATE] the task call for "' + (tfDesc || '(no description)') + '" does NOT match any generated wave agent. WHAT WENT WRONG: the dispatch was not generated by trident-wave-manager. WHAT TO DO: RUN trident-wave-manager action=generate ONCE (the agents array + the context args) — then pass the returned prompt file\'s PATH (a filepath and nothing else) with the description + subagent_type. The wave manager generated the payload; you only pass its path.');
+              // ═══ THE DEGENERACY-LOOP PREFIX ON THE WAVE-MANDATE BLOCK ═══
+              // At a BLOCK rung (count 4+), the block error carries the
+              // [DEGENERACY LOOP - STOP] prefix — the model sees the refusal +
+              // the loop identification in one error.
+              // THE FIREWALL-BLOCK FLAG (2026-08-16 — the operator's logic):
+              // the firewall THREW → the registry update MUST be FALSE. The
+              // tool.after reads this flag + confirms the registry REJECTED
+              // (never 'accepted' — the blocked call NEVER dispatched).
+              try { taskFirewallBlocked.set((sid || sessionId || 'default') + '|' + tfDesc, '[WAVE MANDATE]'); } catch (fk) { /* non-fatal */ }
+              var lkMandateMsg = '[WAVE MANDATE] the task call for "' + (tfDesc || '(no description)') + '" does NOT match any generated wave agent. WHAT WENT WRONG: the dispatch was not generated by trident-wave-manager. WHAT TO DO: RUN trident-wave-manager action=generate ONCE (the agents array + the context args) — then pass the returned prompt file\'s PATH (a filepath and nothing else) with the description + subagent_type. The wave manager generated the payload; you only pass its path.';
+              if (loopKillerOutcome && loopKillerOutcome.rung === 'BLOCK') {
+                lkMandateMsg = loopKillerOutcome.message + ' ' + lkMandateMsg;
+              }
+              throw new Error(lkMandateMsg);
             }
             if (!tfIsResume && tfDesc && waveAgentExists(tfDesc) && !tebHadPromptFile) {
               // ═══ THE T.E.B. INPUT CLASSIFIER (2026-08-15 — the #25 Part-1
@@ -1994,7 +2143,20 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
               var tfInputBullet = tfInputShape.action === 'BLOCK'
                 ? tfInputShape.message
                 : 'YOUR INPUT WAS A PROMPT, NOT A PATH. The task input is a FILEPATH and nothing else — pass the ACTUAL PATH of the prompt file the wave manager generated (the promptFile); do NOT write the prompt text.';
-              throw new Error('[WAVE VERBATIM] the task call for "' + tfDesc + '" did NOT carry the promptFile — the T.E.B. machine injects the prompt byte-exact from the file; the model passes ONLY description + promptFile + subagent_type. ' + tfInputBullet);
+              // ═══ THE DEGENERACY-LOOP PREFIX ON THE WAVE-VERBATIM BLOCK ═══
+              // The SAME ladder rides the verbatim firewall — a BLOCK rung
+              // prefixes the STOP message; an ESCALATE rung fires the kick.
+              // THE FIREWALL-BLOCK FLAG (2026-08-16 — the operator's logic):
+              // the firewall THREW → the registry update MUST be FALSE. This
+              // is the EXACT bug: a blocked call was recorded 'accepted' →
+              // the wave 'dispatched' → the TEA wipe fired → the prompt file
+              // died before a subagent spawned.
+              try { taskFirewallBlocked.set((sid || sessionId || 'default') + '|' + tfDesc, '[WAVE VERBATIM]'); } catch (fk2) { /* non-fatal */ }
+              var lkVerbatimMsg = '[WAVE VERBATIM] the task call for "' + tfDesc + '" did NOT carry the promptFile — the T.E.B. machine injects the prompt byte-exact from the file; the model passes ONLY description + promptFile + subagent_type. ' + tfInputBullet;
+              if (loopKillerOutcome && loopKillerOutcome.rung === 'BLOCK') {
+                lkVerbatimMsg = loopKillerOutcome.message + ' ' + lkVerbatimMsg;
+              }
+              throw new Error(lkVerbatimMsg);
             }
             // ═══ THE DISPATCH MEMORY SCREEN (2026-08-15 — the operator: "what
             // do we need to enhance so that subagents are not dispatched w/
@@ -2010,7 +2172,53 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
             if (!tfIsResume && tfPrompt) {
               var tfMemRisk = classifyDispatchMemoryRisk(tfPrompt);
               if (tfMemRisk.action === 'BLOCK') {
-                throw new Error('[DISPATCH MEMORY SCREEN] the prompt for "' + (tfDesc || '(no description)') + '" carries a memory-bomb command: ' + tfMemRisk.message);
+                // ═══ THE REPAIR-PROCEED (2026-08-16 — the W4 fix, the M23 2a
+                // design: the screen's BLOCK becomes a REPAIR — "the wave's OWN
+                // payload is cleaned, never rejected" (the operator). The throw
+                // is GONE from the normal path: repairMemoryBomb rewrites the
+                // bomb command lines to their bounded forms DIRECTLY IN THE
+                // PROMPT, and the dispatch PROCEEDS with the cleaned payload.
+                // THE SHA RECONCILIATION (2026-08-16): the verbatim SHA at line
+                // 2063 computes on the ORIGINAL tfPrompt (NOT the repaired one)
+                // — the manifest lookup + the [WAVE BATCH] registry gate
+                // (findWaveManifestEntry / findWaveRecordForAgent) MUST see the
+                // byte-exact generated bytes to enforce the wave authorization,
+                // and the manifest will NEVER contain the repaired SHA. The
+                // T.E.B. loader ALREADY assigned output.args.prompt = the
+                // byte-exact content (line 1874); the REPAIR re-assigns it to
+                // the cleaned payload — the same in-place mutation channel the
+                // runtime dispatch consumes. A local-only assignment would die
+                // here and the wave would STILL dispatch the bomb. ═══
+                var tfRepair = repairMemoryBomb(tfPrompt);
+                var tfChangedLines = tfRepair.changed;
+                if (tfChangedLines.length > 0) {
+                  // THE MUTATION — output.args.prompt = the repaired payload
+                  // (the SAME in-place channel the T.E.B. machine uses — the
+                  // runtime consumes output.args, never the local tfPrompt):
+                  if (output && typeof output === 'object') {
+                    var tfMemOutArgs = cast<Record<string, unknown>>(output.args || {});
+                    tfMemOutArgs.prompt = tfRepair.prompt;
+                    cast<Record<string, unknown>>(output).args = tfMemOutArgs;
+                  }
+                  // THE CHANGE SURFACE — the debug-gated log (the TRIDENT_DEBUG
+                  // writer, never an unconditional write):
+                  try {
+                    hookDebugWrite('[DISPATCH MEMORY SCREEN] REPAIRED the prompt for "' + (tfDesc || '(no description)') + '": ' + tfChangedLines.length + ' bomb line(s) → the bounded forms: ' + tfChangedLines.join(' | ') + '\n');
+                  } catch (tfRepairLogErr) { /* debug non-fatal */ }
+                  tridentLog('WARN', 'trident-hooks', 'DISPATCH MEMORY SCREEN: REPAIRED the prompt for "' + (tfDesc || '(no description)') + '" — ' + tfChangedLines.length + ' bomb line(s) rewritten to the bounded forms (' + tfChangedLines.join('; ') + ') — the dispatch proceeds with the cleaned payload');
+                } else {
+                  // THE SCREEN FIRE-WALL: a BLOCK with ZERO changed lines is an
+                  // unrepairable bomb (a repair that re-trips the screen would
+                  // loop) — the loud-fail law: the BLOCK names the failure.
+                  // ═══ THE DEGENERACY-LOOP PREFIX ON THE MEMORY-SCREEN BLOCK ═══
+                  // The ladder rides the 3rd task block: a BLOCK rung prefixes
+                  // the STOP message onto the unrepairable-bomb refusal.
+                  var lkMemMsg = '[DISPATCH MEMORY SCREEN] the prompt for "' + (tfDesc || '(no description)') + '" carries an UNREPAIRABLE memory-bomb command: ' + tfMemRisk.message + ' THE REPAIR: the command line must be rewritten by hand to the bounded forms (grep -c / wc -l / sha256sum / stat / the streaming tools) before the dispatch.';
+                  if (loopKillerOutcome && loopKillerOutcome.rung === 'BLOCK') {
+                    lkMemMsg = loopKillerOutcome.message + ' ' + lkMemMsg;
+                  }
+                  throw new Error(lkMemMsg);
+                }
               }
             }
             // ═══ THE WAVE-VERBATIM CHECK — SIMPLIFIED (2026-08-14 — the operator:
@@ -2148,6 +2356,15 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
             // path (the verbatim exemption is now the ONLY path). The
             // allowed-dispatch record below feeds the SSTF claim gate. ═══
             if (!tfIsResume && tfPrompt) {
+              // ═══ THE DEGENERACY-LOOP KICK (rung 3 — ESCALATE) ═══
+              // When the observe reached the ESCALATE rung (count 3), the
+              // session.prompt REAL-turn kick fires — the ONLY sanctioned kick
+              // channel (POSEIDON_CHAT_KICK_MECHANICS). The kick is fire-and-
+              // forget (the hook must not block the dispatch on the network
+              // call); the failure path is logged inside loopKillerKickSession.
+              if (loopKillerOutcome && loopKillerOutcome.shouldKick && loopKillerOutcome.message) {
+                void loopKillerKickSession(tfSid, loopKillerOutcome.message);
+              }
               // Well-specified, allowed dispatch — record for the CLAIM GATE v3 gate.
               // THE ORDER MATTERS (2026-08-10 — the bet-your-life audit caught it):
               // the firstDispatchTs sets MUST run BEFORE the increments — the
@@ -2159,6 +2376,20 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
               if (!firstDispatchTs.has('default')) firstDispatchTs.set('default', Date.now());
               incrementSessionCount(taskDispatchCount, tfSid);
               incrementSessionCount(taskDispatchCount, 'default'); // dual-write fallback key
+              // ═══ THE DEGENERACY-LOOP SUCCESS RESET (observeSuccess) ═══
+              // The PASS path clears the actor's key — the machine's RESET
+              // transition: a dispatch that passed all the firewalls is NOT the
+              // degeneracy loop, so the NEXT identical fire starts at count 1
+              // again. The reset is a state transition, not a side effect — it
+              // is what breaks the loop AHEAD of the ladder.
+              try {
+                loopKillerObserveSuccess({
+                  actor: defaultLoopActor,
+                  input: tfPrompt || tfDesc || argsStr || '',
+                });
+              } catch (lkOkErr) {
+                tridentLog('WARN', 'trident-hooks', 'LOOP-KILLER observeSuccess failed (non-fatal): ' + (lkOkErr instanceof Error ? lkOkErr.message : String(lkOkErr)));
+              }
             }
           } catch (tfErr) {
             // v5-fix (2026-08-04, the operator's catch — LIVE-FOUND): the catch swallowed
@@ -2604,11 +2835,34 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
       var regArgs = cast<Record<string, unknown>>((input as any)?.args || {});
       var regDesc = typeof regArgs.description === 'string' ? regArgs.description : '';
       var regPromptFile = typeof regArgs.promptFile === 'string' ? regArgs.promptFile : '';
-      var regAccepted = isTaskCallAccepted(output);
-      if (regDesc && regAccepted !== null) {
-        var regConf = confirmWaveRegistryCall(TRIDENT_TMP_DIR, regDesc, regPromptFile, regAccepted);
-        if (regConf) {
-          tridentLog('INFO', 'trident-hooks', 'WAVE REGISTRY CONFIRM: ' + regDesc + ' → ' + regConf.status + ' (wave ' + regConf.wave + ')');
+      // ═══ THE FIREWALL-BLOCK FLAG READ (2026-08-16 — the operator's basic
+      // logic: "if boolean throw error = true boolean registry update = false;
+      // if boolean throw error = false boolean registry update = true").
+      // THE BUG IT FIXES: a [WAVE VERBATIM]-blocked task call was recorded as
+      // 'accepted' in the wave registry → the wave showed 'dispatched' → the
+      // T.E.A. wipe fired → the prompt file died BEFORE a subagent spawned.
+      // THE FIX: if the tool.before's firewall SET the block flag for this
+      // call (session|desc), the registry confirmation is FORCED to REJECTED
+      // (false) — the firewall ran FIRST, the dispatch NEVER happened. The
+      // flag is consumed + reset here (per-call). ═══
+      var regBlockKey = (cast<InputMessage>(input)?.sessionID || sessionId || 'default') + '|' + regDesc;
+      var regBlocked = taskFirewallBlocked.get(regBlockKey);
+      if (regBlocked) {
+        taskFirewallBlocked.delete(regBlockKey);
+        tridentLog('WARN', 'trident-hooks', 'WAVE REGISTRY CONFIRM: ' + regDesc + ' → REJECTED (the firewall blocked this call: ' + regBlocked + ' — the dispatch NEVER happened, the registry must NOT record ' + regDesc + ' as accepted)');
+        try {
+          var regConfRej = confirmWaveRegistryCall(TRIDENT_TMP_DIR, regDesc, regPromptFile, false);
+          if (regConfRej) {
+            tridentLog('INFO', 'trident-hooks', 'WAVE REGISTRY CONFIRM (blocked): ' + regDesc + ' → ' + regConfRej.status + ' (wave ' + regConfRej.wave + ')');
+          }
+        } catch (regRejErr) { tridentLog('WARN', 'trident-hooks', 'the blocked-call registry confirmation failed (non-fatal): ' + (regRejErr instanceof Error ? regRejErr.message : String(regRejErr))); }
+      } else {
+        var regAccepted = isTaskCallAccepted(output);
+        if (regDesc && regAccepted !== null) {
+          var regConf = confirmWaveRegistryCall(TRIDENT_TMP_DIR, regDesc, regPromptFile, regAccepted);
+          if (regConf) {
+            tridentLog('INFO', 'trident-hooks', 'WAVE REGISTRY CONFIRM: ' + regDesc + ' → ' + regConf.status + ' (wave ' + regConf.wave + ')');
+          }
         }
       }
     } catch (regConfErr) {
@@ -2730,19 +2984,17 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
       // (the generator spawns NOTHING; the child sessions do not exist until
       // the orchestrator dispatches the returned batch via the batch tool).
       // The header now states the generator-only reality.
-      var wdAppend = '\n\n## WAVE GENERATED — THE BATCH FORM + THE T.E.A. WIPE\n';
-      var wdParsed: Record<string, unknown> | null = null;
-      try { wdParsed = JSON.parse(wdRaw) as Record<string, unknown>; } catch (e6) { /* plain text */ }
-      if (wdParsed && wdParsed.wave && Array.isArray(wdParsed.dispatched)) {
-        var wdWave = String(wdParsed.wave);
-        var wdDispatched = wdParsed.dispatched as Array<{ name?: string; sessionId?: string }>;
-        wdAppend += 'Wave ' + wdWave + ': ' + wdDispatched.length + ' prompt(s) GENERATED — NO subagents have been dispatched (the generator does NOT spawn). DISPATCH the returned batch form NOW — ALL ' + wdDispatched.length + ' task calls as the parts of ONE message (THE BATCH PROCESS — the child sessions exist only after that dispatch).\n';
-        if (typeof wdParsed.checkIn === 'string' && (wdParsed.checkIn as string).length > 0) {
-          wdAppend += '\n' + wdParsed.checkIn + '\n';
-        }
-  
+      // THE DISPATCH INSTRUCTION (2026-08-19 — the operator: the 5-day-built
+      // trident-wave-manager tool has ONE action = dispatch — we call it with
+      // waveId, NOT with the batch form. The batch form is a debugger's view,
+      // not a dispatch contract. The next step is the tool call.)
+      var wdAppend = '';
+      var wdParsed2: Record<string, unknown> | null = null;
+      try { wdParsed2 = JSON.parse(wdRaw) as Record<string, unknown>; } catch (e6) { /* plain text */ }
+      if (wdParsed2 && wdParsed2.wave) {
+        wdAppend = '\n\n## WAVE GENERATED — call trident-wave-manager action=dispatch waveId=' + String(wdParsed2.wave) + ' NOW. The dispatch tool IS the next step — do not paste the batch form; the T.E.A. wipe fires on dispatch.\n';
       } else {
-        wdAppend += 'The wave manager returned without a parseable wave — see the raw result.';
+        wdAppend = '\n\n## WAVE GENERATED — the wave manager returned without a parseable wave — see the raw result and call the dispatch tool.\n';
       }
       if (typeof wdOut.output === 'string') { wdOut.output = wdOut.output + wdAppend; }
       else { wdOut.output = wdAppend; }

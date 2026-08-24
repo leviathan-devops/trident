@@ -31,8 +31,10 @@
 import * as path from 'node:path';
 
 /** THE EXACT [SHADOW INFERENCE] SECTION TITLE (D-SH-3 — the operator's ruling:
- *  "just title this [SHADOW INFERENCE] though"). */
-export const SHADOW_INFERENCE_SECTION_TITLE = '## [SHADOW INFERENCE]';
+ *  "just title this [SHADOW INFERENCE] though"). The TRIGGER is the bare
+ *  "[SHADOW INFERENCE]" — the ## is a markdown prefix outside the section's
+ *  identity (the cleaner design per the operator: why is ## even a trigger). */
+export const SHADOW_INFERENCE_SECTION_TITLE = '[SHADOW INFERENCE]';
 
 /** D-SH-1 — the recent ~30-message window. */
 export const SESSION_STREAM_WINDOW = 30;
@@ -294,7 +296,7 @@ function assembleInference(
   flags: ContradictionFlag[],
 ): ShadowInference {
   const L: string[] = [];
-  L.push(SHADOW_INFERENCE_SECTION_TITLE);
+  L.push(SHADOW_INFERENCE_SECTION_TITLE); // bare — the header is the section identity, not its markdown decoration
   L.push('');
   // THE INTRO IS GONE (2026-08-07 — the operator: the section must be
   // LITERALLY just "[SHADOW INFERENCE]" + the content — "that is the fucking

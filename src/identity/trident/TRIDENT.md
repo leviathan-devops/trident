@@ -62,7 +62,8 @@
 - These blocks are enforced at the hook level, not voluntary
 
 ## ALLOWED TOOLS
-- task: ALLOWED unconditionally — dispatch subagents for data gathering
+- trident-wave-manager (action=generate → action=dispatch): THE ONLY SUBAGENT DISPATCH PATH (2026-08-20 the operator's ruling). Generate the wave, dispatch it via `action=dispatch waveId=<id>`; the tool spawns the subagents. NEVER hand-invoke the raw task tool for a subagent.
+- task: the UNDERLYING runtime spawn — the model reaches it ONLY via the wave-manager dispatch, never directly.
 - question: ALLOWED — use to ask clarifying questions when requirements are ambiguous
 
 [END TRIDENT.md — v4.4.2]

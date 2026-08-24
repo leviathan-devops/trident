@@ -207,24 +207,46 @@ export default async function TridentPlugin(input: PluginInput): Promise<Hooks> 
         const configs = getAgentConfig();
         configs['trident'] = {
           ...configs['trident'],
-          description: 'TRIDENT v4.4.2 — Algorithmic Audit Engine. Allowed: all trident-* tools, task, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit.',
-          instructions: (configs['trident']?.instructions || '') + '\n\nAllowed: all trident-* tools, task, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit.',
+          description: 'TRIDENT v4.4.2 — Algorithmic Audit Engine. Allowed: all trident-* tools, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit, task (the task tool — subagents dispatch via the wave-manager dispatch action ONLY).',
+          instructions: (configs['trident']?.instructions || '') + '\n\nAllowed: all trident-* tools, read, glob, grep, webfetch, question, hive_*, vc-visual-mcp_*, reasoning-bus_*. Blocked: edit, write, bash, terminal, exec, mcp_write, mcp_edit, task (the task tool — subagents dispatch via the wave-manager dispatch action ONLY).',
           permission: {
             '*': 'allow',
+            // THE T.E. MACHINE TEST (2026-08-17 — the operator's directive): the
+            // task tool is REMOVED from the trident agent's allowlist so it
+            // CANNOT cheat by directly calling the task tool — the subagent
+            // dispatch goes through the wave-manager's action=dispatch ONLY.
+            task: 'deny',
           },
         };
 
         // Trident_Build subagent registration (R12: underscore convention consistent throughout)
+        // 2026-08-20 — the operator's ruling: the build agent is a niched specialized
+        // version of Trident specifically for build task execution (the Poseidon infra
+        // stripped + ALL the build tools enabled by default). It is NOT a mindless bot —
+        // the full identity/warheads are loaded in (the build subagent identity carries
+        // the build-specific discipline: the loud-fail law, the verification law, the
+        // anti-theatrical law). The model is PINNED (opencode-go/muse-spark-1.2-contributor,
+        // reasoning effort MAX) + the task tool is REMOVED (the leaf node — the wave-manager
+        // dispatch owns ALL spawning).
         configs['trident_build'] = {
           name: 'trident_build',
-          description: 'Trident Build — Runtime-grade build engineer. Executes remediation plans verbatim. DO NOT THINK. DO NOT DEVIATE.',
+          description: 'Trident Build — the specialized build-execution agent. A niched Trident: the Poseidon orchestration infra is stripped, ALL the build tools (read/write/edit/bash/glob/grep) are enabled by default, and the full identity/warheads are loaded in. Executes the build tasks the orchestrator hands it with the build discipline (the verification law, the loud-fail law, the anti-theatrical law). NEVER spawns subagents — the wave-manager dispatch owns all spawning.',
           instructions: TRIDENT_BUILD_T1,
           mode: 'subagent',
           color: '#0066CC',
-          permission: { task: 'allow' },
+          // THE MODEL PINNING (2026-08-20): 'opencode-go/muse-spark-1.2-contributor'
+          // (the opencode GO endpoint — proven for opencode), 1M context + 128k max,
+          // reasoning effort MAX. THE STRING FORMAT — the opencode agent.model field is
+          // the provider/model STRING (the {providerID, modelID} object breaks config.get).
+          model: 'opencode-go/muse-spark-1.2-contributor',
+          options: { reasoningEffort: 'max' },
+          // THE TASK TOOL REMOVED (2026-08-20 — the operator: "REMOVE THE TASK TOOL
+          // FROM THE ALLOWLIST OF SUBAGENTS"): the build agent is a LEAF NODE — it
+          // NEVER spawns. The wave-manager dispatch owns ALL spawning.
+          permission: { task: 'deny' },
           tools: {
             'read': true, 'write': true, 'edit': true, 'bash': true,
-            'glob': true, 'grep': true, 'task': true,
+            'glob': true, 'grep': true,
           },
         };
 

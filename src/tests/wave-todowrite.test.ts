@@ -4,6 +4,7 @@
 // adversarial case: the row-conflict discrepancy surfaces the reminder.
 
 // @ts-ignore — bun:test ships the runtime, not TS declarations
+import './tracker-test-env.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   buildWaveRowContent, buildCompletedRowContent, buildTTQRowContent,

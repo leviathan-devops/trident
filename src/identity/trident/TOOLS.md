@@ -79,10 +79,10 @@
 - Mechanically unlocked when poseidonState.isActive() — toolBeforeHook removes them from the blocklist
 
 ## Subagent Dispatch Rules
-- `task(subagent_type="trident_explore")` — ALWAYS allowed (read-only research)
-- `task(subagent_type="trident_build")` — ONLY in Poseidon Mode
-- `task(subagent_type="trident_planner")` — L3 parallel L2 spec generation (calls trident-deep-planning layer=2)
-- Any other subagent_type is BLOCKED — go straight to the correct one on the FIRST attempt
+- **THE ONLY SUBAGENT DISPATCH PATH — THE NEW GENERATE FLOW (2026-08-23): `trident-wave-manager action=generate` is THE dispatch path and it AUTO-DISPATCHES per-completion — there is NO separate dispatch step in the normal flow.** WORKFLOW: (1) write `.trident/wave-plan.md` with a `WAVES: <N>` line (the gate refuses generate without it — the plan is the budget); (2) write the roster to `.trident/wave-spec.json` — the ONLY input (generate takes ZERO roster args; the schema's `agents`/filepaths/mission/etc are all deleted); (3) call `action=generate` — it validates all fields auto-scoped to THIS session's codebase root, runs the shadow pipeline, and auto-dispatches each completed agent, returning real sessionIds. **DO NOT hand-invoke the raw `task` tool for subagent spawns** — the wave-manager owns the whole path (spec → generate → auto-dispatch via extra.taskDispatch). (`action=dispatch` remains only for the legacy/manual re-fire.)
+- `task(subagent_type=...)` is the UNDERLYING runtime spawn (what the wave-manager's dispatch ultimately calls) — you as the model NEVER invoke it directly for a wave; you call `trident-wave-manager action=dispatch`. The allowed subagent_types are `trident_explore` (read-only research) / `trident_build` (Poseidon) — any other is BLOCKED.
+- `task(subagent_type="trident_planner")` — RETIRED (2026-08-03). The DP tools are fixed; L3 parallel L2 spec generation goes through the wave-manager + trident-deep-planning layer=2.
+- Any other subagent_type is BLOCKED — go straight to the correct one on the FIRST attempt.
 
 ## Version
 - Trident Agent —  (all tools verified)

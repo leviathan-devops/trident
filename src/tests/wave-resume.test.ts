@@ -25,11 +25,12 @@ describe('WAVE-RESUME: the handler edge cases', () => {
     expect(threw).toContain('requires at least one task_id');
   });
 
-  test('the invalid ids -> the verified:false + the EXCLUSION from the batch (the resume never fabricates)', async () => {
+  test('the invalid ids -> the verified:false + the EXCLUSION from the steered (the resume never fabricates)', async () => {
     const r = await executeWaveResume(['ses_INVALID_NOPE', ''], []);
     expect(r.resumed.length).toBe(1);
     expect(r.resumed[0].verified).toBe(false);
-    expect(r.batch.parameters.tools.length).toBe(0);
+    expect(r.steered.length).toBe(1);
+    expect(r.steered[0].verified).toBe(false);
   });
 
   test('the duplicate ids -> deduped (the same session never resumed twice)', async () => {
@@ -43,14 +44,16 @@ describe('WAVE-RESUME: the handler edge cases', () => {
     expect(r.resumed[0].name).toBe('weird-name-with-spaces');
   });
 
-  test('the batch form shape (the task calls carry the task_id + the continuation + the description)', async () => {
+  test('the steered shape (the resume steers the continue into the session — no batch form)', async () => {
     // The verified path needs a real session — the SANCTIONED SMOKE section below
     // covers it against the real db. This test asserts the shape with the invalid
-    // path's zero-tool batch.
+    // path's steered entry.
     const r = await executeWaveResume(['ses_INVALID_NOPE'], []);
     expect(r.action).toBe('resume');
-    expect(r.batch.tool).toBe('batch');
+    expect(r.steered.length).toBe(1);
+    expect(r.steered[0].verified).toBe(false);
     expect(r.checkIn).toContain('RESUME CHECK-IN');
+    expect(r.checkIn).toContain('STEERED');
   });
 });
 
@@ -79,17 +82,23 @@ describe('WAVE-RESUME: THE SANCTIONED SMOKE (the operator ONE authorized scenari
     expect(invalid).toBeNull();
   });
 
-  test('the full resume form composes for the 4 real sessions (the verified:true + the 4-call batch + the continuation prompts)', async () => {
+  test('the full resume form composes for the 4 real sessions (the verified:true + the 4 steered continues)', async () => {
     const r = await executeWaveResume(REAL_SESSIONS.slice(0, 4), ['w2-smoke-lexicon', 'w4-gate-hook', 'clk-wB-families', 'clk-wC-completion']);
     expect(r.resumed.every((x) => x.verified)).toBe(true);
-    expect(r.batch.parameters.tools.length).toBe(4);
-    for (const t of r.batch.parameters.tools) {
-      expect(t.tool).toBe('task');
-      const p = t.parameters as { task_id?: string; prompt?: string; subagent_type?: string; description?: string };
+    expect(r.steered.length).toBe(4);
+    for (const s of r.steered) {
+      expect(s.verified).toBe(true);
+      expect(s.call?.tool).toBe('task');
+      const p = s.call?.parameters as { task_id?: string; prompt?: string; subagent_type?: string; description?: string };
       expect((p.task_id || '').length).toBeGreaterThan(10);
-      expect(p.prompt).toBe('continue');   // the operator's edit (2026-08-12): "literally just continue is enough"
+      expect(p.prompt).toBe('continue');
+      // THE DERIVED TYPE (2026-08-24 — the live build-agent catch closed): the
+      // RAW titles are `... (@trident_build subagent)` — the paren format the
+      // old suffix-only regex MISSED (defaulting to explore). The token
+      // detector now derives from the actual title: these 4 real sessions are
+      // trident_build, so the correct derived value is trident_build.
       expect(p.subagent_type).toBe('trident_build');
-      expect(String(p.description)).toMatch(/^resume-/);
+      expect(String(p.description).length).toBeGreaterThan(5);
     }
   });
 });

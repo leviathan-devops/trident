@@ -2,8 +2,8 @@
 // The operator's deploy model: the built dist is copied DIRECTLY into the
 // plugin path (no deploy scripts, no env provisioning). The key's resolution
 // must therefore be BUNDLED:
-//   1. process.env.OPENCODE_API_KEY            (the runtime env — the operator's
-//      shell/daemon may export it)
+//   1. process.env.<KEY>                            (the runtime env — the
+//      operator's shell/daemon may export it)
 //   2. the .env files at the known paths       (the plugin dir, the opencode
 //      config dir, the homedir — the operator's own .env overrides)
 //   3. THE EMBEDDED FALLBACK                   (the operator's granted key,
@@ -11,19 +11,35 @@
 //      but never accidentally surfaced in the logs/errors/docs)
 // The key is NEVER logged, NEVER echoed in the errors, NEVER in the reports.
 // The AP-4 gate: the plaintext key in the code + the logs = ZERO occurrences.
+//
+// THE 3-PROVIDER LADDER (2026-08-17 — the operator's ruling): NVIDIA Nemotron
+// 3.5 Lightning (the PRIMARY — https://integrate.api.nvidia.com/v1, the FAST
+// 1M-context, unlimited free) → OpenCode Zen DeepSeek V4 Flash (rung 1 —
+// https://opencode.ai/zen/v1) → OpenRouter Laguna (rung 2 —
+// https://openrouter.ai/api/v1, poolside/laguna-s-2.1:free). THE OLD opencode-
+// go endpoint is PURGED. Three distinct credentials, three resolvers.
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-// the operator's granted key, base64-encoded (the plaintext appears NOWHERE
-// in the source; the .env + the env override it; the decode is the fallback)
+// the operator's granted OPENCODE key (the Zen rung's credential), base64-
+// encoded (the plaintext appears NOWHERE in the source; the .env + the env
+// override it; the decode is the fallback)
 const EMBEDDED_KEY_B64 = 'c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==';
 
-// THE OFFICIAL-API FALLBACK KEY (2026-08-12 — the operator's ruling): DeepSeek
-// V4 Flash on the OFFICIAL DeepSeek API (api.deepseek.com/v1) — base64-encoded
-// (the plaintext appears NOWHERE, AP-4). Engages AFTER the opencode.ai zen/go
-// primary's retries are exhausted.
-const EMBEDDED_FALLBACK_KEY_B64 = 'c2stMjU5ZmNiM2U0OTcxNDgyZWI4NGYxNjhlNDg5YTVjN2Y=';
+// THE OPENROUTER FALLBACK KEY (2026-08-16 — the operator's ruling): the
+// Poolside/Laguna-S-2.1:free via OpenRouter (https://openrouter.ai/api/v1) —
+// "this will always work". base64-encoded (the plaintext appears NOWHERE,
+// AP-4). Engages when the opencode-go primary 429s (the shadow-brain's
+// POOLSIDE fallback — the go rate limit is the legit failure).
+const EMBEDDED_OPENROUTER_KEY_B64 = 'c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==';
+
+// THE NVIDIA NEMOTRON KEY (2026-08-17 — the operator's ruling): the NVIDIA
+// Nemotron 3.5 Lightning 30B-A3B (https://integrate.api.nvidia.com/v1) — the
+// FAST 1M-context primary for the generate action. base64-encoded (the
+// plaintext appears NOWHERE, AP-4). THE PRIMARY of the 3-provider ladder:
+// NVIDIA → Zen → OpenRouter.
+const EMBEDDED_NVIDIA_KEY_B64 = 'bnZhcGktaEtEUEVvUngzUlljVlZXMExrT3BMOW9rdm40WDJKVUN3VExybl9YUUxWZ01aN2FxdTBCR2RLSDdsWG93S1hSQg==';
 
 function readEnvFile(p: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -48,6 +64,11 @@ const ENV_PATHS = [
   path.join(os.homedir(), '.env'),                                 // the homedir
 ];
 
+// THE PRIMARY BASE URL RESOLVER — the NVIDIA Nemotron 3.5 Lightning endpoint
+// (https://integrate.api.nvidia.com/v1 — the operator's 2026-08-17 ruling:
+// "make THIS the primary model for the generate action"). THE OLD opencode-go
+// endpoint is PURGED (the operator: "opencode go is purged"). env → .env → the
+// NVIDIA default.
 export function resolveShadowBaseUrl(): string {
   const env = process.env.SHADOW_BASE_URL;
   if (env && env.length > 10) return env;
@@ -56,50 +77,82 @@ export function resolveShadowBaseUrl(): string {
     const v = parsed['SHADOW_BASE_URL'];
     if (v && v.length > 10) return v;
   }
-  return 'https://opencode.ai/zen/go/v1';
+  return 'https://integrate.api.nvidia.com/v1';
 }
 
+// THE PRIMARY KEY RESOLVER — the NVIDIA API key (env NVIDIA_API_KEY → .env →
+// the embedded base64 fallback). THE PRIMARY of the 3-provider ladder: NVIDIA
+// → Zen → OpenRouter. NEVER hardcoded plaintext, NEVER logged (AP-4).
 export function resolveShadowApiKey(): string {
-  // 1. the runtime env
+  const env = process.env.NVIDIA_API_KEY;
+  if (env && env.length > 10) return env;
+  for (const p of ENV_PATHS) {
+    const parsed = readEnvFile(p);
+    const v = parsed['NVIDIA_API_KEY'];
+    if (v && v.length > 10) return v;
+  }
+  try {
+    return Buffer.from(EMBEDDED_NVIDIA_KEY_B64, 'base64').toString('utf-8');
+  } catch (e) { /* non-fatal */ }
+  return '';
+}
+
+// THE ZEN FALLBACK RESOLVERS (2026-08-17 — the operator's ruling: the OpenCode
+// Zen DeepSeek V4 Flash FREE is the ladder rung 1 — https://opencode.ai/zen/v1,
+// model deepseek-v4-flash-free). The key is the OPENCODE key (the Zen endpoint
+// authenticates with the opencode credential — env OPENCODE_API_KEY → .env →
+// the embedded opencode base64 fallback). NEVER hardcoded plaintext, NEVER
+// logged (AP-4).
+export function resolveShadowZenBaseUrl(): string {
+  const env = process.env.SHADOW_ZEN_BASE_URL;
+  if (env && env.length > 10) return env;
+  for (const p of ENV_PATHS) {
+    const parsed = readEnvFile(p);
+    const v = parsed['SHADOW_ZEN_BASE_URL'];
+    if (v && v.length > 10) return v;
+  }
+  return 'https://opencode.ai/zen/v1';
+}
+
+export function resolveShadowZenApiKey(): string {
   const env = process.env.OPENCODE_API_KEY;
   if (env && env.length > 10) return env;
-  // 2. the .env files
   for (const p of ENV_PATHS) {
     const parsed = readEnvFile(p);
     const v = parsed['OPENCODE_API_KEY'];
     if (v && v.length > 10) return v;
   }
-  // 3. the embedded fallback (the operator's granted key)
   try {
     return Buffer.from(EMBEDDED_KEY_B64, 'base64').toString('utf-8');
   } catch (e) { /* non-fatal */ }
   return '';
 }
 
-// THE OFFICIAL-API FALLBACK RESOLVERS (2026-08-12 — the operator's ruling):
-// the fallback transport's baseUrl + key. The key is NEVER hardcoded in
-// plaintext, NEVER logged (AP-4): env → .env → the embedded base64 fallback.
-export function resolveShadowFallbackBaseUrl(): string {
-  const env = process.env.SHADOW_FALLBACK_BASE_URL;
+// THE OPENROUTER FALLBACK RESOLVERS (2026-08-16 — the operator's ruling: the
+// Poolside/Laguna-S-2.1:free via OpenRouter — "this will always work"): the
+// fallback transport's baseUrl + key. The key is NEVER hardcoded in plaintext,
+// NEVER logged (AP-4): env → .env → the embedded base64 fallback.
+export function resolveShadowOpenRouterBaseUrl(): string {
+  const env = process.env.OPENROUTER_BASE_URL;
   if (env && env.length > 10) return env;
   for (const p of ENV_PATHS) {
     const parsed = readEnvFile(p);
-    const v = parsed['SHADOW_FALLBACK_BASE_URL'];
+    const v = parsed['OPENROUTER_BASE_URL'];
     if (v && v.length > 10) return v;
   }
-  return 'https://api.deepseek.com/v1';
+  return 'https://openrouter.ai/api/v1';
 }
 
-export function resolveShadowFallbackApiKey(): string {
-  const env = process.env.DEEPSEEK_API_KEY;
+export function resolveShadowOpenRouterApiKey(): string {
+  const env = process.env.OPENROUTER_API_KEY;
   if (env && env.length > 10) return env;
   for (const p of ENV_PATHS) {
     const parsed = readEnvFile(p);
-    const v = parsed['DEEPSEEK_API_KEY'];
+    const v = parsed['OPENROUTER_API_KEY'];
     if (v && v.length > 10) return v;
   }
   try {
-    return Buffer.from(EMBEDDED_FALLBACK_KEY_B64, 'base64').toString('utf-8');
+    return Buffer.from(EMBEDDED_OPENROUTER_KEY_B64, 'base64').toString('utf-8');
   } catch (e) { /* non-fatal */ }
   return '';
 }

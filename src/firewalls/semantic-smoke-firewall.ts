@@ -131,7 +131,7 @@ export function extractIntent(
   //      claim must never block them (they are not verification presentations).
   if (tool === 'task' || tool === 'webfetch' || tool === 'question' ||
       tool === 'skill' || tool === 'checkpoint' || tool === 'todowrite' ||
-      tool === 'memread_session' || tool === 'memlink_parent' || tool === 'build-status' ||
+      tool === 'memlink_parent' || tool === 'build-status' ||
       tool === 'omni_vision' || tool === 'subagent_omni_vision' || tool === 'execute_omni_canvas' ||
       tool.indexOf('manta-') === 0 || tool.indexOf('shark-') === 0 ||
       tool.indexOf('ps-mode-') === 0 || tool.indexOf('tv-browser_') === 0 ||

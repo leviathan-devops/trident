@@ -30,13 +30,10 @@
 //       notes? } + the [SHADOW INFERENCE] presence
 //   13. the tool.after COPY-PASTE hook delivers the per-agent files (the caller)
 //
-// THE MODEL DISCIPLINE (D-SH-2): the brain adapter is built FROM the shadow-
-// brain module — SHADOW_MODEL (FROZEN deepseek-v4-flash), opencodeShadowStreamFn,
-// SHADOW_TIMEOUT_MS, the OPENCODE_API_KEY secret store — never another model,
-// never a fallback (AP-3). The agentic loop needs a messages-array shape
-// callShadow's (prompt, system) signature cannot express, so the adapter wraps
-// the brain's OWN transport with the SAME model/secret/timeout/error-encoding.
-// Tests inject a mock brain.
+// THE MODEL DISCIPLINE (2026-08-19 — the operator: "WHAT FUCKING MOCK BRAIN"):
+// the headless pi Agent (read + edit ONLY) uses the REAL 5-provider transport
+// (the pi Models.streamSimple). NO brain adapter, NO mock. The tests inject a
+// scripted stream via the streamFn option.
 //
 // THE FIREWALL: the backend writes ONLY OUT_DIR + the memory root — the PI
 // loop's tools are READ-ONLY (read_file/grep/stat).
@@ -50,18 +47,9 @@ import { tridentLog } from '../../utils.ts';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import {
-  SHADOW_MODEL,
-  opencodeShadowStreamFn,
-  SHADOW_TIMEOUT_MS,
-  SHADOW_BASE_URL,
-  type ShadowChatMessage,
-  type ShadowStreamFn,
-  type ShadowBrainResult,
-} from './shadow-brain.ts';
-import { resolveShadowApiKey } from './shadow-secrets.ts';
+import { SHADOW_MODEL } from './shadow-config.ts';
+import type { ShadowStreamFn } from './shadow-config.ts';
 // F2 (2026-08-14 — the backoff retry): the measured window for the 2× retry.
-import { measuredShadowWindowMs } from './shadow-health.ts';
 import { ShadowMemory, type PromptRecord } from './shadow-memory.ts';
 import {
   tetherSession,
@@ -94,6 +82,8 @@ import {
 // the filepaths) — no cast required.
 import { weave } from './shadow-brief-builder.ts';
 import { validateTaskPromptLines } from '../trident-preflight.ts';
+import { ShadowAgent } from './shadow-agent.ts';
+import { RpmLedger } from './rpm-ledger.ts';
 
 // ── THE FROZEN CONSTANTS ──
 
@@ -105,24 +95,24 @@ export const SUPREMACY_CONTRACT =
   'THE FILES. A context arg that contradicts the file contents MUST be flagged, never ' +
   'conformed to. Every claim about the files must be READ from them, never assumed.';
 
-/** The PI loop's rounds cap (the spec §4 step 8: "the rounds capped at 4"). */
-export const PI_MAX_ROUNDS = 6;
+/** THE RUNNER ROUND CAP (2026-08-23 — THE SANITY RESTORE): this was 4 — an
+ *  old-era fossil whose comment even said "2-3 typical, 4 absolute" — and it
+ *  silently bypassed ShadowAgent's settled MAX_ROUNDS=2 via the runner's
+ *  `options.maxRounds ?? PI_MAX_ROUNDS` default. The SETTLED doctrine is
+ *  MAX_ROUNDS=2 / MIN_MANDATORY_ROUNDS=2 UNIVERSALLY: validated-break fires at
+ *  R2, zero agents ever reach R3 (measured across every live wave). Both
+ *  layers now agree on 2 — there is ONE round truth in this codebase. */
+export const PI_MAX_ROUNDS = 2;
 
-/** The token budget per PI round — THE OPERATOR'S RULING (2026-08-07):
- *  "MAX TOKENS 300K ACROSS THE FUCKING BOARD ANYWHERE DEEPSEEK IS THE MODEL"
- *  → corrected: "380k actually. deepseek has a max tokens of 384,000" →
- *  "purge all this fuckin 8k max tokens slop". The OLD value (8192) was the
- *  TRUNCATION ROOT CAUSE: the model writes toward the 250-350-line target
- *  (the numbered prefixes were it counting lines) and the 8192 max_tokens
- *  cap CUT the completion mid-bullet (finish_reason 'length' — the observed
- *  "- READ-" dangling bullet at ~123 lines). The 250-350-line deliverable
- *  needs ~15-30K output tokens — 8192 was smaller than the deliverable it
- *  was supposed to carry. DeepSeek's real cap is 384,000: the shadow brain's
- *  max_tokens becomes 384_000. The accumulation-loop patchwork that worked
- *  around the truncation is REMOVED (the operator: "REMOVE YOUR PATCHWORK
- *  BULLSHIT SOLUTION AND FIX THIS ROOT ISSUE") — with the real cap the model
- *  writes the COMPLETE prompt + the [SHADOW INFERENCE] brief in one pass. */
-export const PI_MAX_TOKENS = 384_000;
+/** THE PER-ROUND TOKEN CAP (2026-08-17 — the operator: "WHY THE FUCK IS IT
+ *  FORCING THIS WHAT THE HELL THIS IS A CEILING DONT FUCKING BURN TOKENS").
+ *  PI_MAX_TOKENS (384K) is the ABSOLUTE ceiling — it was being sent as the
+ *  max_tokens on EVERY round, making the provider allocate/plan for a
+ *  potential 384K generation per round. A 250-350-line prompt is ~4-5K
+ *  output tokens; 16K = 8x the target with generous headroom for the prompt
+ *  + the [SHADOW INFERENCE] brief. THE ROUND CALLS PASS THIS — the absolute
+ *  ceiling stays for the rare case that genuinely needs it. */
+export const PI_ROUND_MAX_TOKENS = 16_000;
 
 /** The acceptance bar (the spec §7.7: "the 200+ line bar for the LLM-woven
  *  outputs; the 250-350-line target" — the 200+ is the mechanical gate, the
@@ -170,31 +160,6 @@ export interface ToolCallRequest {
   params: Record<string, unknown>;
 }
 
-/** THE RUNNER'S BRAIN — the messages-array call shape the agentic loop needs
- *  (the pi-agent's streamFn shape). The default adapter is built FROM the
- *  shadow-brain module (model/transport/secret/timeout — D-SH-2). Tests
- *  inject a mock brain. */
-export interface ShadowRunnerBrain {
-  call(
-    messages: ShadowChatMessage[],
-    maxTokens: number,
-    signal?: AbortSignal,
-    // F2 (2026-08-14 — the backoff retry): the stall-window override — the
-    // retry passes 2× the measured window (the slow-not-dead case).
-    stallTimeoutMs?: number,
-  ): Promise<ShadowBrainResult>;
-}
-
-export interface PiLoopResult {
-  text: string;
-  lines: number;
-  validated: boolean;
-  roundsUsed: number;
-  toolCallsMade: number;
-  fileStates: FileState[];
-  errors: string[];
-}
-
 export interface VerifyResult {
   flags: string[];
   verified: boolean;
@@ -202,16 +167,14 @@ export interface VerifyResult {
 }
 
 export interface ShadowRunnerOptions {
-  /** The injected secret (the runner's configured store) — the brain's
-   *  OPENCODE_API_KEY fallback. NEVER hardcoded, NEVER logged (AP-4). */
+  /** The injected secret (the runner's configured store). NEVER hardcoded,
+   *  NEVER logged (AP-4). */
   apiKey?: string;
   baseUrl?: string;
   timeoutMs?: number;
-  /** The injected transport (tests stub this; the brain's own default). */
+  /** The injected stream (tests script the pi transport; the production
+   *  default is the real 5-provider streamSimple). */
   streamFn?: ShadowStreamFn;
-  /** The injected brain (tests stub this; the default is built from the
-   *  shadow-brain module — the model discipline holds either way). */
-  brain?: ShadowRunnerBrain;
   /** The tether override (tests pin the session; production uses the hook's
    *  globalThis → env → defaults chain via tetherSession()). */
   tether?: TetheredSession;
@@ -221,6 +184,11 @@ export interface ShadowRunnerOptions {
   outDir?: string;
   /** The PI rounds cap override (default PI_MAX_ROUNDS). */
   maxRounds?: number;
+  /** THE SHARED WAVE LEDGER (2026-08-21 — the operator's hybrid: one
+   *  RpmLedger per wave, injected into every ShadowAgent so a sibling's
+   *  observed 429 exiles the rung for ALL agents — no blind re-burns).
+   *  Absent → each ShadowAgent builds its own private ledger (solo scope). */
+  ledger?: RpmLedger;
   /** The caller's abort signal. */
   signal?: AbortSignal;
 }
@@ -300,284 +268,13 @@ function preReadExcerpts(filepaths: string[]): FileExcerpt[] {
   return out;
 }
 
-// ── THE WIRE FORMAT (the PI loop's tool-call markers) ──
-// The brain's transport (opencodeShadowStreamFn) returns TEXT content only —
-// native tool_calls would be dropped by the transport's defensive read. The
-// model is therefore instructed (in the PI system prompt) to emit the
-// [TOOL_CALL] markers in its text; the runner parses, executes, and feeds the
-// results back as [TOOL_RESULT] blocks in the next user message.
-// THE BRACKET TOLERANCE (2026-08-07 — the live host-gen-a finding): the model
-// emitted the call as <TOOL_CALL id=...> (angle-bracket open) while the
-// parser matched only [TOOL_CALL ...] (square) — the call was NEVER EXECUTED
-// (the read_file never ran — the read-before-write silently skipped) and the
-// raw marker text polluted the candidate. The regex accepts BOTH open forms
-// (square OR angle) + the square close.
-
-const TOOL_CALL_RE = /[\[<]TOOL_CALL\s+id="([^"]+)"\s+name="([^"]+)"\s*[\]>]([\s\S]*?)\[\/TOOL_CALL\]/g;
-
-function parseToolCalls(text: string): ToolCallRequest[] {
-  const out: ToolCallRequest[] = [];
-  for (const m of text.matchAll(TOOL_CALL_RE)) {
-    let params: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = JSON.parse(m[3].trim());
-      params = parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
-    } catch {
-      params = { _parseError: m[3].trim().substring(0, 200) };
-    }
-    out.push({ id: m[1], name: m[2], params });
-  }
-  return out;
-}
-
-function stripToolCalls(text: string): string {
-  // THE BRACKET TOLERANCE (2026-08-07 — same as the parse regex: the angle-
-  // bracket open form <TOOL_CALL> must be stripped too, or the raw marker
-  // text pollutes the candidate).
-  return text.replace(/[\[<]TOOL_CALL\s+id="[^"]*"\s+name="[^"]*"\s*[\]>][\s\S]*?\[\/TOOL_CALL\]/g, ' ').trim();
-}
-
-// ── THE SCOPED READ-ONLY TOOLS (the spec §2: read_file/grep/stat — the
-//    read-before-write, mechanically; NO write tools) ──
-
-function makeScopedTools(filepaths: string[]): ScopedTool[] {
-  return [
-    {
-      label: 'read_file',
-      description: "Read a filepath's content (capped at " + READ_FILE_CAP + " chars). Returns the content + the line count. The read-before-write: verify the context args against the real file before writing the prompt.",
-      parameters: {
-        type: 'object',
-        properties: { filepath: { type: 'string', description: 'the absolute path to read' } },
-        required: ['filepath'],
-      },
-      execute(_id, params) {
-        const filepath = typeof params.filepath === 'string' && params.filepath.length > 0 ? params.filepath : '';
-        if (!filepath) return { content: 'ERROR: read_file requires a "filepath" string parameter', details: { isError: true } };
-        let content: string;
-        try {
-          content = fs.readFileSync(filepath, 'utf-8');
-        } catch (e) {
-          return { content: 'ERROR: unreadable file ' + filepath + ': ' + (e instanceof Error ? e.message : String(e)), details: { isError: true } };
-        }
-        const lines = content.split('\n').length;
-        const capped = content.length > READ_FILE_CAP
-          ? content.substring(0, READ_FILE_CAP) + '\n...[excerpt truncated — the full file is ' + lines + ' lines, ' + content.length + ' chars]'
-          : content;
-        return { content: '=== FILE: ' + filepath + ' (' + lines + ' lines) ===\n' + capped, details: { lines, chars: content.length, path: filepath } };
-      },
-    },
-    {
-      label: 'grep',
-      description: "grep a regex pattern over a filepath (or the task's filepaths when omitted). Returns the matching lines with their numbers, capped at 120 matches per file.",
-      parameters: {
-        type: 'object',
-        properties: {
-          pattern: { type: 'string', description: 'the regex pattern to search' },
-          filepath: { type: 'string', description: 'optional — the file to search; defaults to all the task filepaths' },
-        },
-        required: ['pattern'],
-      },
-      execute(_id, params) {
-        const pattern = typeof params.pattern === 'string' && params.pattern.length > 0 ? params.pattern : '';
-        if (!pattern) return { content: 'ERROR: grep requires a "pattern" string parameter', details: { isError: true } };
-        const targets = typeof params.filepath === 'string' && params.filepath.length > 0 ? [params.filepath] : filepaths;
-        // strip a surrounding /.../ pair if the model passed a literal regex
-        const cleaned = pattern.replace(/^\/(.*)\/[a-z]*$/i, '$1');
-        let re: RegExp;
-        try {
-          re = new RegExp(cleaned);
-        } catch (e) {
-          return { content: 'ERROR: invalid pattern "' + pattern + '": ' + (e instanceof Error ? e.message : String(e)), details: { isError: true } };
-        }
-        const out: string[] = [];
-        let totalMatches = 0;
-        for (const fp of targets) {
-          let content: string;
-          try {
-            content = fs.readFileSync(fp, 'utf-8');
-          } catch (e) {
-            out.push('=== ' + fp + ' (unreadable: ' + (e instanceof Error ? e.message : String(e)) + ') ===');
-            continue;
-          }
-          const matches: string[] = [];
-          const linesArr = content.split('\n');
-          for (let i = 0; i < linesArr.length && matches.length < 120; i++) {
-            re.lastIndex = 0;
-            if (re.test(linesArr[i])) matches.push(String(i + 1) + ': ' + linesArr[i].substring(0, 240));
-          }
-          totalMatches += matches.length;
-          out.push('=== grep ' + pattern + ' in ' + fp + ' (' + matches.length + ' match(es)) ===\n' + matches.join('\n'));
-        }
-        return { content: out.join('\n\n'), details: { matches: totalMatches, pattern } };
-      },
-    },
-    {
-      label: 'stat',
-      description: "The line count + the byte size of a filepath (or the task's filepaths when omitted).",
-      parameters: {
-        type: 'object',
-        properties: { filepath: { type: 'string', description: 'optional — the file to stat; defaults to all the task filepaths' } },
-        required: [],
-      },
-      execute(_id, params) {
-        const targets = typeof params.filepath === 'string' && params.filepath.length > 0 ? [params.filepath] : filepaths;
-        const out: string[] = [];
-        let firstDetails: { lines: number; chars: number; path: string } | null = null;
-        for (const fp of targets) {
-          try {
-            const st = fs.statSync(fp);
-            const content = fs.readFileSync(fp, 'utf-8');
-            const lines = content.split('\n').length;
-            out.push(fp + ': ' + lines + ' lines, ' + st.size + ' bytes');
-            if (!firstDetails) firstDetails = { lines, chars: content.length, path: fp };
-          } catch (e) {
-            out.push(fp + ': stat failed — ' + (e instanceof Error ? e.message : String(e)));
-          }
-        }
-        return { content: out.join('\n'), details: firstDetails ?? {} };
-      },
-    },
-  ];
-}
-
-async function executeScopedTool(
-  tools: ScopedTool[],
-  tc: ToolCallRequest,
-  signal?: AbortSignal,
-): Promise<{ content: string; isError: boolean; details?: unknown }> {
-  const tool = tools.find((t) => t.label === tc.name);
-  if (!tool) {
-    return { content: 'ERROR: unknown tool "' + tc.name + '" — the scoped surface is read_file, grep, stat', isError: true };
-  }
-  try {
-    const res = await tool.execute(tc.id, tc.params, signal);
-    return { content: res.content, isError: false, details: res.details };
-  } catch (e) {
-    return { content: 'ERROR: the tool ' + tc.name + ' threw: ' + (e instanceof Error ? e.message : String(e)), isError: true };
-  }
-}
-
-/** Record the freshness ground truth from a read_file/stat result. */
-function recordFileState(fileStates: FileState[], details: unknown): void {
-  if (details && typeof details === 'object') {
-    const d = details as Record<string, unknown>;
-    if (typeof d.path === 'string' && typeof d.lines === 'number') {
-      const idx = fileStates.findIndex((f) => f.path === d.path);
-      const state: FileState = { path: d.path, lines: d.lines, chars: typeof d.chars === 'number' ? d.chars : 0 };
-      if (idx >= 0) fileStates[idx] = state; else fileStates.push(state);
-    }
-  }
-}
-
-// ── THE BRAIN ADAPTER (D-SH-2 — built from the shadow-brain module) ──
-
-function defaultRunnerBrain(options: { apiKey?: string; baseUrl?: string; timeoutMs?: number; streamFn?: ShadowStreamFn } = {}): ShadowRunnerBrain {
-  return {
-    async call(messages: ShadowChatMessage[], maxTokens: number, signal?: AbortSignal, stallTimeoutMs?: number): Promise<ShadowBrainResult> {
-      // THE SECRET (D-SH-2 / AP-4): the injected configured secret first, then
-      // the env — NEVER hardcoded, NEVER logged.
-      const apiKey = options.apiKey && options.apiKey.length > 0 ? options.apiKey : resolveShadowApiKey();
-      if (apiKey.length === 0) {
-        // THE LOUD ERROR — no fallback model, no silent empty content (AP-3)
-        void tridentLog('ERROR', 'shadow-runner', 'SHADOW_RUNNER_NO_KEY — the OPENCODE_API_KEY secret is absent; the shadow brain REFUSES (no fallback)');
-        return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_NO_KEY' };
-      }
-      const streamFn = options.streamFn ?? opencodeShadowStreamFn;
-      const timeoutMs = options.timeoutMs ?? SHADOW_TIMEOUT_MS;
-      const controller = new AbortController();
-      let timedOut = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-      let rejectTimeout: ((err: Error) => void) | null = null;
-      const timeoutPromise = new Promise<never>((_resolve, reject) => {
-        rejectTimeout = reject;
-      });
-      timer = setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-        if (rejectTimeout) rejectTimeout(new Error('SHADOW_BRAIN_TIMEOUT'));
-      }, timeoutMs);
-      const onExternalAbort = (): void => {
-        controller.abort();
-      };
-      try {
-        if (signal) {
-          if (signal.aborted) controller.abort();
-          else signal.addEventListener('abort', onExternalAbort, { once: true });
-        }
-        const resultPromise = streamFn({
-          model: SHADOW_MODEL,
-          messages,
-          apiKey,
-          baseUrl: options.baseUrl ?? SHADOW_BASE_URL,
-          maxTokens,
-          signal: controller.signal,
-          // F2 (2026-08-14 — the backoff retry): the retry's 2×-window override
-          // flows through to the transport's stall detector.
-          stallTimeoutMs,
-        });
-        resultPromise.catch((err: unknown) => {
-          void tridentLog('WARN', 'shadow-runner', 'the streamFn promise rejected after the race settled: ' + (err instanceof Error ? err.message : String(err)));
-        });
-        let sr;
-        try {
-          sr = await Promise.race([resultPromise, timeoutPromise]);
-        } catch (raceErr) {
-          if (timedOut) {
-            void tridentLog('ERROR', 'shadow-runner', 'SHADOW_BRAIN_TIMEOUT — the LLM call stalled past ' + timeoutMs + 'ms');
-            return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_TIMEOUT: the LLM call stalled past ' + timeoutMs + 'ms' };
-          }
-          if (signal?.aborted) return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' };
-          const message = raceErr instanceof Error ? raceErr.message : String(raceErr);
-          void tridentLog('ERROR', 'shadow-runner', 'SHADOW_BRAIN_FAIL: ' + message);
-          return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_FAIL: ' + message };
-        }
-        if (sr.stopReason === 'aborted') {
-          if (timedOut) {
-            void tridentLog('ERROR', 'shadow-runner', 'SHADOW_BRAIN_TIMEOUT — the transport aborted past ' + timeoutMs + 'ms');
-            return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_TIMEOUT: the LLM call stalled past ' + timeoutMs + 'ms' };
-          }
-          return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_ABORTED' };
-        }
-        if (sr.stopReason === 'error') {
-          void tridentLog('ERROR', 'shadow-runner', sr.errorMessage || 'SHADOW_BRAIN_FAIL');
-          return { content: '', model: SHADOW_MODEL, ok: false, error: sr.errorMessage || 'SHADOW_BRAIN_FAIL' };
-        }
-        if (sr.content.length === 0) {
-          void tridentLog('ERROR', 'shadow-runner', 'SHADOW_BRAIN_EMPTY — the completion returned no content');
-          return { content: '', model: SHADOW_MODEL, ok: false, error: 'SHADOW_BRAIN_EMPTY: the completion returned no content' };
-        }
-        return { content: sr.content, model: SHADOW_MODEL, ok: true };
-      } finally {
-        if (timer) clearTimeout(timer);
-        if (signal) signal.removeEventListener('abort', onExternalAbort);
-      }
-    },
-  };
-}
-
-// ── THE CANDIDATE EVALUATION (the v10 repair + the validation) ──
-// ═══ THE REASONING-TOKEN EXTRACTION (2026-08-07 — THE CONTAMINATION FIX) ═══
-// THE BUG (the operator's catch, live): the shadow brain's output contained its
-// chain-of-thought — the model QUOTED the output contract early ("EXECUTE THE
-// FOLLOWING", include section markers...) so the OLD extraction (the FIRST
-// indexOf('EXECUTE THE FOLLOWING')) cut at position 0 inside the THINKING and
-// the entire drafting session (planning, multiple drafts, meta-commentary)
-// rode along as "the prompt". The structural gates PASSED because the
-// contamination CONTAINS the markers. The fix = the LAST real template opener
-// (the "... VERBATIM" form — the thinking's bare quotes never match the full
-// pattern) + the fence stripping + the trailing-meta stripping. The detector
-// (detectThinkingLeak) + the verifier flag catch any residual leak; the
-// manifest carries the flag so the orchestrator sees it (L6).
-
 /** THE REAL TEMPLATE OPENERS (all 9 templates — E1-E4, B1-B5 — the forms
  *  "EXECUTE THE FOLLOWING <TYPE> VERBATIM"). The thinking's quotes of the
- *  output contract ("EXECUTE THE FOLLOWING\", include section markers") never
+ *  output contract ("EXECUTE THE FOLLOWING", include section markers") never
  *  match the full pattern — only an actual draft's opening line does. */
 export const TEMPLATE_OPENER_RE =
   /EXECUTE THE FOLLOWING (?:FORENSIC CONTEXT EXTRACTION|CONTEXT SYNTHESIS|RESEARCH TASK|FAILURE INVESTIGATION|BUILD PLAN|DEBUGGING PLAN|SURGICAL EDIT PLAN|TEST IMPLEMENTATION|PIPELINE BUILD) VERBATIM/;
 
-/** THE DETERMINISTIC EXTRACTION — the LAST real opener + the fence/meta strip.
- *  Idempotent on clean prompts (a single opener at position 0 → unchanged). */
 export function extractFinalPrompt(raw: string): string {
   let clean = raw || '';
   const re = new RegExp(TEMPLATE_OPENER_RE.source, 'g');
@@ -758,131 +455,6 @@ export function stripEchoedInferenceIntro(promptText: string): string {
   return promptText.replace(ECHOED_INFERENCE_INTRO_RE, '\n');
 }
 
-// ── THE PI EXECUTION LOOP (Stage 5 — the agentic loop: prompt → stream →
-//    scoped tool-calls → results fed back → continue) ──
-
-async function runPiLoop(opts: {
-  brain: ShadowRunnerBrain;
-  systemPrompt: string;
-  demand: string;
-  filepaths: string[];
-  context: string;
-  maxRounds: number;
-  signal?: AbortSignal;
-}): Promise<PiLoopResult> {
-  const messages: ShadowChatMessage[] = [
-    { role: 'system', content: opts.systemPrompt },
-    { role: 'user', content: opts.demand },
-  ];
-  const fileStates: FileState[] = [];
-  const errors: string[] = [];
-  const tools = makeScopedTools(opts.filepaths);
-  let bestValidated: Candidate = { text: '', lines: 0, validated: false };
-  let bestRaw: Candidate = { text: '', lines: 0, validated: false };
-  let toolCallsMade = 0;
-  let roundsUsed = 0;
-
-  for (let round = 1; round <= opts.maxRounds; round++) {
-    roundsUsed = round;
-    let r = await opts.brain.call(messages, PI_MAX_TOKENS, opts.signal);
-    // THE PI-ROUND RETRY (2026-08-12 — the "should never stall" ruling): a
-    // round-1 failure on the TRANSIENT class (timeout/500 — the provider
-    // stall/overload, NOT an input error) is retried ONCE. The live proof: the
-    // identical wave input failed at 180s then succeeded on retry in 361s. The
-    // retry produces what the primary produces — never a substitute artifact.
-    // THE BACKOFF (F2 — 2026-08-14, the slow-not-dead distinction): a timeout
-    // means the provider is SLOW (the documented 35-50s first-event for the
-    // 384K shape), not dead. The retry waits a 3s breathing gap (the load
-    // case) + passes the 2× measured window (the slow case) — the SAME
-    // window retry under load stalls identically. NO provider/model switching
-    // (the operator: "no model switching ever. provider as well only backup is
-    // direct deepseek api but this should NEVER BE USED unless there is a
-    // legit server failure of opencode go").
-    if (!r.ok && round === 1 && typeof r.error === 'string' &&
-        (r.error.indexOf('SHADOW_BRAIN_TIMEOUT') !== -1 || r.error.indexOf('SHADOW_BRAIN_HTTP_500') !== -1)) {
-      void tridentLog('WARN', 'shadow-runner', 'PI round ' + round + ' transient failure (' + r.error + ') — the round retries ONCE at 2× the measured window after a 3s gap');
-      // THE 3S BREATHING GAP (the load case — a loaded provider needs the queue to drain):
-      await new Promise<void>((res) => setTimeout(res, 3000));
-      r = await opts.brain.call(messages, PI_MAX_TOKENS, opts.signal, measuredShadowWindowMs() * 2);
-    }
-    if (!r.ok) {
-      errors.push('PI round ' + round + ': ' + (r.error || 'SHADOW_BRAIN_FAIL'));
-      void tridentLog('WARN', 'shadow-runner', errors[errors.length - 1]);
-      break; // the dead-LLM — the caller's fallback takes over
-    }
-    const content = r.content;
-    const toolCalls = parseToolCalls(content);
-    const cleanText = stripToolCalls(content);
-    // the candidate — the model's written portion of this round. THE CLEAN
-    // EVALUATION (2026-08-07 — the patchwork REMOVED per the operator: the
-    // accumulation-append hack is gone; with PI_MAX_TOKENS = 300K the model
-    // writes the COMPLETE prompt + the [SHADOW INFERENCE] brief in ONE pass
-    // — the truncation root cause (the 8192 cap) is fixed at the source, so
-    // no fragment-append machinery is needed).
-    const cand = evaluateCandidate(cleanText, opts.filepaths, opts.context);
-    // THE VALIDATION-FEEDBACK LOOP (2026-08-10 — the AGENT PARTIAL fix): the
-    // old continuation told the model "keep EVERY line + ADD" — it never named
-    // the validator's ACTUAL failures, so the drafting stayed, the structure
-    // stayed broken, all the rounds failed, and the bestRaw fallback shipped
-    // the partial. THE FIX: the candidate's named deficiencies (the missing
-    // markers + the structural failures) feed the next continuation, which
-    // demands the REWRITE of the structure, not more content.
-    let candFeedback = '';
-    if (!cand.validated) {
-      const v = validateTaskPromptLines(cand.text);
-      candFeedback = v.lines.join('; ');
-    }
-    if (cand.validated) {
-      if (cand.lines > bestValidated.lines) bestValidated = cand;
-    } else if (cand.text.length > bestRaw.text.length) {
-      bestRaw = cand;
-    }
-    const acceptanceMet = bestValidated.lines >= PI_ACCEPT_LINES;
-
-    if (toolCalls.length > 0) {
-      // THE READ-BEFORE-WRITE, MECHANICALLY: execute the scoped read-only tools
-      // and feed the results back into the loop
-      toolCallsMade += toolCalls.length;
-      const results: string[] = [];
-      for (const tc of toolCalls) {
-        const res = await executeScopedTool(tools, tc, opts.signal);
-        recordFileState(fileStates, res.details);
-        results.push('[TOOL_RESULT id="' + tc.id + '" name="' + tc.name + '" is_error="' + (res.isError ? 'true' : 'false') + '"]\n' + res.content + '\n[/TOOL_RESULT]');
-      }
-      messages.push({ role: 'assistant', content });
-      messages.push({ role: 'user', content: results.join('\n\n') + '\n\nContinue. When you have read what you need, WRITE THE COMPLETE PROMPT (250-350 lines, beginning with "EXECUTE THE FOLLOWING"). ' + INFERENCE_BRIEF_INSTRUCTION });
-      if (acceptanceMet) break;
-      continue;
-    }
-
-    // the model stopped writing — no tool calls this round
-    messages.push({ role: 'assistant', content });
-    if (acceptanceMet) break;
-    if (bestValidated.lines >= 250) break; // the target
-    // under the target — the continuation round (the model writes the FULL
-    // prompt again, improved — with 300K the truncation is gone, so the
-    // continuation only fires on genuine under-production)
-    messages.push({
-      role: 'user',
-      content: 'ROUND ' + round + ' OUTPUT: ' + bestValidated.lines + ' validated lines' +
-        ' (the last candidate ' + cand.lines + ' lines, validation ' + (cand.validated ? 'PASSED' : 'FAILED') + ').' +
-        (candFeedback ? ' THE VALIDATION FAILURES: ' + candFeedback + '. ' : '') +
-        ' REWRITE THE COMPLETE PROMPT with the template structure — the mission, the acceptance criteria, the reading order (3+ absolute paths), the per-task WHAT/HOW/WHY/EXPECTED blocks (3+ tasks), the constraints/do-not-touch, the concrete verification commands (grep/bun/sha256sum), the return format. Begin with "EXECUTE THE FOLLOWING". Do NOT include drafting, line-counting, or tool-planning notes in the prompt body. ' + INFERENCE_BRIEF_INSTRUCTION,
-    });
-  }
-
-  const best = bestValidated.text.length > 0 ? bestValidated : bestRaw;
-  return {
-    text: best.text,
-    lines: best.lines,
-    validated: best.validated,
-    roundsUsed,
-    toolCallsMade,
-    fileStates,
-    errors,
-  };
-}
-
 // ── THE SILENT VERIFIER (Stage 6 — the markers/structure/verbatim-doctrine/
 //    freshness/inference-presence; the flags ride inside the manifest, L6) ──
 
@@ -1002,23 +574,28 @@ export function silentVerify(
 
 function buildPiSystemPrompt(): string {
   return [
-    'You are the SHADOW BRAIN of the trident-task-preflight tool — the dispatch-prompt generator\'s inference backend. DeepSeek V4 Flash, effort max. You are NOT an agent with your own goals; you are the tool\'s inference layer, and your only output is the COMPLETE dispatch prompt.',
+    'You are the SHADOW BRAIN of the trident-task-preflight tool — the dispatch-prompt POLISHER. You operate as a headless pi Agent with TWO tools: read + edit. Your job is the SURGICAL POLISH of the pre-woven dispatch prompt on disk.',
     '',
-    'THE SCOPED TOOLS (READ-ONLY — the read-before-write, mechanically):',
-    '- read_file { filepath } — the content of a file (capped).',
-    '- grep { pattern, filepath? } — the lines matching the pattern (filepath optional — defaults to the task filepaths).',
-    '- stat { filepath? } — the line count + the byte size.',
-    'When you need to VERIFY a claim about a file — call the tool FIRST, then write from what you read. THE FILES ARE THE ONLY GROUND TRUTH.',
+    'THE 2 TOOLS (the pi Agent executes them natively — you never emit text markers):',
+    '- read { filepath } — file content. Batch several reads into one turn when needed.',
+    '- edit { path, edits: [{ oldText, newText }, ...] } — THE BATCH EDIT: ONE call applies EVERY replacement to YOUR promptFile (path is mechanically pinned to it). Each oldText must be UNIQUE in the current file, non-overlapping; nearby changes merge into one pair. This is how an entire round of polish costs exactly ONE call.',
+    'THE FILES ARE THE ONLY GROUND TRUTH.',
     '',
-    'THE TOOL-CALL FORMAT — to call a tool, emit EXACTLY (in your text):',
-    '[TOOL_CALL id="<a unique id>" name="<the tool>"]',
-    '{ "filepath": "...", "pattern": "..." }',
-    '[/TOOL_CALL]',
-    'The results return in the next message as [TOOL_RESULT] blocks. After you have read what you need, WRITE THE COMPLETE PROMPT — do NOT leave [TOOL_CALL] blocks in the final prompt.',
+    '═══ THE SHADOW WARHEADS (your operating identity — follow them exactly) ═══',
+    '',
+    'W1 — THE BATCH LAW: BATCH EVERYTHING BY DEFAULT. Sequential only what tangibly needs it.',
+    '  - ALL READS IN ONE TURN: every file you need issued TOGETHER as N read calls in ONE response. NEVER one read per turn.',
+    '  - ALL EDITS IN ONE CALL: PLAN every replacement fully in your reasoning FIRST (each oldText/newText pair chosen before you emit anything), then fire ONE edit call whose edits[] array carries EVERY pair for the round. NEVER drip one-edit-per-turn.',
+    '  - WHY: each of your turns is one LLM round-trip (~10-30s). A dribbled round = 20+ turns = 10+ minutes. A batched round = 2-4 turns = under a minute.',
+    '',
+    'W2 — THE ROUND CONTRACT: rounds are the ONLY sequential boundary (2 mandatory, up to 4, stop when clean). Everything INSIDE a round is batched:',
+    '  ROUND N = BATCH EXECUTE (all reads at once) -> VERIFY -> BATCH FIX -> then the EMBEDDED MICRO-LOOP: RE-VERIFY -> RE-FIX -> loop as needed, UP TO 3 LOOPS TOTAL from the first re-verify action (the circuit breaker — never loop past it) -> round done. A clean re-verify ends the micro-loop immediately.',
+    '',
+    'W3 — THE NO-DRIP VIOLATION: ending a turn with known pending work is a FAILED round. If 5 sections need polish and you made 1 edit call, you violated W1. Plan everything, fire everything, then verify.',
+    '',
+    'W4 — THE EVIDENCE LAWS: THE FILES ARE THE ONLY GROUND TRUTH — verify against them, never conform to belief. Surgical polish, NEVER a rewrite. PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM. MANDATORY FINAL STATE: the file ENDS with "~~~~~~~~~~~" then "[SHADOW INFERENCE]" then YOUR dense forward-map (≥100 chars of real content — a bare marker FAILS validation) (what files ARE from reading them, traps, priorities) — created via YOUR edit, never a mechanical paste. NEVER emit plans/self-review ("I think", "Let me", "DONE") as work — only edits change the file; when it reads clean, stop.',
     '',
     SUPREMACY_CONTRACT,
-    '',
-    'THE OUTPUT CONTRACT: the complete dispatch prompt text ONLY — NO preamble, NO thinking, NO markdown fences, NO [TOOL_CALL] blocks in the final output. The output must BEGIN with "EXECUTE THE FOLLOWING". The prompt must include: the per-task WHAT/HOW/WHY/EXPECTED blocks (3+ tasks), 3+ absolute filepaths, the section markers (THE MISSION / THE ACCEPTANCE / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine QUOTED VERBATIM, and 250-350 lines. NEVER invent file paths outside the task filepaths.',
     '',
     INFERENCE_BRIEF_INSTRUCTION,
   ].join('\n');
@@ -1026,27 +603,31 @@ function buildPiSystemPrompt(): string {
 
 function buildPiDemand(brief: string, chainText: string, ingestText: string): string {
   return [
-    'THE PROMPT SKELETON BELOW HAS THE GOLDEN STRUCTURE. THE CONTEXT ARGS ARE THE RAW MATERIAL — WRITE THE COMPLETE PROMPT by weaving each arg into its section in the GOLDEN STYLE (the operator\'s standard — the god-tier dispatch prompt):',
-    '- THE MISSION: the mission arg expanded into a FULL paragraph (the what, the why, the framing).',
-    '- THE ACCEPTANCE CRITERIA: the static bullets + the acceptance arg formed into the checkable bullets.',
-    '- THE READING ORDER: the filepaths as the numbered list — keep EVERY path.',
-    '- THE KNOWN CONTEXT: the knownContext arg expanded into the bulleted measured state with the anchors.',
-    '- THE OPERATOR\'S DOCTRINE: the doctrine arg QUOTED VERBATIM — never paraphrased.',
-    '- THE KNOWN MEASUREMENTS TABLE: the measurements arg formed into a markdown table.',
-    '- THE PER-TASK EXPANSIONS: the taskTargets arg formed into the bulleted concrete targets.',
-    '- THE POSITION: the position arg expanded into the paragraph.',
-    '- THE TASKS: the static skeletons with the WHAT/HOW/WHY/EXPECTED expanded from the taskTargets into full engineering paragraphs.',
-    'THE FINAL PROMPT MUST BE 250-350 LINES — the dispatch-prompt size, NEVER the 600-line bloat; count the lines before you finish.',
-    'THE VALIDATION REQUIRES: the per-task WHAT/HOW/WHY/EXPECTED blocks, 3+ absolute filepaths, the section markers (THE MISSION / THE ACCEPTANCE / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, and the structure DISPATCHABLE as-is. KEEP every filepath. NEVER invent file paths outside the list. Output ONLY the complete prompt text — NO preamble, NO thinking, NO markdown fences. The output must BEGIN with "EXECUTE THE FOLLOWING".',
-    INFERENCE_BRIEF_INSTRUCTION,
+    'THE FILE ON DISK IS THE WOVEN DISPATCH PROMPT — 70-80% DONE. THE CONTEXT ARGS ARE ALREADY WOVEN INTO IT. YOUR JOB IS THE REMAINING 20%: SURGICAL POLISH, NOT A REWRITE.',
     '',
-    '=== THE WOVEN BRIEF (the skeleton + the L4 SUPREMACY CONTRACT + the [SHADOW INFERENCE]) ===',
+    'DO THIS — BATCHED (per the W1/W2 warheads in your system prompt):',
+    'THE SOURCES ARE ALREADY QUOTED BELOW (THE ACTUAL FILE CONTENTS + the woven brief) — you rarely need any read call for inputs.',
+    'STEP 1: plan every polish replacement fully in your reasoning — each oldText/newText pair chosen before emitting anything.',
+    'STEP 2: fire ONE edit call whose edits[] carries ALL pairs — slop fixes, flow fixes, AND the [SHADOW INFERENCE] block append per W4. ONE call, whole round.',
+    'MICRO-LOOP (max 3 loops from first re-verify): RE-VERIFY with one read of the file -> defects? fix with ONE batched edit call -> loop. Clean re-verify = done.',
+    '',
+    'PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM.',
+    'MANDATORY FINAL STATE: the file ENDS with a line "~~~~~~~~~~~" then "[SHADOW INFERENCE]" then YOUR dense forward-map (≥100 chars of real content — a bare marker FAILS validation) (what files ARE from READING them, traps, priorities, contradictions). If missing, CREATE it via your batched edits. A file WITHOUT this block is INCOMPLETE.',
+    '',
+    'DO NOT:',
+    '- NEVER rewrite the whole file from scratch — the woven brief IS the doc, polish it surgically.',
+    '- NEVER emit a plan or a self-review ("I think", "Let me", "DONE") — only the edit tool changes the file.',
+    '- NEVER invent file paths outside the list.',
+    '',
+    'THE FILES ARE THE ONLY GROUND TRUTH. THE CONTEXT ARGS ARE BELIEF — VERIFY AGAINST THE FILES.',
+    '',
+    '=== THE WOVEN BRIEF (the file on disk — the source of truth) ===',
     brief,
     '',
-    '=== THE CONTEXT CHAIN (the session memory — the prior generations + the epoch + the recent session window) ===',
+    '=== THE CONTEXT CHAIN (the session memory — verify claims against it where you polish) ===',
     chainText,
     '',
-    '=== THE ACTUAL FILE CONTENTS (the subagent will read these — the shadow brain MUST understand them before writing; the scoped tools let you read MORE) ===',
+    '=== THE ACTUAL FILE CONTENTS (the subagent will read these — the shadow brain MUST understand them before polishing; the read tool lets you read MORE) ===',
     ingestText,
   ].join('\n');
 }
@@ -1071,6 +652,8 @@ function errorManifest(spec: AgentSpec, outDir: string, error: string): string {
     next: 'GENERATION REFUSED: ' + error,
   }, null, 2);
 }
+
+
 
 // ═══ THE ONE-PLACE COMPOSITION (the spec §4 — the 13-step pipeline) ═══
 
@@ -1139,40 +722,66 @@ export async function runShadowPipeline(
     let promptText = brief + '\n\nTHE MECHANICAL READING ORDER (the filepaths — one per line):\n' + readingOrder +
       '\n\nTHE MECHANICAL VERIFICATION (run ALL + return the outputs — each a SINGLE command):\n' + readCommands;
 
-    // the brain (the injected mock OR the default built from the shadow-brain
-    // module — the model discipline holds either way)
-    const brain = options.brain ?? defaultRunnerBrain({
-      apiKey: options.apiKey,
-      baseUrl: options.baseUrl,
-      timeoutMs: options.timeoutMs,
-      streamFn: options.streamFn,
-    });
     const maxRounds = options.maxRounds ?? PI_MAX_ROUNDS;
 
-    // 8. THE PI EXECUTION LOOP (Stage 5 — the agentic loop: prompt → stream →
-    //    the scoped read_file/grep/stat → the results fed back → continue)
-    const demand = buildPiDemand(brief, ctx.chainUsed.text, ingestFiles(spec.filepaths));
-    const pi = await runPiLoop({
-      brain,
+    // 8. THE HEADLESS PI AGENT (2026-08-19 — the operator's EXACT design:
+    //    "PREBUILT PROMPTFILE ON DISK THAT IS THE WOVEN BRIEF - HEADLESS PI
+    //    AGENT JUST USES THE EDIT TOOL FOR SURGICAL EDITS" + "STRIP THIS
+    //    AGENT OF ANYTHING OTHER THAN READ AND EDIT"). THE FLOW:
+    //    (a) the woven brief is written to disk as THE promptFile (<name>.md);
+    //    (b) the pi Agent (read + edit ONLY) surgically EDITS the existing
+    //        file — the edit tool is the ONLY write path;
+    //    (c) the file IS the deliverable. NO brain, NO mock, NO text-sync —
+    //    the model's TEXT is never written to the file, so the CoT leak is
+    //    impossible.
+    const piFilePath = path.join(outDir, sanitizeName(spec.name) + '.md');
+    fs.mkdirSync(outDir, { recursive: true });
+    // THE EPHEMERAL PROMPTFILE (the A2 loud-fail law): the file IS <name>.md
+    // — the pi Agent edits it IN PLACE. On FAILURE the file is deleted — a
+    // failed generation leaves NO file on disk (lines 0, ready false).
+    fs.writeFileSync(piFilePath, promptText, 'utf-8');
+    // run the REAL pi Agent to polish the file (read + edit).
+    // THE EPHEMERAL SPAN: the Agent + its stream exist ONLY for this call —
+    // when ShadowAgent.run returns, the Agent is garbage-collected and only
+    // the promptFile persists on disk. THE SHADOW AGENT = THE PI SDK
+    // VERBATIM (the operator's 2026-08-20 ruling): the pi nvidia provider +
+    // the native read/edit tools + the native streamSimple transport.
+    const shadow = new ShadowAgent(process.cwd(), { ledger: options.ledger });
+    // THE INGEST WIRE (2026-08-21 — the operator's BATCH LAW): the input file
+    // contents ride IN the demand (pre-read by the runner) so the shadow brain
+    // needs ZERO read calls for its sources — R1 goes straight to the ONE
+    // batched edit call.
+    const ingestText = excerpts
+      .map((e) => '--- FILE: ' + e.path + ' (' + e.lines + ' lines) ---\n' + e.content)
+      .join('\n\n');
+    const pi = await shadow.run({
+      promptFilePath: piFilePath,
       systemPrompt: buildPiSystemPrompt(),
-      demand,
-      filepaths: spec.filepaths,
-      context: ctxBlob(spec),
+      // THE ROUND-1 DEMAND (the polish instruction + the context chain).
+      demand: buildPiDemand(brief, ctx.chainUsed.text, ingestText),
       maxRounds,
       signal: options.signal,
+      // THE TEST STREAM OVERRIDE (the tests inject a scripted stream; the
+      // production default is the pi streamSimple).
+      streamFn: options.streamFn as never,
     });
+    // THE LOUD-FAIL + THE EPHEMERAL CLEANUP: on success the file IS the
+    // deliverable (the Agent edited it in place); on failure (empty output /
+    // errors) DELETE the file — NO file for a failed generation.
+    if (pi.text && pi.text.trim().length > 0) {
+      promptText = pi.text;
+    } else {
+      try { fs.unlinkSync(piFilePath); } catch { /* non-fatal — the file may not exist */ }
+      promptText = '';
+    }
     // ═══ THE LOUD-FAIL LAW (2026-08-07 — the operator's directive: "NO
     // MECHANICAL FALLBACK I EXPLICITLY SAID EITHER A LOUD FUCKING ERROR OR IT
     // WORKS STOP ENGINEERING SHITTY FALLBACKS... EVERYTHING IS EITHER A LOUD
     // FAIL OR A CLEAR PASS. DO NOT CREATE BULLSHIT FALLBACKS THAT CREATE
     // FALSE SUCCESS AND DERAIL PROJECTS") ═══
-    // THE OLD DEAD-LLM SAFETY (the v13 expansion + mechanicallyRepair over the
-    // mechanical brief) FABRICATED a "validated" prompt when the brain
-    // produced nothing — the FALSE SUCCESS (the live ct-final-1 artifact: the
-    // mechanical sections + zero model brief + validated:true). THAT MACHINERY
-    // IS DEAD. A generation that produced no usable prompt is a LOUD FAILURE:
-    // the error manifest (ready:false, the errors named), NO file, NO
-    // fabricated prompt, NO fallback.
+    // A generation that produced no usable prompt is a LOUD FAILURE: the
+    // error manifest (ready:false, the errors named), NO file, NO fabricated
+    // prompt, NO fallback.
     if (!pi.text || pi.text.trim().length === 0) {
       const why = pi.errors.length > 0
         ? pi.errors.join('; ')
@@ -1222,7 +831,14 @@ export async function runShadowPipeline(
     //     no remote is configured — the pattern explicitly allows skipping
 
     // 12. THE MANIFEST (the STRING return — the g.split bypass)
-    const ready = v.passed && lines >= 125;
+    // THE READY BAR (2026-08-19 — the enforcement floor relaxed to 96 per the
+    // operator's ruling: the LLM reference stays 125, the MECHANICAL ready bar
+    // is 96 — a structurally-complete prompt a few lines under the target is
+    // dispatched. ⚠️ INTENTIONAL, NOT A REGRESSION — do NOT restore 125 here;
+    // the 125 generation reference is in the polisher text + the lineShortfall
+    // demand. A future session that sees 96 and "fixes" it back to 125 re-
+    // breaks the host generate (118/119-line clean prompts rejected).)
+    const ready = v.passed && lines >= 96;
     const notes: string[] = [];
     if (pi.roundsUsed > 0) {
       notes.push('PI: ' + pi.roundsUsed + ' round(s), ' + pi.toolCallsMade + ' scoped tool call(s) [' +
@@ -1258,7 +874,7 @@ export async function runShadowPipeline(
     // (the validation + the line count), never a hardcoded string.
     const partialReason = !v.passed
       ? 'the DPL1 structure validation failed (validateTaskPromptLines)'
-      : 'the prompt is below the ready bar: ' + lines + ' lines (< 125)';
+      : 'the prompt is below the ready bar: ' + lines + ' lines (< 96 — the enforcement floor; the 125 generation reference is the aim. ⚠️ Intentional relaxation per the 2026-08-19 ruling — NOT a regression.)';
     const manifest = {
       batch: { requested: 1, generated: 1, ready: ready ? 1 : 0 },
       agents: [{

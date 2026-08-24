@@ -28,7 +28,16 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   // The native task tool runs background.start() (the job registry +
   // task_status + the result injection — the PROVEN working baseline).
   'task',
-  'task_status', // ADD 2026-08-12 — the runtime's native background-task poll (the native task tool's completion/result channel)
+  // task_status REMOVED (2026-08-16 — the FALSE-LIVENESS incident): the
+  // runtime's background-JOB poll reported 'cancelled' for TWO LIVE streaming
+  // sessions (the loop-killer + the memory-repair subagents were writing
+  // files while the job registry said cancelled) — the false read nearly
+  // caused a useless re-dispatch. THE SESSION STREAM IS THE ONLY LIVENESS
+  // TRUTH: trident-wave-manager action=status sessionId=<id> + the dedicated
+  // trident-wave-read tool read the session parts directly (the opencode.db)
+  // — NEVER the job registry. The completion payload is visible via the
+  // session stream (the final text/result part). The wave manager + the
+  // wave-read tool fully cover subagent management; the native poll is gone.
   'todowrite',
   'checkpoint',
   'skill',
@@ -49,7 +58,6 @@ const ALLOWED_EXTERNAL_TOOLS = new Set([
   'hive_restore',
   'hive_trash_list',
   'hive_trash_status',
-  'memread_session',
   'memlink_parent',
 ]);
 
@@ -64,7 +72,6 @@ const ALLOWED_TOOL_PREFIXES = [
   'vc-browser_',
   'vc-fetch_',
   'hive_',
-  'memread_',
   'memlink_',
 ];
 

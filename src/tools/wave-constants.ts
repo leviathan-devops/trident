@@ -59,7 +59,12 @@ export interface WaveDispatchResult {
   // THE GENERATION TELEMETRY (2026-08-09 — the forensics' fix #1: the
   // per-agent startedAt/finishedAt/durationMs/status in the returned output
   // make the async-parallel generation mechanically provable).
-  telemetry: Record<string, { startedAt: string; finishedAt?: string; durationMs?: number; status: 'ok' | 'failed' }>;
+  // RENAMED (2026-08-24 — the live hallucination bug): generationTelemetry —
+  // the PROMPT-GENERATION timings ONLY. agentStatus:'dispatched' on every
+  // entry makes the run state explicit: the agent RUN lives in the session
+  // stream (action=status / trident-wave-read), NEVER in this object. The old
+  // `telemetry` + status:'ok' shape was read by sessions as "agent finished".
+  generationTelemetry: Record<string, { startedAt: string; finishedAt?: string; durationMs?: number; status: 'generated' | 'generation-failed'; agentStatus: 'dispatched' }>;
   // THE BATCH FORM (the generator-only contract — the orchestrator dispatches
   // this via the batch tool; the tool NEVER spawns). THE PROMPTFILE-ONLY
   // PAYLOAD (2026-08-14 — the operator: "the only thing the model should pass
@@ -79,7 +84,7 @@ export interface WaveDispatchResult {
         tool: 'task';
         parameters: {
           description: string;
-          promptFile: string;        // THE PROMPT — the loader mutates it to prompt
+          prompt: string;            // THE PATH STRING (2026-08-16 — the operator: "the promptFile is just the val of the prompt arg") — the loader detects the VAL is a path + mutates it to the byte-exact content
           subagent_type: string;
         };
       }>;

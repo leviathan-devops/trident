@@ -33,6 +33,12 @@ export interface AgentTrack {
   lastBytes: number;                     // the stream-bytes evidence
   errorCodes: string[];                  // the provider-error evidence
   lastError?: string;                    // the markFailed's reason
+  // THE READ-AND-KICK LEDGER (2026-08-23 — the operator: "wave manager read
+  // and kick, don't sit here doing nothing"): the cron KICKS a silent agent
+  // ONCE via steer before any kill escalation; these fields make the kick
+  // exactly-once per agent and give the escalation window its anchor.
+  kickedAt?: number;                     // when the single steer-kick fired
+  kickCount?: number;                    // 0/1 — the kick is never repeated
 }
 
 export interface WaveTrack {
@@ -85,6 +91,8 @@ export interface WaveTrackerSurface {
   markComplete(wave: string, name: string): void;
   markFailed(wave: string, name: string, error: string): void;
   markKilled(wave: string, name: string, reason: KillReason): void;
+  markResumed(wave: string, name: string): void;   // NEW (2026-08-24): the resume state sync — flips killed→running + un-archives
+  findWaveBySession(sessionId: string): { wave: string; agent: string } | null;
   markStuck(wave: string, name: string): void;
   markPaused(wave: string, name: string): void;   // NEW (2026-08-13): the non-destructive pause
   getWave(wave: string): WaveTrack | undefined;
@@ -116,7 +124,13 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 
 const TRACKER_DB = process.env.TRIDENT_TRACKER_DB
+  || (process.env.BUN_TEST === '1'
+      ? '/tmp/trident-waves-buntest.sqlite'   // THE CLASS-KILL (2026-08-24 — the audit find): bun sets BUN_TEST=1
+      : null)                                  // for EVERY `bun test` run — any test that touches the tracker
   || path.join(os.homedir(), 'OPENCODE_WORKSPACE', 'trident-tmp', 'trident-waves.sqlite');
+  // (a1/ok1/m1 test rows were landing in the PROD db via unguarded test files —
+  //  wave-telemetry.test.ts registers real waves. The env-var detection isolates
+  //  EVERY test run automatically; no per-file import can be forgotten.)
 const TRACKER = new Map<string, WaveTrack>();
 const ARCHIVE: WaveTrack[] = [];
 // THE CACHED HANDLE (2026-08-13 — the multi-process hardening): ONE open
@@ -403,6 +417,49 @@ export const WaveTracker: WaveTrackerSurface = {
     return [...ARCHIVE];
   },
 
+  /** THE RESUME STATE SYNC (2026-08-24 — the operator: "if a killed wave is
+   *  resumed obviously this should be updated then in the db properly"): a
+   *  resumed session flips its agent state BACK to running, and a wave whose
+   *  row was archived (the kill's archiveWave) is RESTORED to the active
+   *  registry — the kill-by-waveId + status surfaces see the live truth
+   *  again, never a zombie 'killed' record over a streaming session. */
+  markResumed(wave: string, name: string): void {
+    let w = TRACKER.get(wave);
+    if (!w) {
+      const ai = ARCHIVE.findIndex((x) => x.wave === wave);
+      if (ai >= 0) {
+        w = ARCHIVE[ai];
+        ARCHIVE.splice(ai, 1);
+        TRACKER.set(wave, w);
+        w.status = 'running' as never;
+        persistWaveRow(w);
+        for (let i = 0; i < ARCHIVE.length; i++) persistArchiveRow(ARCHIVE[i], i);
+      }
+    }
+    const agent = w?.agents[name];
+    if (!agent || !w) return;
+    agent.state = 'running';
+    agent.lastKillReason = null;   // the resume clears the kill (2026-08-24 — the state sync)
+    agent.spawnTimes.killedAt = undefined;
+    persistWaveRow(w);
+  },
+
+  /** Find the (wave, agentName) owning a session id — searches ACTIVE first,
+   *  then the ARCHIVE (a killed wave's row lives there until restored). */
+  findWaveBySession(sessionId: string): { wave: string; agent: string } | null {
+    for (const [wave, w] of TRACKER) {
+      for (const [name, a] of Object.entries(w.agents)) {
+        if (a.sessionIds.includes(sessionId) || (a.taskIds ?? []).includes(sessionId)) return { wave, agent: name };
+      }
+    }
+    for (const w of ARCHIVE) {
+      for (const [name, a] of Object.entries(w.agents)) {
+        if (a.sessionIds.includes(sessionId) || (a.taskIds ?? []).includes(sessionId)) return { wave: w.wave, agent: name };
+      }
+    }
+    return null;
+  },
+
   archiveWave(wave): void {
     const w = TRACKER.get(wave);
     if (!w) return;
@@ -417,6 +474,16 @@ export const WaveTracker: WaveTrackerSurface = {
   clear(): void {
     TRACKER.clear();
     ARCHIVE.length = 0;
+    // THE PRODUCTION-WIPE GATE (2026-08-24 — the live incident: 5 test files
+    // call clear() with NO TRIDENT_TRACKER_DB override → every battery run
+    // executed DELETE FROM waves + wave_archive on the PRODUCTION tracker —
+    // the kill's archived rows annihilated by the next test run. The env
+    // override IS the test signal: production NEVER sets it. The in-memory
+    // clear ALWAYS runs (test isolation); the DISK wipe only under override.
+    if (!process.env.TRIDENT_TRACKER_DB) {
+      tridentLog('WARN', 'wave-tracker', 'clear() SKIPPED the disk wipe — TRIDENT_TRACKER_DB not set (production path protected; tests must set the override)');
+      return;
+    }
     try {
       const db = getTrackerDb();
       try {

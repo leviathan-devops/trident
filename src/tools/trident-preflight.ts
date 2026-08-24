@@ -56,8 +56,13 @@ export function validateTaskPromptLines(prompt: string): { passed: boolean; line
   }
   // the structural checks (the firewall mirror)
   const structural: string[] = [];
-  if (/\[FILL/.test(prompt)) structural.push('the prompt still contains [FILL] markers — the template was NOT filled');
-  const absPaths = (prompt.match(/(?:\/home\/|\/root\/|\/tmp\/|\/var\/|\/usr\/|\/etc\/|\/opt\/|\/workspace\/|\/app\/|\/mnt\/|C:\\|\/Users\/)/g) || []).length;
+  // THE PRECISE FILL DETECTOR (2026-08-21 — the container ct8 false-positive
+  // fix): an UNFILLED slot is `[FILL: ...]` (the colon form the weave leaves
+  // behind). The bare `\[FILL` regex ALSO matched the polish prose "zero
+  // [FILL] markers left" — the model DESCRIBING the requirement — and failed
+  // valid 125-144-line prompts (ct4-a1, all 8 ct8 files).
+  if (/\[FILL:/i.test(prompt)) structural.push('the prompt still contains [FILL:] markers — the template was NOT filled');
+  const absPaths = (prompt.match(/(?:\/home\/|\/root\/|\/tmp\/|\/var\/|\/usr\/|\/etc\/|\/opt\/|\/workspace\/|\/app\/|\/mnt\/|\/src\/|C:\\|\/Users\/)/g) || []).length;
   if (absPaths < 3) structural.push('fewer than 3 absolute file paths');
   const what = (prompt.match(/\bWHAT:/g) || []).length;
   const why = (prompt.match(/\bWHY:/g) || []).length;
@@ -65,15 +70,44 @@ export function validateTaskPromptLines(prompt: string): { passed: boolean; line
   const debugEscape = /THE SYMPTOM/.test(prompt) && /THE SUSPECTS/.test(prompt) && /THE A\/B TESTS/.test(prompt) && /THE FIX SPEC/.test(prompt);
   const expansionOk = (what >= 3 && expected >= 3 && why >= 2) || debugEscape;
   if (!expansionOk) structural.push('no per-task WHAT/HOW/WHY/EXPECTED expansion (3+ tasks each with the 4-part block)');
-  const cmd = /(\b(?:bun|npm|npx|node|vitest|tsc|pytest|git|sha256sum)\s|\bgrep\s|\brg\s|\bread\s+\/|\bglob\s+)/.test(prompt);
+  // THE VERIFICATION-COMMAND LEXICON (2026-08-23 fix): the ORIGINAL regex only
+  // accepted CODE commands (bun/grep/read/sha256sum) — an E3 RESEARCH prompt
+  // legitimately verifies via webfetch/curl/source citations, failed this
+  // check, and that single miss flipped the floor 96→150 (the old conditional)
+  // killing a structurally-complete 129-line prompt. Research forms are now
+  // first-class members of the lexicon.
+  const cmd = /(\b(?:bun|npm|npx|node|vitest|tsc|pytest|git|sha256sum)\s|\bgrep\s|\brg\s|\bread\s+\/|\bglob\s+|\bwebfetch\s|\bcurl\s|\bwget\s)/.test(prompt);
   if (!cmd) structural.push('no concrete verification commands (grep/read/bun/sha256sum — a command, not "run the tests")');
   const nonEmpty = prompt.split('\n').filter((l: string) => l.trim().length > 0);
   const uniq = new Set(nonEmpty.map((l: string) => l.trim().toLowerCase().replace(/\s+/g, ' ')));
   const ratio = nonEmpty.length > 0 ? uniq.size / nonEmpty.length : 0;
   if (ratio < 0.55) structural.push('repetition detected — only ' + Math.round(ratio * 100) + '% of the lines are unique');
   const structureOk = structural.length === 0;
-  const floor = structureOk ? 125 : 150;
-  out.push(`  [${totalLines >= floor ? 'PASS' : 'FAIL'}] lines: ${totalLines} (min ${floor} — ${structureOk ? '125 with the DPL1 structure complete' : '150 — the structural checks failed'})`);
+  // THE ENFORCEMENT FLOOR (2026-08-19 — the operator: "patch this in the
+  // firewall itself to be 96 lines so the enforcement doesnt throw for good
+  // prompts and only shitty ones. should stay reference 125 anywhere any
+  // llm/prompt is concerned but in the enforcement itself we can relax it a
+  // bit"). The GENERATION reference stays 125 (the LLM aims high); the
+  // ENFORCEMENT floor is 96 — a clean prompt with the full structure but a
+  // few lines under the target is dispatched, only the structurally-broken
+  // or sub-96 prompts are rejected.
+  // ⚠️ INTENTIONAL RELAXATION — NOT A REGRESSION: the floor is 96, not 125,
+  // by the operator's explicit 2026-08-19 ruling. The 125 number STILL appears
+  // in the polisher prompts + the lineShortfall demand (the LLM reference);
+  // this validator is the MECHANICAL enforcement only. DO NOT "fix" this back
+  // to 125 — it would re-break the clean-but-short prompts the host generate
+  // produced (118/119 lines, structurally complete, DPL1-rejected by the old
+  // floor). The reference 125 lives in shadow-runner.ts + the polisher text.
+  // THE ENFORCEMENT FLOOR — UNCONDITIONAL 96 (2026-08-23 fix of the
+  // conditional-150 trap): the old `structureOk ? 96 : 150` DOUBLE-PUNISHED —
+  // one structural nit (even the now-fixed command-lexicon gap) silently
+  // raised the line floor to 150 and killed structurally-complete prompts at
+  // 129 lines (the live wave-1787506367557 E3 burn). The 2026-08-19 ruling is
+  // absolute: ENFORCEMENT floor = 96, period. Structural failures are named
+  // individually below (they gate independently) — they never inflate the
+  // line count's bar. The GENERATION reference stays 125 in the polisher.
+  const floor = 96;
+  out.push(`  [${totalLines >= floor ? 'PASS' : 'FAIL'}] lines: ${totalLines} (min ${floor} — the enforcement floor; the 125 generation reference is the aim)`);
   if (totalLines < floor) passed = false;
   if (present < 4) {
     passed = false;

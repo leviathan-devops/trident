@@ -120,23 +120,192 @@ export function isContainerSkillLoaded(sessionId: string): boolean {
   return containerSkillSessions.has(sessionId) || containerSkillSessions.has('default') ||
     hasValidContainerTestPlanFile();
 }
-export function isContainerTestingCommand(command: string): boolean {
-  if (!command || typeof command !== 'string') return false;
-  // Infrastructure commands are ALWAYS allowed via bash (not container testing)
-  var isInfra = /\bdocker\s+(ps|images|stop|rm|inspect|logs|kill|network|volume|system|info|version)\b/i.test(command);
-  if (isInfra) return false;
-  // Only match docker/tmux as SHELL-LEVEL VERBS (start of command or after separator)
-  // NOT inside string literals (python scripts, heredocs, echo text)
-  var hasDockerVerb = /(^|[;&|]\s*)docker\s+(run|exec|cp)\b/i.test(command);
-  var hasTmuxVerb = /(^|[;&|]\s*)tmux\s+(send-keys|pipe-pane|capture-pane)\b/i.test(command);
-  if (!hasDockerVerb && !hasTmuxVerb) return false;
-  // Container-testing context
-  var hasTesting = /\bopencode\b/i.test(command) || lowerIndexOf(command, 'stream.txt') ||
-                   hasTmuxVerb ||
-                   /docker\s+(exec|run|cp)\s+[\w./-]*(-test|_test|test-)/i.test(command);
-  return hasTesting;
+// ═══ THE CONTAINER-INTERACTION FIREWALL (2026-08-19 — the 5-LAYER UPGRADE) ═══
+// THE OLD CLASSIFIER was a string-position regex: it anchored docker/tmux at
+// command-start (^|[;&|]) so "timeout 25 docker exec ..." BYPASSED it; it
+// required the "-test" token IN THE SOURCE PATH of a docker cp so a cp from a
+// plain path PASSED; and it FAILED-OPEN (return false on any gap). The live
+// breach: raw `docker exec ... kill -9` + `docker cp` executed via the bash
+// tool. THE UPGRADE is the ISE pattern: the regex is the DETECTOR only; the
+// DECISION is the STATE MACHINE (tokenize → wrapper-strip → verb-class →
+// target-check → fail-closed). docker exec/run/cp + tmux send-keys/pipe-pane/
+// capture-pane are MUTATIONS the CT tool owns — blocked BY THE VERB, always,
+// regardless of wrapper, path, or target name.
+//   IDLE → TOKENIZED → WRAPPER_STRIPPED → CORE_IDENTIFIED → VERB_CLASSED
+//   → { MUTATION → BLOCK } | { READ_ONLY → INFRA_ALLOW } | { UNKNOWN → BLOCK }
+// The evidence triad { verb, target, tokenIndex } names the exact token so
+// the block message teaches the boundary. Fail-closed: any docker/tmux that
+// does not parse clean into the READ_ONLY allowlist is BLOCKED.
+
+export type ContainerCommandVerdict =
+  | 'ALLOW_INFRA'      // read-only docker (ps/images/inspect/logs/version/info) or non-docker
+  | 'BLOCK_MUTATION'   // docker exec|run|cp / tmux send-keys|pipe-pane|capture-pane — CT tool owns
+  | 'BLOCK_TARGET'     // docker into a KNOWN test container name (defense-in-depth)
+  | 'BLOCK_UNPARSEABLE'; // fail-closed: docker/tmux present but the parse is ambiguous
+
+export interface ContainerCommandEvidence {
+  verb: string;          // the classified verb (exec|run|cp|send-keys|...)
+  target?: string;       // the container/target name when extractable
+  tokenIndex: number;    // the argv index of the verb (for the message)
+  reason: string;        // the human reason — the block message body
 }
-function lowerIndexOf(s: string, sub: string): boolean { return s.toLowerCase().indexOf(sub) !== -1; }
+
+const KNOWN_TEST_CONTAINER_RE = /(^|[-_])(test|ct|forge|sandbox)([-_]|$)/i;
+const KNOWN_TEST_CONTAINER_PATTERNS = [
+  /^forge-/, /-test$/, /^ct-/, /-ct\d*$/, /^test-/, /^container-test-/, /-dispatch-test$/,
+];
+
+function isKnownTestContainer(name: string): boolean {
+  if (!name) return false;
+  for (const p of KNOWN_TEST_CONTAINER_PATTERNS) if (p.test(name)) return true;
+  return KNOWN_TEST_CONTAINER_RE.test(name);
+}
+
+/** L1 — TOKENIZE: quote/heredoc/escape-aware argv split. Returns the shell-level
+ *  tokens — strings in quotes are ONE token and NEVER matched as verbs. */
+export function tokenizeShell(command: string): string[] {
+  const tokens: string[] = [];
+  let cur = '';
+  let inSingle = false, inDouble = false, inBacktick = false;
+  let escaped = false;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (escaped) { cur += ch; escaped = false; continue; }
+    if (ch === '\\' && !inSingle) { cur += ch; escaped = true; continue; }
+    if (ch === "'" && !inDouble && !inBacktick) { inSingle = !inSingle; cur += ch; continue; }
+    if (ch === '"' && !inSingle && !inBacktick) { inDouble = !inDouble; cur += ch; continue; }
+    if (ch === '`' && !inSingle && !inDouble) { inBacktick = !inBacktick; cur += ch; continue; }
+    if ((ch === ' ' || ch === '\t' || ch === '\n') && !inSingle && !inDouble && !inBacktick) {
+      if (cur.length > 0) { tokens.push(cur); cur = ''; }
+      continue;
+    }
+    cur += ch;
+  }
+  if (cur.length > 0) tokens.push(cur);
+  // strip the SURROUNDING quotes from each token — the quoted string is the
+  // VALUE, not a verb carrier; `bash -c "docker exec x"` must re-tokenize the
+  // INNER as shell-level, not keep the quotes in the token.
+  return tokens.map((t) => {
+    if (t.length >= 2 && ((t[0] === '"' && t[t.length - 1] === '"') || (t[0] === "'" && t[t.length - 1] === "'"))) {
+      return t.substring(1, t.length - 1);
+    }
+    return t;
+  });
+}
+
+/** L2 — WRAPPER-STRIP: walk leading wrappers (timeout/sudo/env/nohup/bash -c/
+ *  sh -c/docker exec <c> sh -c) until the CORE command. Recursive, depth ≤ 6.
+ *  Returns the stripped argv. */
+export function stripWrappers(argv: string[]): string[] {
+  let out = argv;
+  for (let depth = 0; depth < 6; depth++) {
+    if (out.length === 0) return out;
+    const head = out[0].toLowerCase();
+    if (head === 'timeout' && out.length >= 2) { out = out.slice(2); continue; }
+    if ((head === 'sudo' || head === 'nohup' || head === 'nice') ) { out = out.slice(1); continue; }
+    if (head === 'env') { out = out.slice(1); continue; } // env X=Y cmd — env itself is a wrapper
+    if ((head === 'bash' || head === 'sh' || head === 'zsh') &&
+        out.length >= 3 && (out[1] === '-c' || out[1] === '-lc' || out[1] === '-c ' || out[1] === '-lc')) {
+      // bash -c 'inner' → the inner is argv[2] — re-tokenize it
+      const inner = out.slice(2).join(' ');
+      out = tokenizeShell(inner);
+      continue;
+    }
+    // docker exec is NOT a wrapper — it IS the core command to classify.
+    // `docker exec <c> sh -c 'kill'` must BLOCK by the docker-exec verb, never
+    // unwrap to the inner kill. (THE HOLE this kills: the old strip unwrapped
+    // docker exec → the head became 'kill' → the command ALLOWED — the exact
+    // bypass that executed the destructive kill.)
+    break;
+  }
+  return out;
+}
+
+/** L3 + L4 + L5 — the DECISION: verb-class (mutation → BLOCK by verb alone),
+ *  target-registry (known test container → BLOCK_TARGET), fail-closed. */
+export function classifyContainerCommand(command: string): { verdict: ContainerCommandVerdict; evidence: ContainerCommandEvidence | null } {
+  if (!command || typeof command !== 'string') return { verdict: 'ALLOW_INFRA', evidence: null };
+
+  // DETECTOR (the ISE law: the regex DETECTS, the state machine DECIDES):
+  // does the RAW string contain docker/tmux AT ALL? If NOT — clean pass,
+  // zero token work. If YES — the DECISION below keys off the TOKENIZED
+  // HEAD (after wrapper-strip), so `echo "docker exec foo"` (head=echo) is
+  // ALLOW — the quoted string is a VALUE, not a shell verb. A bare `docker`
+  // or `tmux` token in the head is what the verb-class gate consumes.
+  if (!/\bdocker\b/.test(command) && !/\btmux\b/.test(command)) {
+    return { verdict: 'ALLOW_INFRA', evidence: null };
+  }
+
+  const argv = stripWrappers(tokenizeShell(command));
+  if (argv.length === 0) return { verdict: 'ALLOW_INFRA', evidence: null };
+
+  const head = argv[0].toLowerCase();
+
+  // ── the head is NOT docker/tmux (echo, cat, ls, git, bun, python...) →
+  //    the docker/tmux was inside a quoted string / heredoc body / variable
+  //    value. The shell-level command does NOT interact with containers.
+  //    ALLOW (the DECISION is the head — the raw scan was only the DETECTOR).
+  if (head !== 'docker' && head !== 'tmux') {
+    return { verdict: 'ALLOW_INFRA', evidence: null };
+  }
+
+  // ── TMUX: send-keys/pipe-pane/capture-pane = MUTATION (drives the TUI the
+  //    CT tool owns). ALWAYS BLOCK by verb. ──
+  if (head === 'tmux') {
+    const verb = argv[1] ? argv[1].toLowerCase() : '';
+    if (['send-keys', 'pipe-pane', 'capture-pane', 'select-pane', 'split-window', 'new-window', 'kill-session', 'new-session'].indexOf(verb) !== -1) {
+      return { verdict: 'BLOCK_MUTATION', evidence: { verb, tokenIndex: 1, reason: 'tmux ' + verb + ' mutates the TUI the trident-container-test tool owns — raw tmux is the theatrical path' } };
+    }
+    if (verb === 'list-sessions' || verb === 'display-message' || verb === 'list-panes') {
+      return { verdict: 'ALLOW_INFRA', evidence: null };
+    }
+    return { verdict: 'BLOCK_UNPARSEABLE', evidence: { verb: verb || 'unknown', tokenIndex: 1, reason: 'unparseable tmux verb — fail-closed' } };
+  }
+
+  // ── DOCKER: the verb-class gate. ──
+  if (head === 'docker') {
+    const verb = argv[1] ? argv[1].toLowerCase() : '';
+    // READ-ONLY infra — ALWAYS allowed (the CT tool's own inspection surface)
+    if (['ps', 'images', 'inspect', 'logs', 'version', 'info', 'network', 'volume', 'system', 'history'].indexOf(verb) !== -1) {
+      return { verdict: 'ALLOW_INFRA', evidence: null };
+    }
+    // MUTATION — blocked BY THE VERB, always (no target-name dependence)
+    if (['exec', 'run', 'cp', 'rm', 'stop', 'kill', 'restart', 'start', 'create', 'commit', 'build', 'push', 'pull', 'tag', 'save', 'load', 'import', 'export'].indexOf(verb) !== -1) {
+      // the target (the container/image name — the first non-flag arg after the verb)
+      let target: string | undefined;
+      for (let i = 2; i < Math.min(argv.length, 6); i++) {
+        const a = argv[i];
+        if (a.startsWith('-')) continue;
+        target = a.split(':')[0].split('/').pop(); // strip :tag and repo/path
+        break;
+      }
+      const evidence: ContainerCommandEvidence = {
+        verb, target, tokenIndex: 1,
+        reason: 'docker ' + verb + ' mutates a container/image — the trident-container-test tool owns ALL container interaction (setup|deploy|send|read|check|suite)',
+      };
+      // L4 — defense-in-depth: into a KNOWN test container → BLOCK_TARGET
+      if (target && isKnownTestContainer(target)) {
+        return { verdict: 'BLOCK_TARGET', evidence: { ...evidence, reason: 'docker ' + verb + ' into the KNOWN test container "' + target + '" — use trident-container-test ' + verb + ' instead' } };
+      }
+      return { verdict: 'BLOCK_MUTATION', evidence };
+    }
+    // docker with an unknown/missing verb → fail-closed BLOCK
+    return { verdict: 'BLOCK_UNPARSEABLE', evidence: { verb: verb || 'missing', tokenIndex: 1, reason: 'docker ' + (verb || '<missing verb>') + ' — fail-closed: unparseable docker command' } };
+  }
+
+  // ── docker/tmux appeared but NOT at the head after wrapper-strip → the
+  //    command is ambiguous (heredoc body, string content, weird nesting).
+  //    FAIL-CLOSED: block rather than risk a bypass. ──
+  return { verdict: 'BLOCK_UNPARSEABLE', evidence: { verb: 'docker/tmux-in-command', tokenIndex: 0, reason: 'docker/tmux present but not the command head after wrapper-strip — fail-closed' } };
+}
+
+/** THE PUBLIC ENTRY — the hook calls this. TRUE = the command must be blocked
+ *  (a container-testing command OR an unparseable docker/tmux). The verdict
+ *  detail rides the evidence so the hook can name the exact verb + target. */
+export function isContainerTestingCommand(command: string): boolean {
+  const { verdict } = classifyContainerCommand(command);
+  return verdict === 'BLOCK_MUTATION' || verdict === 'BLOCK_TARGET' || verdict === 'BLOCK_UNPARSEABLE';
+}
 
 // ── POSEIDON ACTIVATION INTENT ──
 // Stores the classified intent of the user's Poseidon activation message:

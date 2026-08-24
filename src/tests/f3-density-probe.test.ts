@@ -5,7 +5,7 @@ import { describe, expect, test, afterEach } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { executeWaveDispatch } from '../tools/wave-dispatch.ts';
+import { generateWave } from '../tools/wave-dispatch.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
 
 let sandbox = '';
@@ -28,16 +28,16 @@ describe('F3 THE DENSITY MEMORY', () => {
   test('a floors-passing-but-thinner re-gen fires the DENSITY WARNING', async () => {
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'density-probe-'));
     // wave A: the dense baseline
-    const a = await executeWaveDispatch({ agents: [denseAgent('tt-dense-a1')], dispatchDir: sandbox }, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }) });
+    const a = await generateWave({}, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }), tmpDir: sandbox, inlineAgents: [denseAgent('tt-dense-a1')] });
     expect(a.failed).toHaveLength(0);
     // wave B: same name, floors-passing but ~1/6 the density
-    const b = await executeWaveDispatch({ agents: [thinnerButPassing('tt-dense-a1')], dispatchDir: sandbox }, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }) });
+    const b = await generateWave({}, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }), tmpDir: sandbox, inlineAgents: [thinnerButPassing('tt-dense-a1')] });
     expect(b.checkIn).toContain('DENSITY WARNING (tt-dense-a1)');
     expect(b.checkIn).toContain('% of the prior generation');
   });
   test('a fresh name (no prior snapshot) has NO density warning', async () => {
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'density-probe-'));
-    const r = await executeWaveDispatch({ agents: [denseAgent('tt-fresh-a1')], dispatchDir: sandbox }, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }) });
+    const r = await generateWave({}, 'main', { generator: async () => ({ prompt: 'P'.repeat(5000), notes: [] }), tmpDir: sandbox, inlineAgents: [denseAgent('tt-fresh-a1')] });
     expect(r.checkIn).not.toContain('DENSITY WARNING');
   });
 });

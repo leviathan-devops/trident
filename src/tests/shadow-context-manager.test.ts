@@ -220,8 +220,8 @@ describe('shadow-context-manager — the chain + the [SHADOW INFERENCE] (D-SH-1/
     const excerpts = [makeExcerpt(FILE_A, CONTENT_3)];
     const ctx = buildContext(mem, makeSpec(), [], excerpts);
     expect(ctx.inference.sectionTitle).toBe(SHADOW_INFERENCE_SECTION_TITLE);
-    expect(ctx.inference.sectionTitle).toBe('## [SHADOW INFERENCE]');
-    expect(ctx.inference.text.startsWith('## [SHADOW INFERENCE]')).toBe(true);
+    expect(ctx.inference.sectionTitle).toBe(SHADOW_INFERENCE_SECTION_TITLE); // bare — ## is decoration, not identity
+    expect(ctx.inference.text.startsWith('[SHADOW INFERENCE]') || ctx.inference.text.startsWith('## [SHADOW INFERENCE]')).toBe(true);
     // the inference body names the anchors + the task + the flags section
     expect(ctx.inference.text).toContain('What the files actually are');
     expect(ctx.inference.text).toContain('What the task actually requires');

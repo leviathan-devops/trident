@@ -21,6 +21,12 @@ import { createShipPackageTool } from './trident-ship-package.js';
 import { createPreflightTool } from './trident-preflight.ts';
 
 import { createWaveManagerTool } from './wave-dispatch.ts';
+// THE WAVE-READ TOOL (2026-08-16 — the FALSE-LIVENESS incident's fix surface):
+// the DEDICATED session reader — the trident-wave-read tool reads a subagent
+// session's live stream + computes the status from the SESSION DATA (never the
+// job registry). Registered adjacent to the wave manager (the session
+// management surface).
+import { createWaveReadTool } from './wave-read.ts';
 // THE TRIDENT-TASK IMPORT REMOVED (2026-08-14 — the tangent undone): the
 // wrapper tool is gone; the native task tool + the T.E.B. loader hook is the
 // dispatch path (see the registration comment at 'trident-wave-manager').
@@ -2745,6 +2751,16 @@ ${specs.map(s => `  - ${s.name} [${s.type}]: ${s.lines} lines [${s.status}]`).jo
     // spawns). THE SINGLE TOOL — the legacy generator/dispatch names are NOT
     // registered (the operator's mandate: ONE wave manager tool):
     'trident-wave-manager': createWaveManagerTool(),
+    // THE DEDICATED SESSION READER (2026-08-16 — the FALSE-LIVENESS incident's
+    // fix): trident-wave-read — the obvious top-of-tool read action the operator
+    // asked for ("we need a top of tool read action"). Reads a subagent session's
+    // LIVE STREAM via the readSessionStream core (wave-status.ts:137 — the SINGLE
+    // source) + computes the session STATUS from the session data
+    // (stream/idle/complete/absent — NEVER the job registry). The tool
+    // description carries the incident warning: task_status reports the
+    // background-JOB state which can report cancelled for a live session — the
+    // session stream is the only liveness truth.
+    'trident-wave-read': createWaveReadTool(),
     // THE TRIDENT-TASK TOOL REGISTRATION REMOVED (2026-08-14 — the trident-task
     // tangent UNDONE): the batch form emits the NATIVE task tool + the promptFile
     // channel; the T.E.B. loader hook (trident-hooks.ts:1741) injects the file's

@@ -129,7 +129,10 @@ export function validateAgentSpec(spec: AgentSpec): string | null {
     })
     .map(([k, floor]) => k + ' (' + (((spec as unknown as Record<string, unknown>)[k] as string | undefined)?.length || 0) + 'c < ' + floor + 'c)');
   if (ctxThin.length > 0) {
-    return 'context args too thin for ' + spec.name + ': ' + ctxThin.join(', ') + ' — the context args are the per-section RAW MATERIAL the tool weaves into the pre-woven template. THE DENSITY LAW (2026-08-09 — the operator: "CONTEXT ARGS NEED TO BE FUCKING DENSE"): the floors are the MINIMUM, NEVER the target — a 200-char mission is a DERAILMENT, the proper arg is 10-50x the floor with the REAL anchors, the REAL numbers, the REAL quotes. GATHER the project data FIRST (the filepaths, the measured state, the operator\'s verbatim rulings), then write each block at the full density: mission (the what + the why + the framing + the stakes, 200c+), knownContext (the measured state + the anchors + the numbers + the file:line references, 200c+), doctrine (the verbatim quotes, 100c+), measurements (the numbers/tables + the sources, 100c+), acceptance (the checkable bullets, 100c+), taskTargets (the per-task WHAT/HOW/WHY/EXPECTED expansions, 100c+), position (the build slot, 50c+). A thin arg is a REFUSED dispatch — the re-fire costs MORE than writing it right the first time.';
+    // THE FLOOR-STEERING REFUSAL (30–90 tokens — the kick + the exact fix):
+    // floors are MINIMUMS; the expectation is 2–4x with dense real context.
+    return 'context args too thin for ' + spec.name + ': ' + ctxThin.join(', ')
+      + '. Floors are MINIMUMS — write 2–4x each with dense real context (verified filepaths, real numbers, verbatim quotes). Re-fire ALL agents with corrected args.';
   }
   return null;
 }
@@ -165,8 +168,10 @@ export function mechanicallyRepair(text: string, filepaths: string[], context: s
   const whatCount = (out.match(/\bWHAT:/g) || []).length;
   const expectedCount = (out.match(/\bEXPECTED:/g) || []).length;
   const lines = out.split('\n').length;
-  if (pathCount < 3 || !/\bread\s+\//.test(out) || whatCount < 3 || expectedCount < 3 || lines < 125) {
-    const taskBlocks = filepaths.map((p: string) => {
+  // THE MECHANICAL REPAIR TRIGGER (2026-08-19 — the enforcement floor relaxed
+  // to 96 per the operator's ruling; the 125 generation reference stays in the
+  // expansion demands. ⚠️ INTENTIONAL — NOT a regression; do NOT restore 125.)
+  if (pathCount < 3 || !/\bread\s+\//.test(out) || whatCount < 3 || expectedCount < 3 || lines < 96) {    const taskBlocks = filepaths.map((p: string) => {
       const name = path.basename(p).replace(/\.[^.]+$/, '') || 'theTarget';
       return 'Task A — the ' + name + ' role + exports.\n' +
         '  WHAT: the role, the exported surface, the internal structure of ' + p + '\n' +
@@ -431,7 +436,7 @@ async function generatePrompt(spec: AgentSpec, skeleton: string | null): Promise
   const name = (spec.name || 'task-prompt').replace(/[^A-Za-z0-9_-]/g, '-');
   const outPath = path.join(OUT_DIR, name + '.md');
   fs.writeFileSync(outPath, promptText, 'utf-8');
-  const result: AgentResult = { name, path: outPath, lines, sha256: sha256hex(promptText), validated: v.passed, ready: v.passed && lines >= 125, subagentType };
+  const result: AgentResult = { name, path: outPath, lines, sha256: sha256hex(promptText), validated: v.passed, ready: v.passed && lines >= 96, subagentType };
   if (expansionError) {
     result.error = expansionError;
     // the diagnostic ON DISK — the operator's "15 minutes debugging" killer: the

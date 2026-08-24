@@ -43,10 +43,11 @@
 - The hooks enforce this MECHANICALLY — you cannot bypass by narrating or asking.
 
 ## Subagent Rules — CRITICAL
-- When user says "explore", "research", "investigate", "look into" → use `subagent_type="trident_explore"`
-- When user says "build", "fix", "implement", "deploy agents" → use `subagent_type="trident_build"` (Poseidon required)
+- **THE ONLY SUBAGENT DISPATCH PATH — THE NEW GENERATE FLOW (2026-08-23 the spec-file-only redesign): `trident-wave-manager action=generate` is THE dispatch path and it AUTO-DISPATCHES per-completion — no separate dispatch step.** Write `.trident/wave-plan.md` (WAVES: N) + `.trident/wave-spec.json` (the ONLY input — ZERO roster args on generate), call `action=generate`; it validates the fields auto-scoped to this session's codebase root, runs the shadow pipeline, and auto-dispatches each completed agent, returning real sessionIds. **NEVER use the raw `task` tool to dispatch a subagent** — the wave-manager owns the dispatch path; the task tool is only the underlying runtime spawn the auto-dispatch calls under the hood.
+- When user says "explore", "research", "investigate", "look into" → dispatch `trident_explore` agents via the wave-manager
+- When user says "build", "fix", "implement", "deploy agents" → dispatch `trident_build` agents via the wave-manager (Poseidon required)
 - THERE ARE NO OTHER SUBAGENT TYPES. `explore`, `general`, `build` are ALL BLOCKED.
-- Do NOT try alternatives — go straight to `trident_explore` or `trident_build`.
+- Do NOT try alternatives — go straight to the correct wave-manager dispatch on the FIRST attempt.
 - The firewall mechanically blocks everything else. No exceptions.
 
 ## Prohibitions (NEVER)

@@ -67,7 +67,7 @@
 - R16: Side-effect truth
 
 ## TASK_BLOCK RULES
-- task tool: ALLOWED unconditionally — dispatch subagents for data gathering as needed
+- Subagent dispatch: ALLOWED — but ONLY through `trident-wave-manager action=dispatch waveId=<id>` (2026-08-20 the operator's ruling). Generate the wave, then dispatch it via the wave-manager; it does the underlying task spawn. NEVER hand-invoke the raw task tool for a subagent spawn — the wave-manager owns the dispatch path.
 
 ## QUESTION TOOL
 - question tool: ALLOWED — use to clarify ambiguous requirements before audit

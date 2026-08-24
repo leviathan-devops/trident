@@ -17,7 +17,7 @@
 //       by the injectSlots fallback (the pre-v11 templates).
 //   (c) EMBEDS THE [SHADOW INFERENCE] section (D-SH-3 — the operator's "just
 //       title this [SHADOW INFERENCE] though") — the inference text, titled
-//       EXACTLY "## [SHADOW INFERENCE]", inserted AFTER the supremacy contract
+//       EXACTLY "[SHADOW INFERENCE]", inserted AFTER the supremacy contract
 //       and BEFORE the woven skeleton. The subagent receives the inference
 //       PRE-INFERENCED — the shadow's understanding written on top of the
 //       inference, so the prompt is significantly more targeted.
@@ -67,7 +67,7 @@ export interface BriefSpec {
  *  empty one) gets the title PREPENDED — the section marker is guaranteed. */
 function ensureInferenceTitle(text: string): string {
   const trimmed = (text ?? '').trim();
-  if (trimmed.startsWith(SHADOW_INFERENCE_SECTION_TITLE)) return trimmed;
+  if (trimmed.startsWith(SHADOW_INFERENCE_SECTION_TITLE) || trimmed.startsWith('## [SHADOW INFERENCE]')) return trimmed;
   return SHADOW_INFERENCE_SECTION_TITLE + '\n' + trimmed;
 }
 

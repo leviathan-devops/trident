@@ -198,11 +198,72 @@ export function getAgentConfig(): Record<string, any> {
       description: agent.description,
       instructions: agent.instructions,
       mode: agent.mode,
+      // THE MODEL PINNING (2026-08-20 — the operator's ruling): each agent's
+      // model is pinned — NEVER inherited from the session's current model.
+      // THE FORMAT IS THE STRING (the opencode config's agent.model field is the
+      // provider/model STRING — the {providerID, modelID} object breaks the
+      // config.get with "Expected string | undefined, got {...}" — the runtime
+      // error proved the STRING is the correct shape).
+      // trident_explore → 'nvidia/nvidia/nemotron-3.5-lightning-30b-a3b' (the
+      //   DOUBLE prefix — the OPENCODE runtime resolves the string at the FIRST
+      //   slash: provider='nvidia', model='nvidia/nemotron-3.5-lightning-30b-a3b'.
+      //   The runtime catalog's nvidia provider keys this model by its FULL
+      //   prefixed id — 'nvidia/nemotron-3.5-lightning-30b-a3b' — so the bare
+      //   'nvidia/nemotron-3.5-lightning-30b-a3b' would split to model
+      //   'nemotron-3.5-lightning-30b-a3b' and throw ProviderModelNotFoundError
+      //   (the 2026-08-20 live failure — the dispatched explore agent died with
+      //   an empty error + zero tool calls). THE BARN RULE: the PI HARNESS is
+      //   SINGLE prefix, the OPENCODE runtime is DOUBLE. The 1M context + 128k
+      //   max + reasoning effort HIGH.
+      // trident_build → 'opencode-go/muse-spark-1.2-contributor' (the opencode GO
+      //   endpoint — proven for opencode; the 1M context + 128k max + reasoning
+      //   effort MAX).
+      // trident_explore → 'opencode-go/muse-spark-1.2-contributor' — THE SAME
+      //   EXACT PIN AS BUILD (2026-08-24 — the operator: "fix the explore pinned
+      //   model to be muse spark again like it is from build. same exact pin...
+      //   these are on the bugged zen crap again for nemotron and not working").
+      //   The old zen pin (opencode/nemotron-3.5-lightning-free) is DEAD — the
+      //   zen free endpoint is rate-limited garbage; both agents ride the proven
+      //   PAID opencode-go endpoint (1M context + 128k max).
+      // trident_build → 'opencode-go/muse-spark-1.2-contributor' (unchanged —
+      //   the proven opencode GO endpoint).
+      model: agent.id === 'trident_explore'
+        ? 'opencode-go/muse-spark-1.2-contributor'
+        : agent.id === 'trident_build'
+          ? 'opencode-go/muse-spark-1.2-contributor'
+          : undefined,
+      // THE MODEL PINNING v3 (2026-08-24 — the operator: "build should be xhigh
+      // reasoning and explore should be high"):
+      // trident_explore → opencode-go/muse-spark, reasoningEffort HIGH.
+      // trident_build   → opencode-go/muse-spark, reasoningEffort XHIGH.
+      options: agent.id === 'trident_explore'
+        ? { reasoningEffort: 'high', maxTokens: 131072 }
+        : agent.id === 'trident_build'
+          ? { reasoningEffort: 'xhigh' }
+          : undefined,
+      // THE SUBAGENT TOOL SURFACE (2026-08-20 — the operator: "deep planning and
+      // context synthesis tools are REMOVED from the subagents (problem solving and
+      // code audit can stay)"): the subagents get ONLY the build/explore tools + the
+      // problem-solving + code-audit (the mode tools that make sense for a subagent).
+      // The deep-planning + context-synthesis are the ORCHESTRATOR's tools (the
+      // planning + the synthesis are the primary agent's job — the subagent executes,
+      // never plans the wave). The tools field explicitly DISABLES them.
+      tools: agent.id === 'trident_explore'
+        ? { 'read': true, 'glob': true, 'grep': true, 'trident-problem-solving': true, 'trident-code-audit': true, 'trident-deep-planning': false, 'trident-context-synthesis': false, 'task': false }
+        : agent.id === 'trident_build'
+          ? { 'read': true, 'write': true, 'edit': true, 'bash': true, 'glob': true, 'grep': true, 'trident-problem-solving': true, 'trident-code-audit': true, 'trident-deep-planning': false, 'trident-context-synthesis': false, 'task': false }
+          : undefined,
+      // THE TASK TOOL IS REMOVED FROM ALL AGENTS (2026-08-20 — the operator:
+      // "NO TASK TOOLS ALLOWED FOR THIS... REMOVE THE TASK TOOL FROM THE
+      // ALLOWLIST OF SUBAGENTS. ALL AGENTS NOW ACTUALLY SINCE WAVE MANAGER
+      // DISPATCH IS THERE *NO* FUCKING TASK TOOL FOR ANY AGENTS"): the subagents
+      // are LEAF NODES — they never spawn. The wave-manager dispatch owns ALL
+      // spawning; the subagents do the work, never the orchestration.
       permission: agent.id === 'trident_explore'
         ? { read: 'allow', glob: 'allow', grep: 'allow', task: 'deny', bash: 'deny', edit: 'deny', write: 'deny' }
         : agent.id === 'trident_build'
-          ? { read: 'allow', glob: 'allow', grep: 'allow', task: 'allow', bash: 'allow', edit: 'allow', write: 'allow' }
-          : { task: 'allow' },
+          ? { read: 'allow', glob: 'allow', grep: 'allow', task: 'deny', bash: 'allow', edit: 'allow', write: 'allow' }
+          : { task: 'deny' },
     };
     if (agent.mode === 'primary') {
       configs[agent.id].color = '#8B5CF6';

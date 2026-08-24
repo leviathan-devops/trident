@@ -1,18 +1,16 @@
-// ═══ THE MAIN-SESSION SELF-HEAL — THE RED-TEAM BATTERY ═══
-// (2026-08-13 — the operator's design: the main agent's generation can DROP
-// mid-sentence — the runtime finalizes the partial (the ▣ timestamp renders)
-// and the agent idles. The detector: the LAST assistant text is OBVIOUSLY
-// incomplete + the message is FINALIZED. The kick: the minimal 'continue'.)
-// THE BATTERY: the incompletion lexicon (the operator's mid-sentence example,
-// the trailing '...', the dangling connective, the unclosed fence, the
-// unbalanced brackets), the FINALIZED discriminator (a pending step-start is
-// NEVER kicked — the slow-healthy case), the fail-safes, and the kick +
-// cooldown.
+// ═══ THE MAIN-SESSION SELF-HEAL — THE MODEL-CLASSIFIER BATTERY ═══
+// (2026-08-13 the operator's design; 2026-08-16 the operator's OVERRIDE — the
+// REGEX LADDER IS DEAD. The dropped-generation decision is the SHADOW MODEL's
+// binary judgment: the last ~5 lines of prose → "dropped" or "complete".
+// THE BATTERY: the FINALIZED discriminator (the slow-vs-frozen guard — the
+// only mechanical pre-check left), the model-decision path (the injected
+// judge — no network), the fail-safes (a failed judge NEVER kicks), and the
+// kick + cooldown.)
 
 import { describe, expect, test } from 'bun:test';
 import {
-  detectDroppedMainGeneration, kickMainSession, __resetHealState,
-  type HealStreamReader, type HealClient,
+  detectDroppedMainGeneration, classifyDroppedTail, kickMainSession, __resetHealState,
+  type HealStreamReader, type HealClient, type DroppedJudge,
 } from '../tools/main-session-heal.ts';
 
 function fakePage(parts: Array<{ type: string; text?: string; completed?: boolean }>) {
@@ -33,104 +31,13 @@ function makeReader(page: ReturnType<typeof fakePage>): HealStreamReader {
   return () => page;
 }
 
-describe('THE INCOMPLETION DETECTOR — the dropped-generation signature', () => {
-  test('a COMPLETE message (terminal punctuation) is NOT dropped', () => {
-    const r = makeReader(fakePage([
-      { type: 'step-start' },
-      { type: 'text', text: 'The wave registry fix is complete and verified. All 8 scenarios passed.' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(false);
-    expect(d.reason).toBe('complete');
-  });
+// THE FAKE JUDGE — the model decision injected (no network in the tests):
+function makeJudge(dropped: boolean): DroppedJudge {
+  return async () => ({ dropped });
+}
 
-  test('THE OPERATOR\'S EXAMPLE — a sentence cut mid-way is DROPPED', () => {
-    // "look for obvious incompletions in the generated..." — the operator's
-    // actual example: the sentence stops + the '...' marks the cut:
-    const r = makeReader(fakePage([
-      { type: 'step-start' },
-      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated...' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('trailing-ellipsis');   // the operator's example: the cut + the '...'
-    expect(d.tail.length).toBeGreaterThan(0);   // the EVIDENCE rides the detection
-  });
-
-  test('THE MISFIRE HARDENING: a plain-word ending WITHOUT the ellipsis/dangling is NOT dropped (a legit report)', () => {
-    // The host misfire: the detector flagged a COMPLETE message that merely
-    // ended with a plain word (no terminal) as a 'mid-sentence-cut'. REMOVED.
-    const r = makeReader(fakePage([
-      { type: 'step-start' },
-      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated', completed: true },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(false);
-    expect(d.reason).toBe('complete');
-  });
-
-  test('THE MISFIRE HARDENING: a STREAMING text part (no time.end) is NEVER dropped — the live generation', () => {
-    // THE host misfire root cause: the cron read a STREAMING text part (the
-    // generation in flight — no step-finish, no time.end) as 'finalized' and
-    // kicked mid-generation. The completed flag must be false for a stream:
-    const r = makeReader(fakePage([
-      { type: 'step-start' },
-      { type: 'text', text: 'So the detector looks for obvious incompletions in the gen', completed: false },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(false);
-    expect(d.reason).toBe('in-flight');
-  });
-
-  test('a trailing ellipsis ("...") is DROPPED', () => {
-    const r = makeReader(fakePage([
-      { type: 'step-start' },
-      { type: 'text', text: 'The provider cut the stream and the message just...' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('trailing-ellipsis');
-  });
-
-  test('a dangling connective ("...because") is DROPPED', () => {
-    const r = makeReader(fakePage([
-      { type: 'text', text: 'The re-fire was sanctioned because' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('dangling-connective');
-  });
-
-  test('an unclosed code fence is DROPPED', () => {
-    const r = makeReader(fakePage([
-      { type: 'text', text: 'The fix:\n```ts\nconst reg = {' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('unclosed-code-fence');
-  });
-
-  test('an unbalanced open bracket is DROPPED', () => {
-    const r = makeReader(fakePage([
-      { type: 'text', text: 'The registry shows the calls array with [accepted, failed' },
-      { type: 'step-finish' },
-    ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('unbalanced-brackets');
-  });
-});
-
-describe('THE FINALIZED DISCRIMINATOR — the slow-vs-frozen guard', () => {
+describe('THE FINALIZED DISCRIMINATOR — the slow-vs-frozen guard (the ONLY mechanical pre-check)', () => {
   test('a PENDING step-start (a generation in flight) is NEVER dropped — the slow-healthy case', () => {
-    // The 361s-success generation: the stream is ACTIVE (a step-start is the
-    // newest part) — the detector must NOT kick it.
     const r = makeReader(fakePage([
       { type: 'step-start' },
       { type: 'reasoning', text: 'thinking...' },
@@ -151,17 +58,86 @@ describe('THE FINALIZED DISCRIMINATOR — the slow-vs-frozen guard', () => {
     expect(d.reason).toBe('in-flight');
   });
 
-  test('an incomplete text WITH a step-finish (finalized + partial) IS dropped', () => {
-    // THE DROPPED SIGNATURE: the newest part is the step-finish (the runtime
-    // finalized the partial — the ▣ timestamp rendered) + the text is cut:
+  test('a STREAMING text part (no time.end) is NEVER dropped — the live generation', () => {
     const r = makeReader(fakePage([
       { type: 'step-start' },
-      { type: 'text', text: 'The wave was dispatched and the registry shows...', completed: true },
+      { type: 'text', text: 'The fix is being generated...', completed: false },
+    ]));
+    const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('in-flight');
+  });
+
+  test('a FINALIZED message (the step-finish present) → the pending-model state (the model decides)', () => {
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'The wave registry fix is complete and verified.', completed: true },
       { type: 'step-finish' },
     ]));
     const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('pending-model');   // the pre-check passed — the model decides
+    expect(d.tail.length).toBeGreaterThan(0); // the EVIDENCE rides the pre-check
+  });
+
+  test('a FINALIZED message with NO text → no-text (never a model call)', () => {
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'step-finish' },
+    ]));
+    const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('no-text');
+  });
+});
+
+describe('THE MODEL DECISION — the shadow-model binary classifier (the operator\'s override)', () => {
+  test('the model says DROPPED → dropped:true (the kick fires)', async () => {
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'So the detector looks for obvious incompletions in the generated...', completed: true },
+      { type: 'step-finish' },
+    ]));
+    const d = await classifyDroppedTail('main-sess', { stream: r, judge: makeJudge(true) });
     expect(d.dropped).toBe(true);
-    expect(d.reason).toBe('trailing-ellipsis');
+    expect(d.reason).toBe('model-dropped');
+    expect(d.tail).toContain('generated...');   // the EVIDENCE — the tail analyzed
+  });
+
+  test('the model says COMPLETE → dropped:false (no kick — the misfire kill)', async () => {
+    // THE MISFIRE CASE: a legit report ending with a plain word (the operator's
+    // "this is not this retarded" — the old regex flagged it as a cut). The
+    // MODEL sees the natural ending → complete → NO kick.
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'The full build is production-ready', completed: true },
+      { type: 'step-finish' },
+    ]));
+    const d = await classifyDroppedTail('main-sess', { stream: r, judge: makeJudge(false) });
+    expect(d.dropped).toBe(false);
+    expect(d.reason).toBe('model-complete');
+  });
+
+  test('the model call FAILS → fail-safe (never a false kick)', async () => {
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'The message is...', completed: true },
+      { type: 'step-finish' },
+    ]));
+    const failingJudge: DroppedJudge = async () => { throw new Error('provider dead'); };
+    const d = await classifyDroppedTail('main-sess', { stream: r, judge: failingJudge });
+    expect(d.dropped).toBe(false);   // the fail-safe — a dead judge NEVER kicks
+  });
+
+  test('the model returns an empty answer → fail-safe (never a false kick)', async () => {
+    const r = makeReader(fakePage([
+      { type: 'step-start' },
+      { type: 'text', text: 'The message is...', completed: true },
+      { type: 'step-finish' },
+    ]));
+    const emptyJudge: DroppedJudge = async () => ({ dropped: false });
+    const d = await classifyDroppedTail('main-sess', { stream: r, judge: emptyJudge });
+    expect(d.dropped).toBe(false);
   });
 });
 
@@ -173,21 +149,17 @@ describe('THE FAIL-SAFES', () => {
     expect(d.reason).toBeNull();
   });
 
-  test('no text part → NOT dropped', () => {
-    const r = makeReader(fakePage([{ type: 'step-start' }, { type: 'step-finish' }]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
-    expect(d.dropped).toBe(false);
-    expect(d.reason).toBe('no-text');
-  });
-
-  test('a complete sentence ending with a colon (a deliberate intro) is NOT dropped', () => {
+  test('an in-flight message NEVER reaches the model (the pre-check short-circuits)', async () => {
     const r = makeReader(fakePage([
-      { type: 'text', text: 'The verification steps are:' },
-      { type: 'step-finish' },
+      { type: 'step-start' },
+      { type: 'reasoning', text: 'thinking...' },
     ]));
-    const d = detectDroppedMainGeneration('main-sess', { stream: r });
+    let judgeCalled = false;
+    const spyJudge: DroppedJudge = async () => { judgeCalled = true; return { dropped: true }; };
+    const d = await classifyDroppedTail('main-sess', { stream: r, judge: spyJudge });
     expect(d.dropped).toBe(false);
-    expect(d.reason).toBe('complete');
+    expect(d.reason).toBe('in-flight');
+    expect(judgeCalled).toBe(false);   // the model was NEVER called
   });
 });
 

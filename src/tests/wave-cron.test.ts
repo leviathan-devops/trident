@@ -5,6 +5,7 @@
 // does not crash the cron — the session marked error + the next tick continues.
 
 // @ts-ignore — bun:test ships the runtime, not TS declarations
+import './tracker-test-env.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { matchStuckPatterns, STUCK_ACTIVITY_AGE_MS } from '../tools/wave-stuck-detector.ts';
 import { ReminderQueue } from '../tools/wave-reminder-queue.ts';

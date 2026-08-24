@@ -1,17 +1,18 @@
 // ═══ WAVE-SPAWN TESTS — the spawn-arg construction (Part 3 + Part 19). THE
-// ZERO-HINT discipline: the REAL buildSpawnCall + the REAL executeWaveDispatch
+// ZERO-HINT discipline: the REAL buildSpawnCall + the REAL generateWave
 // with runtime-built fixtures + an injected generator (the shadow pipeline's
 // prompt production) + an injected client stub (the SDK boundary). The
 // adversarial cases: the unsafe agent name refused by the schema, the
 // file-missing, the allSettled partial failure.
 
 // @ts-ignore — bun:test ships the runtime, not TS declarations
+import './tracker-test-env.ts';
 import { afterEach, describe, expect, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  buildSpawnCall, resolveSubagentType, executeWaveDispatch, normalizeAgents,
+  buildSpawnCall, resolveSubagentType, generateWave, normalizeAgents,
   type WaveDispatchClient,
 } from '../tools/wave-dispatch.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
@@ -84,10 +85,10 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
       },
     };
     const genContent = 'EXECUTE THE FOLLOWING FORENSIC CONTEXT EXTRACTION VERBATIM — the file content. '.repeat(6);
-    const result = await executeWaveDispatch(
-      { agents: [makeValidAgent('file-src')], dispatchDir: sandbox },
+    const result = await generateWave(
+      {},
       'main-sess',
-      { client, generator: generatorFor(genContent) },
+      { client, generator: generatorFor(genContent), tmpDir: sandbox, inlineAgents: [makeValidAgent('file-src')] },
     );
     // THE BASELINE (2026-08-07 — THE CATASTROPHE FIX): NO direct spawns —
     // the wave dispatch is the GENERATOR ONLY; the batch form carries the
@@ -103,8 +104,12 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
     // VERBATIM NO PLACEHOLDER GARBAGE") — NO prompt field; the T.E.B. loader
     // hook mutates promptFile → prompt byte-exact before the tool executes.
     const spawnParams = result.batch?.parameters?.tools?.[0]?.parameters as { promptFile?: string; prompt?: string } | undefined;
-    expect(spawnParams?.promptFile).toContain('file-src.md');
-    expect(spawnParams?.prompt).toBeUndefined();       // NO placeholder garbage
+    // THE SINGLE CARRIER (2026-08-16 — the operator's final fix): the batch
+    // form carries ONLY prompt = the path string. NO promptFile field — the
+    // model copies the path verbatim; the loader detects the VAL is a path +
+    // mutates it to the byte-exact content.
+    expect(spawnParams?.prompt).toContain('file-src.md');  // the path string, NOT content
+    expect(spawnParams?.promptFile).toBeUndefined();       // NO promptFile field — the val IS the carrier
     // THE AP-1 RULE: the WaveAgentSpec has NO prompt field — the args cannot carry it:
     expect('prompt' in makeValidAgent('file-src')).toBe(false);
   });
@@ -132,10 +137,10 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
         },
       },
     };
-    const result = await executeWaveDispatch(
-      { agents: [makeValidAgent('good-one'), makeValidAgent('good-two')], dispatchDir: sandbox },
+    const result = await generateWave(
+      {},
       'main',
-      { client, generator: generatorFor('THE PROMPT') },
+      { client, generator: generatorFor('THE PROMPT'), tmpDir: sandbox, inlineAgents: [makeValidAgent('good-one'), makeValidAgent('good-two')] },
     );
     // THE BASELINE (2026-08-07 — THE CATASTROPHE FIX): NO spawns — the
     // generator produces the manifest + the batch form for ALL agents.
@@ -148,10 +153,10 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
   test('the manifest sha256 matches the written file', async () => {
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'wave-spawn-'));
     const prompt = 'EXECUTE THE FOLLOWING BUILD PLAN VERBATIM.\nTHE MISSION: sha256. ' + 'x'.repeat(300);
-    const result = await executeWaveDispatch(
-      { agents: [makeValidAgent('sha-check')], dispatchDir: sandbox },
+    const result = await generateWave(
+      {},
       'main',
-      { client: makeStubClient(), generator: generatorFor(prompt) },
+      { client: makeStubClient(), generator: generatorFor(prompt), tmpDir: sandbox, inlineAgents: [makeValidAgent('sha-check')] },
     );
     const manifest = JSON.parse(fs.readFileSync(path.join(sandbox, '.wave-manifest-' + result.wave + '.json'), 'utf-8'));
     const fileContent = fs.readFileSync(path.join(sandbox, 'sha-check.md'), 'utf-8');

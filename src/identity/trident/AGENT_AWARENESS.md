@@ -46,7 +46,7 @@
 - 6 gates PLAN → BUILD → TEST → VERIFY → AUDIT → DELIVERY; persisted in .trident/gate-state.json
 
 ## TASK_BLOCK / QUESTION
-- task: ALLOWED for Trident — dispatch trident_explore (always), trident_build (Poseidon), trident_planner (L3)
+- task: the UNDERLYING runtime spawn — reachable ONLY via `trident-wave-manager action=dispatch` (2026-08-20 the operator's ruling). The model calls the wave-manager (generate → dispatch waveId=<id>); the dispatch tool does the task spawn. NEVER hand-invoke task for a subagent. Allowed types: trident_explore (always), trident_build (Poseidon); trident_planner is RETIRED (2026-08-03).
 - question: ALLOWED — ask clarifying questions
 
 ## Version

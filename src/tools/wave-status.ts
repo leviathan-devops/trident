@@ -52,8 +52,69 @@ export interface WaveStatusClient {
   children(opts: { path: { id: string } }): Promise<{ data?: Array<{ id: string }> | null }>;
 }
 
+// ── THE SESSION ABORT (2026-08-24 — the EN-160 kill fix): the opencode SDK's
+// REAL surface is `client.session.abort({path:{id}})` (sdk.gen.d.ts — the
+// Session class's own "Abort a session" method, the same object that carries
+// the PROVEN client.session.promptAsync the steer delivery now uses). The OLD
+// top-level `client.abort(...)` call was bookkeeping-only — EN 160's live
+// test: the killed session's stream KEPT GROWING (13→21→47 parts) while the
+// tracker said 'killed'. The helper prefers the session-scoped abort (the
+// real endpoint: cancels the session's in-flight generation loop) and falls
+// back to the legacy/injected seam (the unit tests' WaveStatusClient mock).
+async function abortSession(client: WaveStatusClient, id: string): Promise<'session-abort' | 'legacy-abort'> {
+  const scoped = (client as unknown as { session?: { abort?: (o: { path: { id: string } }) => Promise<unknown> } })
+    .session?.abort;
+  if (typeof scoped === 'function') {
+    await scoped.call((client as unknown as { session: unknown }).session, { path: { id } });
+    return 'session-abort';
+  }
+  await client.abort({ path: { id } });
+  return 'legacy-abort';
+}
+
+// THE SESSION-SCOPED STATUS REPORT (2026-08-16 — the FALSE-LIVENESS incident's
+// fix surface): the action=status sessionId branch's RAW SESSION TRUTH — the
+// live flag + the session data (the stream page), NOT the wave-scoped per-agent
+// generation noise (the WaveStatusReport's agents[] wrapper + the tracker's
+// etaMs/etaConfidence/elapsedMs). A sessionId is a DIFFERENT surface from a
+// waveId — the session read answers "is THIS session alive?", the wave read
+// answers "what is THIS wave's state?". THE SHAPE MIRRORS the trident-wave-read
+// tool's result (wave-read.ts) — the dedicated session instrument reads the
+// SAME session data through the SAME readSessionStream core.
+export interface WaveSessionStatusReport {
+  ok: boolean;
+  error?: string;
+  wave: string;
+  sessionId: string;
+  status: string;
+  live: boolean;
+  partCount: number;
+  returnedParts: number;
+  lastTools: string[];
+  parts: SessionStreamPage['parts'];
+  moreAvailable: boolean;
+  beforeId: string | null;
+  streamOk: boolean;
+  streamError?: string;
+}
+
 function toolNames(parts: unknown[] | undefined): string[] {
   return (parts ?? []).map((p) => (p as { tool?: string }).tool ?? '').filter(Boolean).slice(-8);
+}
+
+// THE LIVE-FLAG COMPUTATION (2026-08-16 — the FALSE-LIVENESS incident's fix:
+// the action=status sessionId branch's `live` field). THE LIVE STATE FROM THE
+// SESSION DATA — the reader page's newest part: an OPEN part (no time.end — a
+// step-start / tool / open text / open reasoning) = the agent is mid-step =
+// LIVE. A terminal step-finish as the newest part = the step finished = NOT
+// live at this instant (idle/complete — the session still lives, it just
+// produced nothing current). NEVER reads the job registry — the incident's
+// whole point (task_status said cancelled for LIVE streaming sessions).
+function computeLiveFlag(page: SessionStreamPage): boolean {
+  if (!page.ok || page.parts.length === 0) return false;
+  const newest = page.parts[page.parts.length - 1];
+  const finished = newest.type === 'step-finish' || newest.completed === true;
+  return !finished;
 }
 
 // THE RUNTIME-BACKED SESSION RESOLUTION (2026-08-13 — the failure doc's fix #2:
@@ -261,7 +322,7 @@ export async function executeWaveStatus(
   args: WaveStatusArgs,
   client: WaveStatusClient | null,
   mainSessionId: string | null,
-): Promise<WaveStatusReport> {
+): Promise<WaveStatusReport | WaveSessionStatusReport> {
   const action = args.action ?? 'status';
 
   if (!client) {
@@ -287,7 +348,7 @@ export async function executeWaveStatus(
         const reason = toKillReason(args.reason);
         for (const s of runtimeSessions) {
           try {
-            await client.abort({ path: { id: s.id } });
+            await abortSession(client, s.id);
           } catch (abErr) {
             tridentLog('WARN', 'wave-status', 'kill abort failed for ' + s.id + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
           }
@@ -308,7 +369,7 @@ export async function executeWaveStatus(
     const sid = agent.sessionIds[agent.sessionIds.length - 1];
     const reason = toKillReason(args.reason);
     try {
-      await client.abort({ path: { id: sid } });
+      await abortSession(client, sid);
     } catch (abErr) {
       tridentLog('WARN', 'wave-status', 'abort failed for ' + args.agent + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
     }
@@ -335,7 +396,7 @@ export async function executeWaveStatus(
       if (runtimeSessions.length > 0) {
         await Promise.all(runtimeSessions.map(async (s) => {
           try {
-            await client.abort({ path: { id: s.id } });
+            await abortSession(client, s.id);
           } catch (abErr) {
             tridentLog('WARN', 'wave-status', 'kill-wave abort failed for ' + s.id + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
           }
@@ -356,7 +417,7 @@ export async function executeWaveStatus(
     await Promise.all(entries.map(async ([, agent]) => {
       const sid = agent.sessionIds[agent.sessionIds.length - 1];
       try {
-        await client.abort({ path: { id: sid } });
+        await abortSession(client, sid);
       } catch (abErr) {
         tridentLog('WARN', 'wave-status', 'kill-wave abort failed for ' + sid + ': ' + (abErr instanceof Error ? abErr.message : String(abErr)));
       }
@@ -383,10 +444,22 @@ export async function executeWaveStatus(
   // environment — the raw view now reads the SESSION-STREAM READER (the
   // opencode.db part stream = the same data the TUI renders). The client reads
   // remain ONLY as the fallback when the DB is unavailable.
+  // THE LIVE FIELD + THE WRAPPER STRIP (2026-08-16 — the FALSE-LIVENESS
+  // incident's fix): the sessionId branch gains a `live` boolean — the session's
+  // LIVE state computed FROM THE SESSION DATA (the parts' recency + the last
+  // step state + the terminal message finish), SEPARATE from the tracker. The
+  // session-scoped response is the raw session truth — NOT the wave-scoped
+  // per-agent generation noise (the tracker's etaMs/etaConfidence/elapsedMs are
+  // the WAVE scope; a sessionId is a DIFFERENT surface).
   if (action === 'status' && args.sessionId) {
     const page = readSessionStream(args.sessionId, { limit: args.limit, beforeId: args.beforeId });
     let rawStatus = page.ok ? 'stream' : 'error';
     let fallbackPartCount = 0;
+    // THE LIVE FLAG — the session truth from the session data (the reader page
+    // + the terminal-finish probe). The status computation NEVER reads the job
+    // registry — the 2026-08-16 incident's fix (task_status said cancelled for
+    // live streaming sessions; the SESSION STREAM is the only liveness truth).
+    const live = page.ok && page.parts.length > 0 && computeLiveFlag(page);
     if (!page.ok || page.parts.length === 0) {
       // THE CLIENT FALLBACK — the old reads, unchanged behavior
       try {
@@ -403,21 +476,28 @@ export async function executeWaveStatus(
         tridentLog('WARN', 'wave-status', 'raw session read failed for ' + args.sessionId + ': ' + (mErr instanceof Error ? mErr.message : String(mErr)));
       }
     }
-    return {
-      wave: args.sessionId, status: rawStatus, etaMs: 0, etaConfidence: 0,
-      elapsedMs: 0,
-      agents: [{
-        sessionId: args.sessionId,
-        partCount: page.ok ? page.totalParts : fallbackPartCount,
-        status: rawStatus,
-        lastTools: page.lastTools,
-        tail: page.parts.slice(-6),
-        moreAvailable: page.moreAvailable,
-        beforeId: page.beforeId,
-        streamOk: page.ok,
-        streamError: page.error,
-      }],
+    // THE WRAPPER STRIP (2026-08-16 — the FALSE-LIVENESS incident's fix): the
+    // sessionId surface returns the RAW SESSION TRUTH — the live flag + the
+    // stream page — NOT the WaveStatusReport's agents[] per-agent wrapper (the
+    // wave-scoped generation noise). The caller asks "is THIS session alive?"
+    // and gets the session answer, never the wave framing.
+    const sessionReport: WaveSessionStatusReport = {
+      ok: page.ok,
+      error: page.error,
+      wave: args.sessionId,
+      sessionId: args.sessionId,
+      status: rawStatus,
+      live,
+      partCount: page.ok ? page.totalParts : fallbackPartCount,
+      returnedParts: page.returnedParts,
+      lastTools: page.lastTools,
+      parts: page.parts,
+      moreAvailable: page.moreAvailable,
+      beforeId: page.beforeId,
+      streamOk: page.ok,
+      streamError: page.error,
     };
+    return sessionReport;
   }
 
   // ── STATUS — the wave introspection ──

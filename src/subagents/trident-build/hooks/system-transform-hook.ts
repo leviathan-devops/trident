@@ -1,4 +1,10 @@
-// System transform hook — identity injection for Trident_Build
+// System transform hook — the FULL Trident identity + warheads injection for Trident_Build
+// (2026-08-20 — the operator's ruling: "same inline constants for identity + init spawn/boot
+// payload delivery for warheads... LITERALLY copy paste it and then in the subagents codebase
+// section start niching it down"). The build agent's system-transform hook delivers the FULL
+// TRIDENT_BUILD_T1 (the full identity + the 21 warheads, niched for build execution) at the
+// session start — the boot payload. NOT the 3-line stub (the old "Do NOT think. Do NOT
+// deviate." — the RETIRED mindless-bot identity).
 
 import { isTridentBuildAgent } from '../identity/agent-identity.js';
 import { getCurrentAgent } from '../../../hooks/agent-state.js';
@@ -13,11 +19,11 @@ export function createSystemTransformHook() {
     var content = output.system as string[] | undefined;
     if (!content || !Array.isArray(content)) return;
 
-    // Check if identity already injected
-    if (content.some(function(s: string) { return s.indexOf('Trident_Build') !== -1; })) return;
+    // Check if the FULL identity is already injected (the boot payload is idempotent)
+    if (content.some(function(s: string) { return s.indexOf('You are Trident Build — a specialized Trident') !== -1; })) return;
 
-    // Inject T1 prompt (prepend to beginning of system array)
-    content.unshift('\n[TRIDENT_BUILD v4.4] You are Trident_Build, a runtime-grade build engineer.\n' +
-      'Execute ONLY the remediation plan provided. Do NOT think. Do NOT deviate.\n');
+    // Inject the FULL T1 prompt (the full identity + the warheads — the boot payload,
+    // prepend to the beginning of the system array so it's the first thing the model reads)
+    content.unshift('\n' + TRIDENT_BUILD_T1 + '\n');
   };
 }

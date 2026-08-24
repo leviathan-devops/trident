@@ -82,10 +82,11 @@ When poseidonState.isActive(sessionId) returns true:
 4. POSEIDON_UNLOCK_ACTIVE logged
 On deactivation: tools re-blocked, session state preserved
 
-## SUBAGENT GATE
-- trident_explore: ALWAYS allowed (read-only research)
-- trident_build: ONLY when poseidonState.isActive()
-- trident_planner: L3 parallel L2 spec generation (calls trident-deep-planning layer=2)
+## SUBAGENT GATE (2026-08-20 — the operator's ruling)
+- **THE ONLY SUBAGENT DISPATCH PATH — THE NEW GENERATE FLOW (2026-08-23): `trident-wave-manager action=generate` is THE dispatch path and it AUTO-DISPATCHES per-completion — no separate dispatch step.** The model writes `.trident/wave-plan.md` (WAVES: N line) + `.trident/wave-spec.json` (the ONLY input — generate takes ZERO roster args), then calls `action=generate`, which validates the fields auto-scoped to the session's codebase root, runs the shadow pipeline, and auto-dispatches each completed agent via extra.taskDispatch (real sessionIds returned). **The raw `task` tool is NEVER hand-invoked by the model for a subagent spawn — the wave-manager owns the dispatch path.** (`action=dispatch` remains only for the legacy/manual re-fire.)
+- trident_explore: ALWAYS allowed (read-only research) via the wave-manager dispatch
+- trident_build: ONLY when poseidonState.isActive() via the wave-manager dispatch
+- trident_planner: RETIRED (2026-08-03) — L3 parallel L2 spec generation goes through trident-deep-planning layer=2
 - Any other subagent_type: BLOCKED
 
 ## WebFetch BAN

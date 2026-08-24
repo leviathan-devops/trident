@@ -9,7 +9,7 @@
 
 import { WaveTracker, type WaveTrack } from './wave-tracker.ts';
 import { ReminderQueue } from './wave-reminder-queue.ts';
-import { matchStuckPatterns, type StuckEvidence } from './wave-stuck-detector.ts';
+import { matchStuckPatterns, STUCK_ACTIVITY_AGE_MS, type StuckEvidence } from './wave-stuck-detector.ts';
 import { buildCompletionDirective } from './wave-constants.ts';
 import { tridentLog } from '../utils.js';
 import {
@@ -17,9 +17,13 @@ import {
 } from './wave-todowrite.ts';
 import { getOpencodeClient } from './trident-tools.ts';
 import { readSessionStream } from './wave-status.ts';
-import {
-  detectDroppedMainGeneration, kickMainSession, type HealClient,
-} from './main-session-heal.ts';
+// THE SELF-HEAL IMPORTS — COMMENTED OUT (2026-08-20 — pending paragon overhaul):
+// the detector + kick functions are suspended with the heal; the imports stay
+// dead until the overhaul rebuilds the mechanic with a recency gate. The
+// functions themselves remain in main-session-heal.ts (untouched, still tested).
+// import {
+//   detectDroppedMainGeneration, classifyDroppedTail, kickMainSession, type HealClient,
+// } from './main-session-heal.ts';
 // @ts-ignore — bun:sqlite ships no type package under tsc (the same convention as wave-dispatch.ts:11-12)
 import { Database } from 'bun:sqlite';
 import * as fs from 'node:fs';
@@ -192,6 +196,19 @@ async function tickAgent(
     try {
       const stream = readSessionStream(agent.taskIds[agent.taskIds.length - 1], { limit: 1 });
       bytes = stream.totalParts;
+      // THE TERMINAL GUARD (2026-08-23 — the sanity restore; kills the
+      // STUCK-spam-on-a-corpsed class): the NEWEST part being step-finish or
+      // time.end'd means the agent FINISHED its turn — mark it completed and
+      // return. A finished agent is NEVER stuck evidence, no matter how old.
+      if (stream.ok && stream.parts.length > 0) {
+        const newest = stream.parts[stream.parts.length - 1];
+        if (newest.type === 'step-finish' || newest.completed === true) {
+          agent.state = 'complete';
+          agent.lastActivityAt = Date.now();
+          tridentLog('INFO', 'wave-cron', 'TERMINAL: ' + wave.wave + '/' + name + ' finished (newest part step-finish/completed) — closed out, never stuck-evaluated.');
+          return;
+        }
+      }
       status = stream.ok ? 'stream' : 'unknown';
     } catch (bgErr) {
       status = 'unknown';
@@ -231,6 +248,40 @@ async function tickAgent(
   };
   const decision = matchStuckPatterns(evidence);
   if (decision.action !== 'WAIT' && decision.directive) {
+    // THE READ-AND-KICK (2026-08-23 — the operator: "wave manager read and
+    // kick, don't sit here doing nothing"): before ANY kill directive, a
+    // STUCK_NO_ACTIVITY agent gets EXACTLY ONE steer-kick — a queue-mode
+    // 'continue' steered into its live session — and ONE escalation window
+    // (another STUCK_ACTIVITY_AGE_MS of silence post-kick). Only a STILL
+    // silent agent after the kick earns the kill-respawn directive. The kick
+    // is exactly-once per agent (kickCount), never repeated, never spammed.
+    if (decision.pattern?.id === 'STUCK_NO_ACTIVITY' && !agent.kickCount) {
+      agent.kickCount = (agent.kickCount ?? 0) + 1;
+      agent.kickedAt = Date.now();
+      const sid = agent.taskIds?.[agent.taskIds.length - 1] || agent.sessionIds[agent.sessionIds.length - 1] || '';
+      let kickOutcome = 'no session id to steer';
+      if (sid) {
+        try {
+          const { executeWaveSteer } = await import('./wave-dispatch.ts');
+          const r = await executeWaveSteer(sid,
+            '[WAVE KICK] The watchdog sees no stream growth from you. If your current step is genuinely still running, keep going and emit SOMETHING (a tool call or a progress note) so the stream moves. If you are wedged, re-assess and continue the task now.',
+            { mode: 'queue', subagentType: 'trident_explore' });
+          kickOutcome = 'steered ' + r.sessionId + ' (' + r.mode + ')';
+        } catch (kErr) {
+          kickOutcome = 'steer failed: ' + (kErr instanceof Error ? kErr.message : String(kErr));
+        }
+      }
+      tridentLog('WARN', 'wave-cron', 'KICKED (1/1) ' + wave.wave + '/' + name + ': ' + kickOutcome + ' — escalation to kill only after another ' + Math.round(STUCK_ACTIVITY_AGE_MS / 60000) + 'm of silence.');
+      ReminderQueue.enqueue('WAVE ' + wave.wave + ' — KICKED ' + name + ' once (' + kickOutcome + '). Escalation window: ' + Math.round(STUCK_ACTIVITY_AGE_MS / 60000) + 'm of continued silence before the kill-respawn directive.');
+      return;
+    }
+    // THE POST-KICK ESCALATION (exactly-once kick spent; still silent):
+    if (decision.pattern?.id === 'STUCK_NO_ACTIVITY' && agent.kickCount && agent.kickedAt
+      && (Date.now() - agent.kickedAt) < STUCK_ACTIVITY_AGE_MS) {
+      // Inside the escalation window — hold fire, report, do not kill yet.
+      tridentLog('INFO', 'wave-cron', 'post-kick window: ' + wave.wave + '/' + name + ' silent ' + Math.round((Date.now() - agent.kickedAt) / 60000) + 'm since kick — holding.');
+      return;
+    }
     // THE TIER-2 — the ONE interruption the evidence justifies (Part 5.3):
     ReminderQueue.enqueue(decision.directive);
     tridentLog('WARN', 'wave-cron', 'kill-respawn evidence matched for ' + wave.wave + '/' + name + ': ' + decision.pattern?.id + ' → ' + decision.action);
@@ -297,34 +348,40 @@ async function secondaryChecks(
 ): Promise<void> {
   // THE MAIN-SESSION RESOLUTION (2026-08-13 — the tether fix): the hook
   // inputs carry 'default' — the CLIENT's session list is the reliable id.
-  const healSessionId = await resolveMainSessionId(client, mainSessionId);
-  // ═══ THE MAIN-SESSION SELF-HEAL (2026-08-13 — the operator's design) ═══
-  // The main agent's generation can DROP mid-sentence (the provider cuts the
-  // stream; the runtime FINALIZES the partial — the ▣ timestamp renders, the
-  // agent goes IDLE with the work stuck). The detector reads the main
-  // session's part stream: the LAST assistant text is OBVIOUSLY incomplete
-  // (the incompletion lexicon) AND the message is FINALIZED (no pending
-  // step-start — the agent idle, NOT processing — the slow-vs-frozen
-  // discriminator). THE KICK: the minimal 'continue' chat message via the TUI
-  // input (appendPrompt + submitPrompt) — literally a space+Enter to
-  // reactivate it. NO interrupt path, NO model switch (the operator's rulings
-  // 2026-08-13 — both removed). The cooldown (10m — the cron interval) bounds
-  // the kick rate. The fail-safe: a detection failure NEVER kicks.
-  if (healSessionId && client && typeof client.tui?.appendPrompt === 'function') {
-    try {
-      const heal = detectDroppedMainGeneration(healSessionId);
-      if (heal.dropped) {
-        void kickMainSession(client as unknown as HealClient, healSessionId).then((kr) => {
-          if (!kr.kicked && kr.error !== 'cooldown') {
-            tridentLog('WARN', 'wave-cron', 'the main-session kick did not land: ' + (kr.error ?? 'unknown'));
-          }
-        }).catch((healErr) => {
-          tridentLog('WARN', 'wave-cron', 'the main-session kick threw (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
-        });
-      }
-    } catch (healErr) {
-      tridentLog('WARN', 'wave-cron', 'the main-session heal check failed (non-fatal): ' + (healErr instanceof Error ? healErr.message : String(healErr)));
-    }
+  // DISABLED — pending paragon overhaul (2026-08-20): the resolution served
+  // ONLY the self-heal kick; the heal is suspended, so the per-tick DB read is
+  // dead weight. Re-enable together with the heal.
+  // const healSessionId = await resolveMainSessionId(client, mainSessionId);
+  // ═══ THE MAIN-SESSION SELF-HEAL — DISABLED (2026-08-20 — pending paragon
+  // overhaul) ═══
+  // THE PHANTOM KICK: this mechanic auto-sent the minimal 'continue' chat
+  // message to INACTIVE sessions. The detector's "finalized" check proves only
+  // that the newest part is not streaming — an idle session whose last message
+  // COMPLETED long ago reads identically to a just-dropped generation, and
+  // there is NO recency gate on the last-text part. The shadow classifier can
+  // judge a stale completed message as 'dropped' → the cron kicked the idle
+  // main session with 'continue' → the phantom prompt appeared in the TUI.
+  // DISABLED ISOLATED (pending paragon overhaul): the detector + kick
+  // functions remain in main-session-heal.ts (untouched, still tested) but the
+  // cron NEVER calls them — the auto-kick is dead until the overhaul rebuilds
+  // the mechanic with a proper recency gate + an activity discriminator.
+  //
+  // (2026-08-13 — the operator's original design: the main agent's generation
+  // can DROP mid-sentence — the provider cuts the stream; the runtime
+  // FINALIZES the partial — the ▣ timestamp renders, the agent goes IDLE with
+  // the work stuck. THE KICK: the minimal 'continue' chat message via the TUI
+  // input. 2026-08-16 — the operator's override: the regex-ladder decision is
+  // DEAD, the dropped-generation decision is the SHADOW MODEL's binary
+  // judgment. The pre-check (the finalized signal) is sync; the model call is
+  // async — the cron awaited it. THE COOLDOWN bounded the kick rate; the
+  // fail-safe: a detection failure NEVER kicked. ALL OF IT IS SUSPENDED.)
+  if (false) {
+    // DISABLED — pending paragon overhaul (2026-08-20). The original logic is
+    // preserved for the overhaul reference:
+    //   const heal = await classifyDroppedTail(healSessionId);
+    //   if (heal.dropped) {
+    //     kickMainSession(client, healSessionId) — the phantom 'continue' kick.
+    //   }
   }
   const todoTarget = opts.todoTarget ?? (client ? {
     get: async () => {

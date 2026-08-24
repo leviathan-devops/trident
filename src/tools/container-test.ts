@@ -782,7 +782,7 @@ class ContainerTestEngine {
     STATE.containerImage = params.image ?? STATE.containerImage;
     STATE.distPath = params.distPath ?? this.discoverDistPath();
     STATE.pluginName = params.pluginName ?? null;
-    STATE.agentName = params.agentName ?? null;
+    STATE.agentName = params.agentName ?? 'trident';
     STATE.modelName = params.modelName ?? 'default';
     STATE.tmuxSessionName = params.tmuxSessionName ?? DEFAULT_TMUX_SESSION;
     STATE.testResults = [];
@@ -934,16 +934,15 @@ class ContainerTestEngine {
     STATE.lastStreamSize = 0;
 
     const agentFlag = STATE.agentName ? `--agent ${STATE.agentName}` : '';
-    // THE MODEL PIN (2026-08-09 — the operator: "JUST SWITCH THE FUCKING MODEL
-    // USING THE SKILL PROCESS AND DO THE TEST"). The container's session-create
-    // model resolution falls back to the openrouter (the exhausted provider)
-    // despite the config/auth/DB fixes — the launch with the --model flag pins
-    // the session's model AT THE CREATION, the deterministic path the
-    // resolution cannot override. The shadow brain's own key + the endpoint
-    // proven live (the wave-generator suites); the pinned model = the same
-    // provider the operator's host sessions use.
-    const modelFlag = `--model opencode-go/deepseek-v4-flash`;
-    this.execInContainer(`tmux send-keys -t ${sess} "cd ~/OPENCODE_WORKSPACE && OPENCODE_SKIP_UPDATE=1 opencode ${agentFlag} ${modelFlag}" Enter`, { timeoutMs: 5_000 });
+    // THE MODEL FLAG REMOVED (2026-08-19 — the operator: "no model flags
+    // injected by the tool the image config already handles this"). The launch
+    // is `opencode --agent <agent>` ONLY — the image's baked config.json
+    // decides the model. The old `--model opencode-go/deepseek-v4-flash` flag
+    // (from the stale CT_MODEL_FLAG env) OVERRODE the config to a nonexistent
+    // model → the setup/restart booted with an invalid model → the TUI fell
+    // back to GLM-5.2. The config's `nvidia/nemotron-3.5-lightning-30b-a3b`
+    // is the single source of truth.
+    this.execInContainer(`tmux send-keys -t ${sess} "cd ~/OPENCODE_WORKSPACE && OPENCODE_SKIP_UPDATE=1 opencode ${agentFlag}" Enter`, { timeoutMs: 5_000 });
 
     // BOUNDED TUI-READY CHECK (setup does NOT wait for agent responsiveness).
     // Operator doctrine: setup brings the TUI up; the caller steers with
@@ -2026,11 +2025,11 @@ class ContainerTestEngine {
 
     // Step 5: Launch opencode
     const restartAgentFlag = STATE.agentName ? `--agent ${STATE.agentName}` : '';
-    // THE MODEL PIN (2026-08-09 — the same as the setup launch): the restart
-    // pins the session's model at the creation — the resolution's fallback
-    // cannot override the explicit flag.
-    const restartModelFlag = `--model opencode-go/deepseek-v4-flash`;
-    this.execInContainer(`tmux send-keys -t ${STATE.tmuxSessionName} "cd ~/OPENCODE_WORKSPACE && OPENCODE_SKIP_UPDATE=1 opencode ${restartAgentFlag} ${restartModelFlag}" Enter`, { timeoutMs: 10_000 });
+    // THE MODEL FLAG REMOVED (2026-08-19 — the operator: "no model flags
+    // injected by the tool the image config already handles this"). The
+    // restart is `opencode --agent <agent>` ONLY — the image's baked
+    // config.json decides the model.
+    this.execInContainer(`tmux send-keys -t ${STATE.tmuxSessionName} "cd ~/OPENCODE_WORKSPACE && OPENCODE_SKIP_UPDATE=1 opencode ${restartAgentFlag}" Enter`, { timeoutMs: 10_000 });
 
     // Step 6: BOUNDED TUI-READY CHECK (same doctrine as setup — restart brings
     // the TUI up; the caller steers with send/read/check. The PROPER readiness
@@ -2384,7 +2383,7 @@ const containerTestParamsSchema = z.object({
   image: z.string().optional(),
   distPath: z.string().optional(),
   pluginName: z.string().optional(),
-  agentName: z.string().optional(),
+  agentName: z.string().optional().describe('The agent under test (e.g. trident). Defaults to trident when absent — the plugin under test registers its own agent. The basic-intelligence pre-flight: NEVER let the setup launch the image\'s default Build agent when we are testing a plugin\'s agent.'),
   modelName: z.string().optional().describe('LEGACY ALIAS for model (display name as shown in TUI status bar)'),
   tmuxSessionName: z.string().optional(),
   memoryLimitMb: z.number().optional(),

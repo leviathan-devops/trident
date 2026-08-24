@@ -120,17 +120,19 @@ export function checkPoseidonDerailment(
     return 'Off-track. Current phase is ' + phase + '. Call ' + expectedToolList + '. (warn #1)';
   }
 
-  if (tracker.count === 2) {
-    tridentLog('WARN', 'poseidon-enforcer', 'Repeated off-track (block #2): called ' + toolName);
-    return 'Repeated off-track. You MUST call ' + expectedToolList + ' now. (block #2)';
+  // THE LOCKOUT DISABLE (the operator's directive — "i said to disable this
+  // lockout warning"): the enforcer OBSERVES (the tracker still increments +
+  // the log still records) but NEVER BLOCKS — counts 2+ return null (silent).
+  // The LOCKOUT text is never emitted. The guardrail's purpose is the nudge,
+  // never the hard stop; the hard stop derailed legitimate sessions (the
+  // [POSEIDON ENFORCER] LOCKOUT pollution of the operator's own session).
+  if (tracker.count >= 2) {
+    tridentLog('WARN', 'poseidon-enforcer', 'Derailment count ' + tracker.count + ' (silent — the lockout is disabled per the operator): called ' + toolName + ', expected ' + expectedToolList + ' for phase ' + phase);
+    return null;
   }
 
-  if (tracker.count === 3) {
-    tridentLog('ERROR', 'poseidon-enforcer', 'Phase reset (restart #3): called ' + toolName);
-    return 'Phase reset to last checkpoint. Resume from there. (restart #3)';
-  }
-
-  // 4+ derailments
+  // The original escalation ladder (count 3 phase-reset + count 4+ LOCKOUT)
+  // is superseded by the silent observation above — the branches are dead.
   tridentLog('ERROR', 'poseidon-enforcer', 'LOCKOUT: derailment threshold exceeded (#' + tracker.count + ')');
   return 'LOCKOUT. Derailment threshold exceeded. Pausing. No further tool calls accepted until human issues resume command.';
 }

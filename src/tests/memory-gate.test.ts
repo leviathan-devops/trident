@@ -7,7 +7,7 @@
 
 // @ts-ignore — bun:test ships the runtime, not TS declarations
 import { describe, expect, test } from 'bun:test';
-import { classifyMemoryRead, classifyDispatchMemoryRisk } from '../firewalls/memory-read-lexicon.ts';
+import { classifyMemoryRead, classifyDispatchMemoryRisk, repairMemoryBomb } from '../firewalls/memory-read-lexicon.ts';
 
 describe('THE MEMORY-READ LEXICON — the intent classification', () => {
   test('THE BOMB: .readlines() on an unsized file → RAM_BOMB → BLOCK', () => {
@@ -30,6 +30,22 @@ describe('THE MEMORY-READ LEXICON — the intent classification', () => {
     const d = classifyMemoryRead("python3 -c \"f = open('/tmp/data.txt'); print(f.read())\"");
     expect(d.intent).toBe('RAM_BOMB');
     expect(d.action).toBe('BLOCK');
+  });
+  test('THE STRUCTURED-READ FIX (2026-08-24): json.load(open(spec.json)) → ALLOW — a config/spec parse is NOT a RAM bomb', () => {
+    // the EXACT operator-caught false-positive: reading a small wave-spec.json with
+    // json.load — a structured-document parse, bounded by the doc, no stat ceremony needed.
+    const d = classifyMemoryRead("python3 -c \"import json; d=json.load(open('/proj/.trident/wave-spec.json'))\"");
+    expect(d.action).toBe('ALLOW');
+    expect(d.message).toContain('structured-document read');
+  });
+  test('THE STRUCTURED-READ FIX: yaml.safe_load open → ALLOW', () => {
+    expect(classifyMemoryRead("python3 -c \"yaml.safe_load(open('cfg.yml'))\"").action).toBe('ALLOW');
+  });
+  test('THE STRUCTURED-READ DOGMA PRESERVED: a raw .read() materialize STILL BLOCKS (the real RAM-bomb)', () => {
+    // the structured exemption must NOT swallow the genuine bomb class — a bare
+    // open + .read() (no json.load, no lazy guard) is exactly the 7.9GB incident:
+    expect(classifyMemoryRead("python3 -c \"data = open('/tmp/big.log').read()\"").action).toBe('BLOCK');
+    expect(classifyMemoryRead("python3 -c \"lines = open('/tmp/big.log').readlines()\"").action).toBe('BLOCK');
   });
   test('THE SAFE READ: a prior stat/size check → SIZED_READ → ALLOW', () => {
     const d = classifyMemoryRead("sz=$(stat -c %s /tmp/trident-hook-debug.log); echo $sz");
@@ -109,5 +125,67 @@ describe('THE MEMORY-READ LEXICON — the intent classification', () => {
   test('THE NO-MISFIRE GUARD: the bare open( function call still blocked (the tightened frame)', () => {
     const d = classifyMemoryRead("python3 -c \"f = open('/tmp/data.txt')\"");
     expect(d.action).toBe('BLOCK');
+  });
+});
+
+// ═══ THE MEMORY-BOMB REPAIR MACHINE (2026-08-16 — the W4 fix, the M23 2a
+// design: the screen's BLOCK becomes a REPAIR — the wave's OWN payload is
+// cleaned, never rejected. repairMemoryBomb rewrites the bomb command lines to
+// their bounded forms DIRECTLY IN THE PROMPT; each rewritten line MUST
+// re-classify ALLOW (the one-pass, never-a-loop guarantee).) ═══
+describe('THE MEMORY-BOMB REPAIR — repairMemoryBomb', () => {
+  test('THE REPAIR: the bun -e materializing-read bomb → the bounded wc -l form (RAM_BOMB)', () => {
+    const prompt = 'bun -e "const fs = require(\'fs\'); const data = fs.readFileSync(\'/tmp/big.log\'); console.log(data.length)"';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(1);
+    expect(repaired.prompt).toContain('wc -l /tmp/big.log');
+    const d = classifyMemoryRead(repaired.prompt);
+    expect(d.action).toBe('ALLOW');
+  });
+  test('THE REPAIR: the grep -rn on a built artifact → the grep -c bounded form (OUTPUT_BOMB)', () => {
+    const prompt = 'grep -rn "export" /home/leviathan/OPENCODE_WORKSPACE/Shared Workspace Context/Trident_Agent/Active_Projects/v4.4.2-wave-manager-async/dist/index.js';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(1);
+    expect(repaired.prompt).toContain('grep -c');
+    expect(repaired.prompt).toContain('dist/index.js');
+    expect(repaired.prompt).not.toContain('-rn');
+    const d = classifyMemoryRead(repaired.prompt);
+    expect(d.action).toBe('ALLOW');
+  });
+  test('THE REPAIR: the bundle execution → the node --check syntax-only form (BUNDLE_EXEC)', () => {
+    const prompt = 'bun /home/leviathan/OPENCODE_WORKSPACE/Shared Workspace Context/Trident_Agent/Active_Projects/v4.4.2-wave-manager-async/dist/index.js';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(1);
+    expect(repaired.prompt).toContain('node --check dist/index.js');
+    const d = classifyMemoryRead(repaired.prompt);
+    expect(d.action).toBe('ALLOW');
+  });
+  test('THE REPAIR: a clean prompt passes through byte-identical (the no-op path)', () => {
+    const prompt = 'THE VERIFICATION (run ALL):\n1. sha256sum dist/index.js\n2. grep -c "export" dist/index.js\n3. stat -c %s dist/index.js';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(0);
+    expect(repaired.prompt).toBe(prompt);
+  });
+  test('THE REPAIR: a prompt with one bomb line + clean lines → only the bomb line changes, the rest byte-identical', () => {
+    const prompt = 'THE VERIFICATION (run ALL):\n1. sha256sum dist/index.js\n2. grep -rn "export" dist/index.js\n3. stat -c %s dist/index.js';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(1);
+    expect(repaired.prompt).toContain('grep -c "export" dist/index.js');
+    expect(repaired.prompt).toContain('sha256sum dist/index.js');
+    expect(repaired.prompt).toContain('stat -c %s dist/index.js');
+    const d = classifyDispatchMemoryRisk(repaired.prompt);
+    expect(d.action).toBe('ALLOW');
+  });
+  test('THE REPAIR SELF-CONSISTENCY: the repaired prompt re-classifies as ALLOW (never re-trips the screen — a one-pass repair)', () => {
+    const prompt = 'THE VERIFICATION (run ALL):\n1. bun -e "const d = require(\'fs\').readFileSync(\'/tmp/big.log\'); console.log(d.length)"\n2. grep -rn "export" dist/index.js\n3. bun dist/index.js';
+    const repaired = repairMemoryBomb(prompt);
+    expect(repaired.changed.length).toBe(3);
+    const d = classifyDispatchMemoryRisk(repaired.prompt);
+    expect(d.action).toBe('ALLOW');
+  });
+  test('THE REPAIR NO-OP: an empty prompt → unchanged', () => {
+    const repaired = repairMemoryBomb('');
+    expect(repaired.prompt).toBe('');
+    expect(repaired.changed.length).toBe(0);
   });
 });

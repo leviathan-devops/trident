@@ -83,6 +83,17 @@ const BUNDLE_SAFE_RE = /\bbun\s+(?:test|build|x|install|run)\b|\bnode\s+(?:-e|-c
 const LAZY_ITERATE_RE = /for\s+\w+\s+in\s+open\s*\(/i;
 const SIZE_CHECK_RE = /\bstat\b|\bgetsize\b|os\.path\.getsize|\.size\b|wc\s+-c|ls\s+-l/i;
 const STREAM_TOOL_RE = /(?:\bgrep\b|\btail\b|\bsed\b|\bawk\b|\brg\b|\bhead\b|\bsort\b|\buniq\b)/i;
+// THE STRUCTURED-DOCUMENT READ FRAME (2026-08-24 — the operator's "basic
+// logic" fix): `json.load(open(f))` / `json.loads(open(f).read())` /
+// `yaml.safe_load` / `toml.load` parse ONE structured document — a config,
+// spec, plan, or manifest — bounded by the document, small by construction.
+// This is NOT the RAM-bomb class: the measured incident was `.readlines()` /
+// `.read()` of a possibly-giant *raw* file (a 7.9GB log → 14.6GB RSS). A
+// structured parse is a deliberate, size-appropriate read — requiring a
+// `stat` before it is pointless ceremony on a file that is self-evidently a
+// config/spec. The struct read is now a SANCTIONED class; the raw materializer
+// (readlines/read) stays hard-blocked. */
+const STRUCTURED_READ_RE = /(?:json\.load|json\.loads|yaml\.safe_load|toml\.load|pickle\.load)\s*\(/i;
 
 // THE CONTINUATION-CONTEXT — the file is KNOWN sized if the SAME command
 // carries a size check BEFORE the read (the ordered chain: stat → then read).
@@ -102,7 +113,7 @@ const MEMORY_READ_PATTERNS: MemoryReadPattern[] = [
     id: 'RAM_BOMB_UNGUARDED_OPEN',
     kind: 'memory-evidence',
     matcher: (cmd) => INTERPRETER_RE.test(cmd) && UNGUARDED_OPEN_RE.test(cmd) && !LAZY_ITERATE_RE.test(cmd),
-    triggerCondition: (cmd) => !SIZE_CHECK_RE.test(cmd),
+    triggerCondition: (cmd) => !SIZE_CHECK_RE.test(cmd) && !STRUCTURED_READ_RE.test(cmd),
     severity: 'CRITICAL',
     messageTemplate: 'inline open() on an UNSIZED file (the RAM-bomb risk)',
     remediationHook: 'SIZE FIRST: `stat -c %s <path>`; if >100MB use grep/tail/awk (streaming); python: `for line in open()` only.',
@@ -166,6 +177,9 @@ export function classifyMemoryRead(command: string): MemoryReadDecision {
   }
   // THE SAFE-CONTEXT CLASSES (the triggerCondition excluded them from the
   // bomb frames — now they classify as the sanctioned reads):
+  if (STRUCTURED_READ_RE.test(command)) {
+    return { intent: 'SIZED_READ', action: 'ALLOW', message: 'a structured-document read (json/yaml/toml — a config/spec/manifest parse, bounded by the document)' };
+  }
   if (LAZY_ITERATE_RE.test(command)) {
     return { intent: 'LAZY_ITERATE', action: 'ALLOW', message: 'the lazy iteration — one line at a time (the WARHEAD 21 safe read)' };
   }
@@ -209,4 +223,70 @@ export function classifyDispatchMemoryRisk(prompt: string): MemoryReadDecision {
     }
   }
   return { intent: 'NON_READ', action: 'ALLOW', message: 'the dispatch prompt carries no memory-bomb command' };
+}
+
+// ── THE MEMORY-BOMB REPAIR MACHINE (2026-08-16 — the W4 fix, the M23 2a
+// design: the screen's BLOCK becomes a REPAIR — "the wave's OWN payload is
+// cleaned, never rejected" (the operator). The SAME classifyMemoryRead state
+// machine detects the bomb lines; the repair rewrites each BLOCKed line to its
+// bounded form (the EXACT rewrites the remediationHook fields already name),
+// DIRECTLY IN THE PROMPT, and returns the mutated string + the changed lines.
+// THE SELF-CONSISTENCY RULE (the one-pass guarantee): each rewritten line MUST
+// re-classify as ALLOW (SIZED_READ via wc -l / STREAM_TOOLS via grep -c /
+// NON_READ via node --check) — a repaired prompt never re-trips the screen,
+// never a repair loop. The matchers + the state machine stay byte-identical —
+// ONLY the rejection path becomes a rewrite path. ──
+export interface MemoryBombRepair {
+  prompt: string;      // the mutated prompt (the bounded rewrites applied)
+  changed: string[];   // the changed lines surfaced for the report
+}
+
+// THE QUOTED-ARG EXTRACTOR — the first quoted token that looks like a file
+// path (contains a '/' or a file extension). Returns '' when nothing fits.
+function extractQuotedPath(cmd: string): string {
+  var quoted = cmd.match(/(['"])([^'"]+)\1/g) || [];
+  for (var i = 0; i < quoted.length; i++) {
+    var token = quoted[i].substring(1, quoted[i].length - 1);
+    if (token.indexOf('/') !== -1 || /\.\w+$/.test(token)) return token;
+  }
+  return '';
+}
+
+export function repairMemoryBomb(prompt: string): MemoryBombRepair {
+  if (!prompt || typeof prompt !== 'string') {
+    return { prompt: prompt || '', changed: [] };
+  }
+  var lines = prompt.split('\n');
+  var changed: string[] = [];
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim();
+    if (!line || line.length < 8) continue;
+    var d = classifyMemoryRead(line);
+    if (d.action !== 'BLOCK') continue;   // the ALLOWed lines pass byte-identical
+    var repaired = '';
+    if (d.pattern === 'OUTPUT_BOMB_RECURSIVE_GREP') {
+      // THE BOUNDED GREP (the remediationHook): strip the recursive -r/-n
+      // flags (and every flag group after grep) → the -c count. Constant
+      // memory by construction — BOUNDED_GREP_RE satisfies the trigger.
+      repaired = line.replace(/\bgrep\b(?:\s+-[a-zA-Z]+|\s+--[a-zA-Z-]+)+/, 'grep -c');
+    } else if (d.pattern === 'BUNDLE_EXEC_RUN_ARTIFACT') {
+      // NEVER execute the artifact (the remediationHook): the syntax-only
+      // check reads the file WITHOUT initializing the plugin — BUNDLE_SAFE_RE
+      // (`node --check`) excludes the trigger.
+      var artifactMatch = line.match(/(?:dist|bundle|build)[^;|&"']*\.(?:js|mjs|cjs)\b/i);
+      var artifactPath = artifactMatch ? artifactMatch[0] : extractQuotedPath(line);
+      repaired = artifactPath ? 'node --check ' + artifactPath : '# (the bundle execution was removed by the memory-bomb repair)';
+    } else {
+      // THE BOMB CLASSES RAM_BOMB_READLINES / RAM_BOMB_UNGUARDED_OPEN (the
+      // remediationHook): SIZE FIRST — the bounded `wc -l` size read (the
+      // streaming counter, constant memory — SIZE_CHECK_RE classifies ALLOW).
+      var path = extractQuotedPath(line);
+      repaired = path ? 'wc -l ' + path : '# (the unsized file read was removed by the memory-bomb repair)';
+    }
+    if (repaired.length > 0 && repaired !== line) {
+      lines[i] = repaired;
+      changed.push('line ' + (i + 1) + ': ' + line.substring(0, 80) + ' → ' + repaired.substring(0, 80));
+    }
+  }
+  return { prompt: lines.join('\n'), changed: changed };
 }

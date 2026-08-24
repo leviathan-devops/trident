@@ -39,7 +39,7 @@ export interface BatchToolCall {
 /** THE WAVE-MANIFEST SHA VERIFICATION (the batch's [WAVE VERBATIM]): find the
  *  manifest entry for the description + compare the dispatched prompt's SHA.
  *  A manifest match with a SHA mismatch = the condensed prompt → BLOCK. */
-function findManifestSha(desc: string): { sha256: string; lines: number } | null {
+export function findManifestSha(desc: string): { sha256: string; lines: number } | null {
   try {
     const files = readdirSync(TRIDENT_TMP_DIR, { withFileTypes: true });
     for (let i = 0; i < files.length; i++) {
@@ -57,11 +57,27 @@ function findManifestSha(desc: string): { sha256: string; lines: number } | null
 }
 
 /** THE PARALLEL TASK SPAWN (the doc's PART 1 — the client's session.create +
- *  promptAsync — the SAME SubtaskPartInput the native task tool uses). */
-async function spawnTask(
+ *  promptAsync — the SAME SubtaskPartInput the native task tool uses).
+ *  THE VISIBILITY REGISTRATION (2026-08-17 — the [CORRECT SUBAGENT DISPATCH
+ *  MECHANICS FOR CUSTOM TOOLS] canon, the phantom-session fix): the native
+ *  task tool (task.ts:161-177) calls ctx.metadata({ title, metadata:
+ *  { parentSessionId, sessionId, model } }) after the child's creation — THE
+ *  TUI RENDERS THE SUBAGENT FROM THIS METADATA. WITHOUT IT, the child exists
+ *  in the DB but the parent's message metadata has NO record → the TUI
+ *  renders NO subagent → the PHANTOM SESSION. THE FIX: spawnTask gains the
+ *  metadataCb (the ToolContext's metadata function) + calls it per child —
+ *  the SAME registration the native task tool does. */
+export interface DispatchMetadataInput {
+  title?: string;
+  metadata?: { [key: string]: any };
+}
+export type DispatchMetadataCb = (input: DispatchMetadataInput) => void;
+
+export async function spawnTask(
   client: { session: { create(opts: { body: { parentID?: string; title: string } }): Promise<{ data: { id: string } }>; promptAsync(opts: { path: { id: string }; body: SpawnCall['promptBody'] }): Promise<unknown> } },
   mainSessionId: string | null,
   entry: BatchToolCall,
+  metadataCb?: DispatchMetadataCb,
 ): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
   const p = entry.parameters || {};
   const description = typeof p.description === 'string' ? p.description : 'agent';
@@ -97,6 +113,17 @@ async function spawnTask(
       path: { id: childId },
       body: {
         agent: subagentType,
+        // THE LEAF-NODE TOOL SURFACE (2026-08-17 — the [CORRECT SUBAGENT
+        // DISPATCH MECHANICS] canon, the REAL root cause of the
+        // [TRIDENT LEAF NODE] block): the native task tool (task.ts:196) runs
+        // the child with `tools: { task: false, todowrite: false, ... }` —
+        // the leaf-node's restricted surface. THE DIRECT session.create spawn
+        // OMITTED this → the child COULD see + call the task tool → the
+        // plugin's leaf-node gate (trident-hooks.ts:1683-1702) blocked it with
+        // [TRIDENT LEAF NODE]. THE FIX: the child's promptAsync body carries
+        // the SAME tools restriction the native path does — the child is a
+        // leaf node that executes + returns, it NEVER dispatches.
+        tools: { task: false, todowrite: false },
         parts: [{
           type: 'subtask',
           prompt: promptText,
@@ -105,6 +132,30 @@ async function spawnTask(
         }],
       },
     });
+    // THE VISIBILITY REGISTRATION (2026-08-17 — the phantom-session fix, the
+    // [CORRECT SUBAGENT DISPATCH MECHANICS FOR CUSTOM TOOLS] canon): the
+    // native task tool's ctx.metadata({ title, metadata: { parentSessionId,
+    // sessionId, model } }) — THE TUI RENDERS THE SUBAGENT FROM THIS
+    // METADATA. The metadataCb is the ToolContext's metadata function passed
+    // by the caller (the batch tool / the machine-dispatch) — the child's
+    // session id is registered in the PARENT's message metadata so the TUI
+    // shows it inline in the parent stream. WITHOUT THIS, THE CHILD IS A
+    // PHANTOM (exists in the DB, invisible in the TUI).
+    if (typeof metadataCb === 'function') {
+      try {
+        metadataCb({
+          title: description,
+          metadata: {
+            parentSessionId: mainSessionId,
+            sessionId: childId,
+            background: true,
+          },
+        });
+        tridentLog('INFO', 'batch-tool', 'VISIBILITY-REGISTERED ' + description + ' → ' + childId + ' in parent ' + (mainSessionId ?? 'root') + ' (the ctx.metadata registration — the TUI renders the subagent)');
+      } catch (metaErr) {
+        tridentLog('WARN', 'batch-tool', 'the visibility registration failed (non-fatal — the child still spawned): ' + (metaErr instanceof Error ? metaErr.message : String(metaErr)));
+      }
+    }
     tridentLog('INFO', 'batch-tool', 'spawned ' + description + ' → ' + childId + ' (parent ' + (mainSessionId ?? 'root') + ')');
     return { ok: true, sessionId: childId };
   } catch (e) {
@@ -121,14 +172,15 @@ export function createBatchTool() {
         parameters: z.record(z.string(), z.any()).describe('The tool parameters: description, subagent_type, promptFile (or prompt), etc.'),
       })).min(1).max(25).describe('The array of tool calls to execute in parallel (max 25)'),
     },
-    execute: async (args: { tool_calls: BatchToolCall[] }, context?: { sessionID?: string }) => {
+    execute: async (args: { tool_calls: BatchToolCall[] }, context?: { sessionID?: string; metadata?: DispatchMetadataCb }) => {
       const mainSessionId = (context && typeof context.sessionID === 'string' && context.sessionID) || null;
+      const metadataCb = (context && typeof context.metadata === 'function') ? context.metadata : undefined;
       const client = getOpencodeClient();
       if (!client || typeof client.session !== 'object' || typeof client.session.create !== 'function' || typeof client.session.promptAsync !== 'function') {
         throw new Error('[BATCH TOOL] the opencode client is unavailable — the batch spawns require the session.create + promptAsync surface');
       }
       // THE PARALLEL EXECUTION (allSettled — the per-unit failure capture, the wave survives the stragglers):
-      const results = await Promise.allSettled((args.tool_calls || []).map((entry) => spawnTask(client, mainSessionId, entry)));
+      const results = await Promise.allSettled((args.tool_calls || []).map((entry) => spawnTask(client, mainSessionId, entry, metadataCb)));
       const details: Array<{ status: string; sessionId?: string; error?: string }> = [];
       let ok = 0;
       for (const r of results) {

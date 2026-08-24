@@ -18,7 +18,7 @@ import {
 } from '../tools/shadow/shadow-brief-builder.ts';
 import { SHADOW_INFERENCE_SECTION_TITLE, type ShadowInference } from '../tools/shadow/shadow-context-manager.ts';
 
-const INFERENCE_TITLE = '## [SHADOW INFERENCE]';
+const INFERENCE_TITLE = '[SHADOW INFERENCE]';
 
 // the absolute fixture paths — constructed at runtime, never hardcoded
 const HOME = os.homedir();
@@ -137,7 +137,7 @@ describe('shadow-brief-builder', () => {
     expect(out.includes(INFERENCE_TITLE)).toBe(true);
     expect(out.includes('The raw inference body without the title.')).toBe(true);
     // the exact title line — not a variant
-    expect(out.includes('## [SHADOW INFERENCE]\n')).toBe(true);
+    expect(out.includes('[SHADOW INFERENCE]')).toBe(true);
   });
 
   test('adversarial: an inference ALREADY carrying the title is NOT double-titled', () => {
@@ -168,7 +168,7 @@ describe('shadow-brief-builder', () => {
   });
 
   test('the exported title constant matches the EXACT operator-mandated title (the §9 cross-consistency rule)', () => {
-    expect(SHADOW_INFERENCE_SECTION_TITLE).toBe('## [SHADOW INFERENCE]');
+    expect(SHADOW_INFERENCE_SECTION_TITLE).toBe('[SHADOW INFERENCE]');
   });
 
   test('the weave is pure: the same spec + skeleton → the same brief (deterministic, property-testable)', () => {
