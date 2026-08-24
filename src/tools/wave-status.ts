@@ -43,43 +43,248 @@ function toKillReason(reason: string | undefined): KillReason {
   return 'ORCHESTRATOR_ABORT';
 }
 
-// ═══ THE TRUNCATION DETECTOR (the return-integrity layer). `complete` is the
-// session-termination signal, NOT the work-wholeness signal: a provider that
-// dies mid-return still writes the terminal finish (the runtime closes the
-// turn on the truncated text). The detector scans the FINAL text part's tail
-// for the high-precision cut signatures. CONSERVATIVE BY DESIGN: only the
-// signals that never appear in a legitimately-finished report — a false
-// "truncated" costs a harmless kick; a missed truncation eats degenerate
-// work as fact (the live incident: a report cut at "- Writer: `report" read
-// as COMPLETE (full report) and the harvest nearly shipped it).
-export function detectReturnTruncation(text: string): { truncated: boolean; signals: string[] } {
-  const t = text.trimEnd();
-  if (t.length === 0) return { truncated: false, signals: [] };
+// ═══ THE RETURN-INTEGRITY LEXICON (the truncation detector, rebuilt to the
+// LEXICON_GRADE_INTELLIGENT_SYSTEMS_ENGINEERING_BIBLE canon: the typed
+// PatternFamily members + the state machine + the evidence triad).
+//
+// THE DOMAIN: a completed subagent's RETURN TEXT — is it a WHOLE report or a
+// CUT? `complete` is the session-TERMINATION signal: a provider that dies
+// mid-return still writes the terminal finish. This lexicon is the
+// work-wholeness judgment on the return's tail.
+//
+// THE EVIDENCE CLASS: return-evidence — { finalText, terminalStatus } (the
+// session's final text part + its computed status; both from the session
+// stream, never the job registry).
+//
+// THE DECISION LAYER: the classifyReturnIntegrity state machine below — the
+// patterns DETECT (Order-2: the token match + the surrounding tail
+// structure), the machine DECIDES (the gated state transition), the caller
+// receives the triad. The regex components are DETECTORS only, named per
+// §3.4 of the bible.
+
+export interface ReturnEvidence {
+  /** The session's final non-empty text part, verbatim. */
+  finalText: string;
+  /** The computed session status ('complete' gates the whole lexicon). */
+  terminalStatus: WaveReadStatusName;
+}
+type WaveReadStatusName = 'stream' | 'idle' | 'complete' | 'absent';
+
+interface ReturnIntegrityPattern {
+  id: string;
+  kind: 'return-evidence';
+  /** The mechanical DETECTOR — Order-2: a structural judgment on the tail
+   *  (token identity + position + what surrounds it), regexes as components. */
+  matcher: (ev: ReturnEvidence) => boolean;
+  /** The contextual gate — non-complete statuses never fire any pattern. */
+  triggerCondition: (ev: ReturnEvidence) => boolean;
+  severity: 'INFO' | 'HIGH' | 'CRITICAL';
+  messageTemplate: string;
+  remediationHook: 'kick-resume';
+}
+
+// ── THE LEXICON MEMBERS ──
+
+/** L-TRUNC-1 — THE DANGLING CONNECTIVE: the tail's final token is a
+ *  connective/lead-in word with NO terminal punctuation after it — the
+ *  sentence was building a continuation that never arrived. Order-2: the
+ *  token must be (a) in the lexicon below, (b) the LAST whitespace token,
+ *  (c) not followed by any terminal mark. The WORD CLASS (not a regex
+ *  shape): coordinating/subordinating conjunctions, prepositions, relative
+ *  pronouns, copulas, and the report-construction lead-ins — the words that
+ *  grammatically REQUIRE a continuation. */
+const DANGLING_CONNECTIVE_LEXICON: ReadonlySet<string> = new Set([
+  // coordinating conjunctions
+  'and', 'or', 'but', 'nor', 'so', 'yet', 'for',
+  // subordinating conjunctions
+  'if', 'when', 'while', 'because', 'since', 'although', 'though', 'unless',
+  'until', 'whereas', 'after', 'before', 'once', 'than', 'that',
+  // prepositions (the never-final class)
+  'of', 'to', 'in', 'on', 'by', 'at', 'for', 'with', 'from', 'into', 'onto',
+  'over', 'under', 'about', 'across', 'after', 'against', 'along', 'among',
+  'around', 'before', 'behind', 'below', 'beneath', 'beside', 'between',
+  'beyond', 'during', 'inside', 'near', 'outside', 'through', 'toward',
+  'under', 'upon', 'within', 'without', 'via', 'per', 'as',
+  // articles + relative/case tokens
+  'the', 'a', 'an', 'which', 'who', 'whom', 'whose', 'what', 'where', 'how',
+  'why', 'whether', 'this', 'these', 'those', 'each', 'every', 'either',
+  'neither', 'both', 'all', 'any', 'some', 'such', 'no',
+  // copulas + auxiliaries (a tail ending in these is mid-predicate)
+  'is', 'are', 'was', 'were', 'be', 'been', 'being', 'has', 'have', 'had',
+  'will', 'would', 'shall', 'should', 'can', 'could', 'may', 'might', 'must',
+  'does', 'do', 'did', 'then', 'also', 'not', 'it', 'its', 'their',
+]);
+
+/** L-TRUNC-2 — THE UNCLOSED CODE FENCE: an odd count of fence markers — a
+ *  block opened and never closed. Order-2: the COUNT parity, not a match. */
+/** L-TRUNC-3 — THE UNCLOSED INLINE CODE: an odd trailing backtick run — the
+ *  cut landed inside an inline-code span. Order-2: the parity of the FINAL
+ *  line's trailing backticks + the span-never-closed judgment. */
+/** L-TRUNC-4 — THE TRAILING STRUCTURE OPENER: the tail ends in an opening
+ *  delimiter (paren/bracket/brace/colon-dash) — the structure was announced,
+ *  never filled. Order-2: the delimiter class + nothing following it. */
+/** L-TRUNC-5 — THE TRAILING MARKUP CELL: the tail's final non-empty line is a
+ *  bare table row or a bare list marker — a row/marker with NO content cell
+ *  after it. Order-2: the line shape (pipe-delimited but no closing pipe
+ *  content, or a lone '- '/'* ' with EOL). */
+const RETURN_INTEGRITY_LEXICON: readonly ReturnIntegrityPattern[] = [
+  {
+    id: 'L-TRUNC-1',
+    kind: 'return-evidence',
+    matcher: (ev) => {
+      const t = ev.finalText.trimEnd();
+      if (t.length === 0) return false;
+      const lastLine = t.split('\n').slice(-1)[0] ?? '';
+      const tokens = lastLine.trim().split(/\s+/).filter((w) => w.length > 0);
+      const last = tokens[tokens.length - 1];
+      if (!last) return false;
+      // (a) the token IS a lexicon member (case-insensitive; strip a
+      //     trailing comma/semicolon — "and," cut before the next word)
+      const bare = last.replace(/[,;:]$/, '').toLowerCase();
+      const inLexicon = DANGLING_CONNECTIVE_LEXICON.has(bare);
+      // (b) NO terminal punctuation after it — a period/quote/bracket/etc
+      //     after the token means the sentence CLOSED (no continuation due)
+      const terminalAfter = /[.!?:;"'`)\]}>*_|]$/.test(last);
+      // (c) the line is prose-shaped (not inside a code fence — the fence
+      //     pattern owns fenced tails)
+      const fenceCount = (t.match(/^```/gm) ?? []).length;
+      const insideFence = fenceCount % 2 === 1;
+      // (d) THE BARE-BULLET LEAD-IN (the "- Writer" shape): a list line whose
+      //     content is a SINGLE capitalized token — the bullet announced an
+      //     entity whose description never arrived. Order-2: the list-marker
+      //     shape + single-token content + no terminal + capitalized label.
+      const lineTrim = lastLine.trim();
+      const bareBulletLeadIn = /^[-*+]\s+\S+$/.test(lineTrim) && !terminalAfter && /^[A-Z]/.test(lineTrim.replace(/^[-*+]\s+/, ''));
+      return (inLexicon && !terminalAfter && !insideFence) || (bareBulletLeadIn && !insideFence);
+    },
+    triggerCondition: (ev) => ev.terminalStatus === 'complete',
+    severity: 'CRITICAL',
+    messageTemplate: 'the return ends on the connective "{tailToken}" — the sentence was cut before its continuation',
+    remediationHook: 'kick-resume',
+  },
+  {
+    id: 'L-TRUNC-2',
+    kind: 'return-evidence',
+    matcher: (ev) => {
+      const t = ev.finalText.trimEnd();
+      const fences = (t.match(/^```/gm) ?? []).length;
+      return fences % 2 === 1;
+    },
+    triggerCondition: (ev) => ev.terminalStatus === 'complete',
+    severity: 'CRITICAL',
+    messageTemplate: 'the return ends inside an unclosed code fence ({fenceCount} markers — odd parity)',
+    remediationHook: 'kick-resume',
+  },
+  {
+    id: 'L-TRUNC-3',
+    kind: 'return-evidence',
+    matcher: (ev) => {
+      const t = ev.finalText.trimEnd();
+      if (t.length === 0) return false;
+      const lastLine = t.split('\n').slice(-1)[0] ?? '';
+      // the trailing backtick run is ODD and the line did not OPEN with that
+      // run (an opening backtick with content after = a span that continues;
+      // an odd run with nothing after = a span cut open)
+      // SHAPE A — the trailing backtick run is ODD and content precedes it
+      // (a span opened, content, another open — cut):
+      const m = lastLine.match(/`+$/);
+      if (m) {
+        const runLen = m[0].length;
+        const beforeRun = lastLine.slice(0, lastLine.length - runLen);
+        if (runLen % 2 === 1 && beforeRun.trim().length > 0) return true;
+      }
+      // SHAPE B — THE OPEN SPAN NEVER CLOSED (the live incident's
+      // "- Writer: `report" — an odd backtick count in the line with NO
+      // closing run at EOL: the span's content IS the tail, closer never came).
+      const ticks = (lastLine.match(/`/g) ?? []).length;
+      if (ticks > 0 && ticks % 2 === 1 && !(m && m[0].length === ticks)) return true;
+      return false;
+    },
+    triggerCondition: (ev) => ev.terminalStatus === 'complete',
+    severity: 'CRITICAL',
+    messageTemplate: 'the return ends inside an unclosed inline-code span',
+    remediationHook: 'kick-resume',
+  },
+  {
+    id: 'L-TRUNC-4',
+    kind: 'return-evidence',
+    matcher: (ev) => {
+      const t = ev.finalText.trimEnd();
+      if (t.length === 0) return false;
+      // (a) the very tail char is an opening delimiter — nothing after it
+      const openerTail = /[([{:]$/.test(t) || /[-*+]\s*$/.test(t);
+      if (!openerTail) return false;
+      // (b) not inside a fence (the fence pattern owns fenced tails)
+      const fences = (t.match(/^```/gm) ?? []).length;
+      return fences % 2 === 0;
+    },
+    triggerCondition: (ev) => ev.terminalStatus === 'complete',
+    severity: 'HIGH',
+    messageTemplate: 'the return ends on a structure opener — the announced structure was never filled',
+    remediationHook: 'kick-resume',
+  },
+  {
+    id: 'L-TRUNC-5',
+    kind: 'return-evidence',
+    matcher: (ev) => {
+      const t = ev.finalText.trimEnd();
+      if (t.length === 0) return false;
+      const lastLine = t.split('\n').slice(-1)[0] ?? '';
+      // a bare table row: starts with |, has cells, but ENDS without the
+      // closing | (the row was cut mid-cell) — or a lone list marker at EOL
+      const bareTableRow = lastLine.trimStart().startsWith('|') && /\|[^|]*$/.test(lastLine.trim()) && !lastLine.trim().endsWith('|');
+      const bareListMarker = /^\s*[-*+]\s*$/.test(lastLine);
+      return bareTableRow || bareListMarker;
+    },
+    triggerCondition: (ev) => ev.terminalStatus === 'complete',
+    severity: 'HIGH',
+    messageTemplate: 'the return ends on a bare table row / list marker — the cell was cut before its content',
+    remediationHook: 'kick-resume',
+  },
+];
+
+// ── THE STATE MACHINE (the DECISION layer — IDLE→EVIDENCED→CLASSIFIED→EMITTED;
+// the fail-state is INTEGRITY_UNKNOWN, never PASS-by-default) ──
+type IntegrityState = 'IDLE' | 'EVIDENCED' | 'CLASSIFIED' | 'EMITTED' | 'INTEGRITY_UNKNOWN';
+
+/** The public classification — the evidence triad rides in the result (the
+ *  pattern ids + the instantiated messages = the finding anchors). */
+export interface ReturnIntegrityVerdict {
+  truncated: boolean;
+  signals: string[];
+  /** The per-match triads: {pattern, state, evidence: the tail excerpt}. */
+  triads: Array<{ pattern: string; state: IntegrityState; evidence: string }>;
+}
+
+export function classifyReturnIntegrity(ev: ReturnEvidence): ReturnIntegrityVerdict {
+  let state: IntegrityState = 'IDLE';
+  if (typeof ev.finalText !== 'string' || ev.finalText.length === 0 || ev.terminalStatus !== 'complete') {
+    // the gate: no text or not terminal → UNKNOWN, never PASS-by-default
+    return { truncated: false, signals: [], triads: [{ pattern: 'none', state: 'INTEGRITY_UNKNOWN', evidence: 'not a terminal return — the integrity judgment does not apply' }] };
+  }
+  state = 'EVIDENCED';
   const signals: string[] = [];
-  // 1. THE DANGLING CONNECTIVE — a tail ending in a connective/lead-in word
-  //    (lowercase, no terminal punctuation after it) = cut mid-sentence.
-  if (/[,:;-]\s*(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|Writer|CONFIRMED|DEGENERATE)$/i.test(t)
-    || /\b(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|as|at)$/i.test(t.split(/\s+/).slice(-1)[0] ?? '')) {
-    signals.push('dangling-connective');
+  const triads: ReturnIntegrityVerdict['triads'] = [];
+  for (const p of RETURN_INTEGRITY_LEXICON) {
+    state = 'CLASSIFIED';
+    let hit = false;
+    try { hit = p.triggerCondition(ev) && p.matcher(ev); } catch { hit = false; }
+    if (hit) {
+      const tailExcerpt = ev.finalText.trimEnd().slice(-80);
+      const msg = p.messageTemplate.replace('{tailToken}', tailExcerpt.split(/\s+/).slice(-1)[0] ?? '').replace('{fenceCount}', String((ev.finalText.match(/^```/gm) ?? []).length));
+      signals.push(p.id + ': ' + msg);
+      triads.push({ pattern: p.id, state, evidence: tailExcerpt });
+    }
   }
-  // 2. THE UNCLOSED CODE FENCE — an odd count of fence markers = a block
-  //    opened and never closed.
-  const fences = (t.match(/^```/gm) ?? []).length;
-  if (fences % 2 === 1) signals.push('unclosed-code-fence');
-  // 3. THE UNCLOSED INLINE CODE / STRAY BACKTICK TAIL — the live incident's
-  //    exact shape: the cut landed INSIDE `` `report ``.
-  if (/`[^`\n]*$/.test(t) && !/^`/.test(t.split('\n').slice(-1)[0] ?? '')) signals.push('unclosed-inline-code');
-  // 4. THE TRAILING STRUCTURE OPENER — a line ending in an opening
-  //    paren/bracket/colon-hyphen = the structure was announced, never filled.
-  if (/[([{:]$/.test(t)) signals.push('trailing-structure-opener');
-  // 5. THE MID-WORD CUT — a tail ending in a letter directly after a hyphen
-  //    join or a camelCase seam with no terminal punctuation (rare; only
-  //    fires when nothing else terminal exists).
-  if (!/[.!?:;)"'`\]}>|*_/]$/.test(t) && /[a-z]$/i.test(t) && signals.length === 0
-    && t.split(/\s+/).slice(-1)[0]?.length === 1) {
-    signals.push('mid-word-cut');
-  }
-  return { truncated: signals.length > 0, signals };
+  state = 'EMITTED';
+  return { truncated: signals.length > 0, signals, triads };
+}
+
+// THE COMPAT SHIM (the callers + the tests use the old signature): the
+// two-field return derived from the full verdict.
+export function detectReturnTruncation(text: string): { truncated: boolean; signals: string[] } {
+  const verdict = classifyReturnIntegrity({ finalText: text, terminalStatus: 'complete' });
+  return { truncated: verdict.truncated, signals: verdict.signals.map((s) => s.split(':')[0]) };
 }
 
 // THE CLIENT SURFACE the status tool consumes (the session.reads + the abort):

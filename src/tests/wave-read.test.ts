@@ -246,7 +246,7 @@ describe('detectReturnTruncation — the return-integrity layer', async () => {
   test('THE LIVE INCIDENT: the cut inside `report — flags unclosed-inline-code', () => {
     const r = detectReturnTruncation('### 7b. DEAD-PARAMETER CONFIRMATION\n\nCONFIRMED — DEGENERATE.\n- Writer: `report');
     expect(r.truncated).toBe(true);
-    expect(r.signals).toContain('unclosed-inline-code');
+    expect(r.signals.join(' ')).toContain('L-TRUNC-3');
   });
 
   test('the dangling connective tail flags', () => {
@@ -258,7 +258,7 @@ describe('detectReturnTruncation — the return-integrity layer', async () => {
   test('the unclosed code fence flags', () => {
     const r = detectReturnTruncation('the verification output:\n```bash\nbun test\n# (cut');
     expect(r.truncated).toBe(true);
-    expect(r.signals).toContain('unclosed-code-fence');
+    expect(r.signals.join(' ')).toContain('L-TRUNC-2');
   });
 
   test('the trailing structure opener flags', () => {
@@ -267,6 +267,14 @@ describe('detectReturnTruncation — the return-integrity layer', async () => {
   });
 
   test('THE NO-MISFIRE CASES: legitimately-finished reports stay clean', () => {
+    // the adversarial no-misfire hard cases:
+    // - a bullet whose single token is a LABEL followed by terminal punct on the NEXT line's context (ends clean)
+    // - markdown tables ending with a complete closing pipe
+    // - inline code CLOSED (even backticks)
+    // - a code block CLOSED (even fences) with prose after
+    expect(detectReturnTruncation('- Fixed.\n- Verified.\n- Done.').truncated).toBe(false);
+    expect(detectReturnTruncation('the `code` span closed.').truncated).toBe(false);
+    expect(detectReturnTruncation('| a | b |\n|---|---|\n| 1 | 2 |').truncated).toBe(false);
     expect(detectReturnTruncation('All 12 scenarios passed. The artifact is at .trident/container-test-results.json.').truncated).toBe(false);
     expect(detectReturnTruncation('## VERIFICATION OUTPUTS\n1. bun test — 628 pass\n2. tsc — 0 errors').truncated).toBe(false);
     expect(detectReturnTruncation('The build is complete.').truncated).toBe(false);

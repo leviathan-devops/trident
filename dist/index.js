@@ -288480,26 +288480,35 @@ function toKillReason(reason) {
   }
   return "ORCHESTRATOR_ABORT";
 }
-function detectReturnTruncation(text) {
-  const t = text.trimEnd();
-  if (t.length === 0)
-    return { truncated: false, signals: [] };
+function classifyReturnIntegrity(ev) {
+  let state2 = "IDLE";
+  if (typeof ev.finalText !== "string" || ev.finalText.length === 0 || ev.terminalStatus !== "complete") {
+    return { truncated: false, signals: [], triads: [{ pattern: "none", state: "INTEGRITY_UNKNOWN", evidence: "not a terminal return \u2014 the integrity judgment does not apply" }] };
+  }
+  state2 = "EVIDENCED";
   const signals = [];
-  if (/[,:;-]\s*(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|Writer|CONFIRMED|DEGENERATE)$/i.test(t) || /\b(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|as|at)$/i.test(t.split(/\s+/).slice(-1)[0] ?? "")) {
-    signals.push("dangling-connective");
+  const triads = [];
+  for (const p of RETURN_INTEGRITY_LEXICON) {
+    state2 = "CLASSIFIED";
+    let hit = false;
+    try {
+      hit = p.triggerCondition(ev) && p.matcher(ev);
+    } catch {
+      hit = false;
+    }
+    if (hit) {
+      const tailExcerpt = ev.finalText.trimEnd().slice(-80);
+      const msg = p.messageTemplate.replace("{tailToken}", tailExcerpt.split(/\s+/).slice(-1)[0] ?? "").replace("{fenceCount}", String((ev.finalText.match(/^```/gm) ?? []).length));
+      signals.push(p.id + ": " + msg);
+      triads.push({ pattern: p.id, state: state2, evidence: tailExcerpt });
+    }
   }
-  const fences = (t.match(/^```/gm) ?? []).length;
-  if (fences % 2 === 1)
-    signals.push("unclosed-code-fence");
-  if (/`[^`\n]*$/.test(t) && !/^`/.test(t.split(`
-`).slice(-1)[0] ?? ""))
-    signals.push("unclosed-inline-code");
-  if (/[([{:]$/.test(t))
-    signals.push("trailing-structure-opener");
-  if (!/[.!?:;)"'`\]}>|*_/]$/.test(t) && /[a-z]$/i.test(t) && signals.length === 0 && t.split(/\s+/).slice(-1)[0]?.length === 1) {
-    signals.push("mid-word-cut");
-  }
-  return { truncated: signals.length > 0, signals };
+  state2 = "EMITTED";
+  return { truncated: signals.length > 0, signals, triads };
+}
+function detectReturnTruncation(text) {
+  const verdict = classifyReturnIntegrity({ finalText: text, terminalStatus: "complete" });
+  return { truncated: verdict.truncated, signals: verdict.signals.map((s) => s.split(":")[0]) };
 }
 async function abortSession(client, id2) {
   const scoped = client.session?.abort;
@@ -288937,11 +288946,233 @@ async function scanOrphanedChildren(client, mainSessionId, trackedSessionIds) {
     return [];
   }
 }
+var DANGLING_CONNECTIVE_LEXICON, RETURN_INTEGRITY_LEXICON;
 var init_wave_status = __esm(() => {
   init_utils();
   init_wave_tracker();
   init_wave_reminder_queue();
   init_wave_constants();
+  DANGLING_CONNECTIVE_LEXICON = new Set([
+    "and",
+    "or",
+    "but",
+    "nor",
+    "so",
+    "yet",
+    "for",
+    "if",
+    "when",
+    "while",
+    "because",
+    "since",
+    "although",
+    "though",
+    "unless",
+    "until",
+    "whereas",
+    "after",
+    "before",
+    "once",
+    "than",
+    "that",
+    "of",
+    "to",
+    "in",
+    "on",
+    "by",
+    "at",
+    "for",
+    "with",
+    "from",
+    "into",
+    "onto",
+    "over",
+    "under",
+    "about",
+    "across",
+    "after",
+    "against",
+    "along",
+    "among",
+    "around",
+    "before",
+    "behind",
+    "below",
+    "beneath",
+    "beside",
+    "between",
+    "beyond",
+    "during",
+    "inside",
+    "near",
+    "outside",
+    "through",
+    "toward",
+    "under",
+    "upon",
+    "within",
+    "without",
+    "via",
+    "per",
+    "as",
+    "the",
+    "a",
+    "an",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "what",
+    "where",
+    "how",
+    "why",
+    "whether",
+    "this",
+    "these",
+    "those",
+    "each",
+    "every",
+    "either",
+    "neither",
+    "both",
+    "all",
+    "any",
+    "some",
+    "such",
+    "no",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "been",
+    "being",
+    "has",
+    "have",
+    "had",
+    "will",
+    "would",
+    "shall",
+    "should",
+    "can",
+    "could",
+    "may",
+    "might",
+    "must",
+    "does",
+    "do",
+    "did",
+    "then",
+    "also",
+    "not",
+    "it",
+    "its",
+    "their"
+  ]);
+  RETURN_INTEGRITY_LEXICON = [
+    {
+      id: "L-TRUNC-1",
+      kind: "return-evidence",
+      matcher: (ev) => {
+        const t = ev.finalText.trimEnd();
+        if (t.length === 0)
+          return false;
+        const lastLine = t.split(`
+`).slice(-1)[0] ?? "";
+        const tokens = lastLine.trim().split(/\s+/).filter((w) => w.length > 0);
+        const last = tokens[tokens.length - 1];
+        if (!last)
+          return false;
+        const bare = last.replace(/[,;:]$/, "").toLowerCase();
+        const inLexicon = DANGLING_CONNECTIVE_LEXICON.has(bare);
+        const terminalAfter = /[.!?:;"'`)\]}>*_|]$/.test(last);
+        const fenceCount = (t.match(/^```/gm) ?? []).length;
+        const insideFence = fenceCount % 2 === 1;
+        const lineTrim = lastLine.trim();
+        const bareBulletLeadIn = /^[-*+]\s+\S+$/.test(lineTrim) && !terminalAfter && /^[A-Z]/.test(lineTrim.replace(/^[-*+]\s+/, ""));
+        return inLexicon && !terminalAfter && !insideFence || bareBulletLeadIn && !insideFence;
+      },
+      triggerCondition: (ev) => ev.terminalStatus === "complete",
+      severity: "CRITICAL",
+      messageTemplate: 'the return ends on the connective "{tailToken}" \u2014 the sentence was cut before its continuation',
+      remediationHook: "kick-resume"
+    },
+    {
+      id: "L-TRUNC-2",
+      kind: "return-evidence",
+      matcher: (ev) => {
+        const t = ev.finalText.trimEnd();
+        const fences = (t.match(/^```/gm) ?? []).length;
+        return fences % 2 === 1;
+      },
+      triggerCondition: (ev) => ev.terminalStatus === "complete",
+      severity: "CRITICAL",
+      messageTemplate: "the return ends inside an unclosed code fence ({fenceCount} markers \u2014 odd parity)",
+      remediationHook: "kick-resume"
+    },
+    {
+      id: "L-TRUNC-3",
+      kind: "return-evidence",
+      matcher: (ev) => {
+        const t = ev.finalText.trimEnd();
+        if (t.length === 0)
+          return false;
+        const lastLine = t.split(`
+`).slice(-1)[0] ?? "";
+        const m = lastLine.match(/`+$/);
+        if (m) {
+          const runLen = m[0].length;
+          const beforeRun = lastLine.slice(0, lastLine.length - runLen);
+          if (runLen % 2 === 1 && beforeRun.trim().length > 0)
+            return true;
+        }
+        const ticks = (lastLine.match(/`/g) ?? []).length;
+        if (ticks > 0 && ticks % 2 === 1 && !(m && m[0].length === ticks))
+          return true;
+        return false;
+      },
+      triggerCondition: (ev) => ev.terminalStatus === "complete",
+      severity: "CRITICAL",
+      messageTemplate: "the return ends inside an unclosed inline-code span",
+      remediationHook: "kick-resume"
+    },
+    {
+      id: "L-TRUNC-4",
+      kind: "return-evidence",
+      matcher: (ev) => {
+        const t = ev.finalText.trimEnd();
+        if (t.length === 0)
+          return false;
+        const openerTail = /[([{:]$/.test(t) || /[-*+]\s*$/.test(t);
+        if (!openerTail)
+          return false;
+        const fences = (t.match(/^```/gm) ?? []).length;
+        return fences % 2 === 0;
+      },
+      triggerCondition: (ev) => ev.terminalStatus === "complete",
+      severity: "HIGH",
+      messageTemplate: "the return ends on a structure opener \u2014 the announced structure was never filled",
+      remediationHook: "kick-resume"
+    },
+    {
+      id: "L-TRUNC-5",
+      kind: "return-evidence",
+      matcher: (ev) => {
+        const t = ev.finalText.trimEnd();
+        if (t.length === 0)
+          return false;
+        const lastLine = t.split(`
+`).slice(-1)[0] ?? "";
+        const bareTableRow = lastLine.trimStart().startsWith("|") && /\|[^|]*$/.test(lastLine.trim()) && !lastLine.trim().endsWith("|");
+        const bareListMarker = /^\s*[-*+]\s*$/.test(lastLine);
+        return bareTableRow || bareListMarker;
+      },
+      triggerCondition: (ev) => ev.terminalStatus === "complete",
+      severity: "HIGH",
+      messageTemplate: "the return ends on a bare table row / list marker \u2014 the cell was cut before its content",
+      remediationHook: "kick-resume"
+    }
+  ];
 });
 
 // src/tools/wave-read.ts
