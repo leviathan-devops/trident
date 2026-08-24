@@ -1,9 +1,9 @@
 # TRIDENT v4.4.2 — Code Audit & Build Orchestration Engine
 
 **Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER ASYNC
-**Bundle:** ~16.13 MB (ESM, bun-built — 436 modules)
+**Bundle:** ~18.59 MB (ESM, bun-built — 1,542 modules)
 **Runtime:** opencode 1.14.51+
-**Source:** 222 .ts files
+**Source:** 277 .ts files
 
 > **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
 
@@ -13,133 +13,75 @@ Trident inverts the standard AI coding relationship: most tools write code and c
 
 ---
 
-## The Wave-Manager Async — The Subagent Orchestration System
+## The Wave Manager — The Subagent Orchestration System (v2)
 
-The wave manager is Trident's subagent-dispatch orchestration system: it generates prompt files for parallel agents (the shadow pipeline), returns a batch form whose task calls carry ONLY the prompt file's PATH (`{ description, promptFile, subagent_type }` — the T.E.B. machine's loader injects the byte-exact prompt + `background: true` at the hook, so the prompt NEVER passes through the model's output and the calls return immediately with task_ids), and gives the orchestrator a three-channel control surface — completion/state, in-flight vision, and steering. The orchestrator dispatches the batch as ONE message, captures the task_ids, checks in every 5-10 minutes, and continues its own work — never hostage to a wave.
+The wave manager is Trident's subagent-dispatch orchestration system. The model-facing input surface is exactly ONE FILE: `.trident/wave-spec.json` (validated: name/template/filepaths-must-exist/mission/knownContext/doctrine/measurements/acceptance/taskTargets/position, each at its char floor). `trident-wave-manager action=generate` reads the spec, runs the shadow pipeline (the GO-primary provider chain, below), and **AUTO-DISPATCHES each agent the moment its prompt validates** — no separate dispatch step, no batch form to paste, no prompt file to carry. The result returns real sessionIds immediately; the wave is already live when generation completes.
 
-### The three channel surfaces (the orchestrator's control):
-1. **THE COMPLETION/STATE CHANNEL** — `task_status(taskId)`: wait=false for the live state; wait=true blocks (synchronous-on-demand).
-2. **THE IN-FLIGHT VISION CHANNEL** — `trident-wave-status sessionId`: the session part stream (the tools, the reasoning, the text as they land — the same data the TUI renders); no-arg: the list-all dashboard.
-3. **THE STEERING CHANNEL** — `trident-wave-steer sessionId + prompt`: send ANY prompt into a derailing subagent session; the message queues.
-
-**The flow-safe check-in** — every wave generation returns: *"The wave runs in the BACKGROUND — dispatch the batch form as ONE message; the task calls return immediately with task_ids. CHECK IN every 5-10 minutes — POLL task_status(taskId) + READ the part stream (trident-wave-status sessionId); COLLECT if complete, and STEER a derailing agent (trident-wave-steer) wherever you have free space or deem it relevant. Manage the waves like a senior engineer. Continue with the rest of your tasks after dispatching this wave."*
-
-### The runtime architecture — how the wave-manager-async flow ACTUALLY runs
+### The generate flow + the control plane (how it ACTUALLY runs)
 
 ```
-                  TRIDENT v4.4.2 — THE FULL RUNTIME ARCHITECTURE
-                  (the wave-manager-async flow — how it ACTUALLY runs)
-                  D = deterministic engine  ·  M = model judgment
+              THE WAVE MANAGER v2 — GENERATE + CONTROL
 
-   ┌──────────────────────────┐
-   │ THE ORCHESTRATOR         │ M   the primary agent — the CEO's engineering org
-   │ (the deep-flow agent)    │     the identity + the warheads + the absorbed context
-   └────────────┬─────────────┘
-                │ trident-wave-manager action=generate
-                ▼
-   ┌──────────────────────────┐
-   │ THE WAVE MANAGER         │ D   the shadow pipeline (5-8 min, SYNCHRONOUS —
-   │ prompt files + batch form│     no derail during generation)
-   │ batch: the 3-field shape │     { description, promptFile, subagent_type } ONLY
-   │ (promptFile + the model  │     the T.E.B. loader injects the byte-exact prompt
-   │ passes ONLY the path)    │     + background:true at the HOOK (never the form)
-   └────────────┬─────────────┘
-                │ returns the batch form + the flow-safe check-in
-                ▼
-   ┌──────────────────────────┐
-   │ DISPATCH (ONE message)   │ D   ALL the task calls together — the [WAVE BATCH] gate
-   └────────────┬─────────────┘
-                │ the task calls return IMMEDIATELY with task_ids
-                ▼
-   ┌──────────────────────────┐
-   │ CAPTURE THE TASK_IDS     │ D   the polling handles + the tracker's taskIds
-   └────────────┬─────────────┘
-                ▼
-   ┌──────────────────────────┐      ┌──────────────────────────┐
-   │ THE AGENTS RUN IN THE    │      │ THE SESSION DB            │
-   │ BACKGROUND               │─────▶│ (opencode.db)             │
-   │ (trident_explore/build)  │      │ the part stream — the     │
-   └────────────┬─────────────┘      │ mechanical ground truth   │
-                │                    └────────────┬─────────────┘
-                │                                │
-                ▼                                ▼
-   ┌──────────────────────────┐      ┌──────────────────────────┐
-   │ THE CRON (10m tick)      │      │ THE ORCHESTRATOR          │
-   │ isBackgroundTerminal     │      │ checks in every 5-10 min: │
-   │ the completion feed      │      │ POLL task_status + READ   │
-   │ the INVESTIGATE directive│      │ the part stream · COLLECT │
-   └────────────┬─────────────┘      │ · STEER where you have   │
-                │                    │ free space · continue     │
-                │                    └──────────────────────────┘
-                ▼
-   ┌──────────────────────────┐
-   │ COMPLETE → COLLECT       │ M   the completion directive — the results are
-   │ (the handoff)            │     your raw material: audit, apply, advance
-   └──────────────────────────┘
+  .trident/wave-spec.json (THE ONLY INPUT)  +  .trident/wave-plan.md (WAVES: N budget)
+        │
+        ▼
+  action=generate ── validate floors/template-intent/paths ──► SHADOW PIPELINE
+        │              (per agent, bounded concurrency 15, 3-17ms stagger)
+        │                     GO-primary chain: opencode-go/mimo-v2.5 (PAID)
+        │                     └─ only-if-dead → zen×5 cycler → nvidia → openrouter → inferx
+        ▼
+  AUTO-DISPATCH per completed prompt (extra.taskDispatch — real sessionIds,
+  correct subagent_type E/B) ──► THE WAVE IS LIVE
+        │
+        ▼
+  generationTelemetry: { status:'generated', agentStatus:'dispatched' }
+  (generation timings ONLY — the agent RUN state lives in the session stream)
 ```
 
-### The unique mechanics — THIS version's fresh machinery
+**THE CONTROL PLANE (one tool, every action):**
+
+| Action | Call | Semantics |
+|---|---|---|
+| STEER | `action=steer sessionId prompt mode=soft\|hard` | **MODE IS MANDATORY (steer-only — a mode on any other action is a BLOCKED call).** soft = the message queues behind the current tool call; hard = the in-flight generation is interrupted first (the double-esc equivalent), then the message delivers. Delivered AS the session's own agent (derived from its title — the agent-flip class is dead). |
+| PAUSE | `action=pause sessionId` or `waveId` | The PURE INTERRUPT — `session.abort`, NO chat message. |
+| KILL | `action=kill sessionId` / `agent+waveId` / `kill-wave waveId` | Destructive. Session-scoped needs no waveId; kill-wave aborts all + archives. |
+| RESUME | `action=resume taskIds=[...]` or `waveId` (no taskIds = ALL) | Delivers "continue" as the session's own agent. Each delivered resume flips the tracker row killed→running AND un-archives the wave row. |
+| READ | `trident-wave-read sessionId` or `action=status sessionId` | The session part stream — the ONLY liveness truth. `task_status` is BANNED (the background-job registry can report 'cancelled' for a live session). |
+
+**THE TRACKER STATE SYNC:** kill → row killed; resume → row running + un-archive; the tracker DB can never hold a killed-row-over-live-session or a running-row-over-dead-session. Test runs are auto-isolated (BUN_TEST detection + env-gated disk wipe — the battery can never touch production tracker state).
+
+### The provider chain (the GO-primary architecture)
 
 ```
-        THE WAVE-MANAGER-ASYNC UNIQUE MECHANICS
-   (background-first dispatch · the flow-safe check-in · the three channels)
-
-   ┌──────────────────────────┐
-   │ DISPATCH (background:true)│
-   │ ONE message · ALL calls  │────────┐
-   └────────────┬─────────────┘        │ returns IMMEDIATELY with task_ids
-                │                      ▼
-                │              ┌──────────────────────────┐
-                │              │ THE ORCHESTRATOR CONTINUES│  never hostage to a wave
-                │              │ generating the next wave,│  the wave is managed,
-                │              │ reading, auditing, writing│  never awaited
-                │              └──────────────────────────┘
-                ▼
-   ┌──────────────────────────┐
-   │ THE FLOW-SAFE CHECK-IN   │  "CHECK IN every 5-10 minutes — POLL task_status +
-   │ every 5-10 min, at a     │   READ the part stream; COLLECT if complete, and
-   │ natural pause            │   STEER wherever you have free space or deem it
-   └────────────┬─────────────┘   relevant. Manage the waves like a senior engineer.
-                │                 Continue with the rest of your tasks."
-                ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │ THE THREE CHANNEL SURFACES                                │
-   │                                                            │
-   │ 1. task_status(taskId)      the completion/state channel   │
-   │    wait=false live · wait=true block (synchronous-on-demand)│
-   │ 2. trident-wave-status      the in-flight vision channel    │
-   │    sessionId → the part stream (tools/reasoning/text)     │
-   │    no-arg → the list-all dashboard                        │
-   │ 3. trident-wave-steer       the steering channel            │
-   │    sessionId + prompt → the message queues                │
-   └──────────────────────────────────────────────────────────┘
+ 1. opencode-go/mimo-v2.5        THE PAID PRIMARY — unlimited, reasoning medium
+ 2. opencode/zen nemotron-free   the 5-key cycler (ZEN_KEYS rotation on 429)
+ 3. nvidia nemotron              40 RPM fallback
+ 4. openrouter nemotron:free     20 RPM fallback
+ 5. inferx Qwen3.6-35B           the last resort
 ```
 
-### The wire-in (the 11 files)
+Per rung: 5 retries × 2.5s backoff on 429, the RPM-ledger admission gate (per-provider token buckets + a 45s shared TTL exile — one agent's observed 429 exiles the rung for the whole wave, never a permanent breaker), the event-aware 60s stall guard (fires on NO events — a live stream is never killed), and the degenerate-done verifier (a terminal event without content routes to the next rung).
 
-| File | The change |
-|---|---|
-| `src/security/tool-allowlist.ts` | `task_status` admitted — the runtime's native polling tool, no longer firewall-blocked |
-| `src/tools/wave-constants.ts` | the batch contract gains `background?: boolean`; the stuck directive reworded to INVESTIGATE |
-| `src/tools/wave-dispatch.ts` | the batch form ALWAYS emits `background: true`; `executeWaveSteer`; the flow-safe check-in |
-| `src/tools/wave-tracker.ts` | `taskIds` + `registerTaskIds` (the dispatching→running transition) |
-| `src/tools/wave-status.ts` | `readSessionStream` — the FULL-SCROLL stream reader + the list-all dashboard + the raw-session swap |
-| `src/tools/wave-cron.ts` | `isBackgroundTerminal` + the completion feed + the DB part-stream evidence |
-| `src/tools/wave-steer-tool.ts` | NEW — the `trident-wave-steer` tool factory |
-| `src/tools/trident-tools.ts` | the `trident-wave-steer` registration |
-| `src/tools/shadow/shadow-brain.ts` | the 600s timeout (was 180s — the healthy-stream-killer) + the retry + the two-transport fallback |
-| `src/tools/shadow/shadow-secrets.ts` | the fallback resolvers + the base64'd official-API key (AP-4) |
-| `src/tools/shadow/shadow-runner.ts` | the PI-round retry (the transient timeout class) |
+**THE GO/ZEN ENV SPLIT (the load-bearing invariant):** the vendored `opencode-go` provider reads `OPENCODE_GO_API_KEY` — its OWN env slot, never the zen slot. Two providers on one account = the same key VALUE in TWO DISTINCT env vars. A provider reading another provider's slot gets stomped mid-flight by the cycler's rotation. One env var per provider, always.
 
-### The provider doctrine
+### The subagent pins
 
-- **The opencode-go provider is the ONLY path in practice** — DeepSeek V4 Flash, frozen (`SHADOW_MODEL = 'deepseek-v4-flash'`).
-- **The official-API fallback is a failsafe** — wired + verified ONCE (HTTP 200, model deepseek-v4-flash), then forgotten.
-- **deepseek-v4-pro is BANNED** — zero references in the codebase.
+- **trident_explore** → `opencode-go/muse-spark-1.2-contributor`, reasoning effort HIGH, maxTokens 131072.
+- **trident_build** → `opencode-go/muse-spark-1.2-contributor`, reasoning effort XHIGH.
 
-### The identity — WARHEADS 1-21
+### The orchestration loop (the CTO model)
 
-The identity carries 21 warheads (disk + inline + bundle): 1-15 the pre-existing laws, 16 THE WAVE-DISPATCH EXECUTION LAW (updated for the background reality), 17 THE HOST-PIPELINE TWO-ROLE TESTING LAW, 18 THE BASIC-FUCKING-LOGIC LAW, **19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW** (the flow-state warhead), **20 — THE ASCII-EXPLANATION LAW** (explanation requests open with the box-drawing diagram), and **21 — THE MEMORY-EFFICIENT-DATA-RETRIEVAL LAW** (stat before any python read, the streaming tools for >100MB, `for line in open()` as the only safe in-memory read — the RAM-bomb prevention).
+YOU ARE THE CTO; EACH WAVE IS A DEPARTMENT. Dispatch (auto — the wave is live at generation completion) → run the company between polls (independent todolist work, OTHER waves on non-conflicting project parts — multiple departments parallel, user side-tasks; when no tangible work: MICROMANAGE the streams) → decide per stream-state: `stream` = working, leave it; `idle` mid-task = KICK (`action=resume taskIds`); `complete` = harvest + audit; off-course = STEER (hard mid-generation, soft between tools); frozen past ETA = investigate before any kill. Sequence only DEPENDENT waves — independent waves never wait on each other. A dispatched wave you are not monitoring is an abandoned wave.
+
+**THE WAVE AUDIT (the red-team gate):** every returned wave is a CLAIM — the stream must read `complete` (a return whose stream never completed is not a return); the phantom-completion SHA check (completed + zero disk change = kicked back); the per-hunk WHAT/WHY/HOW with the verdict vocabulary (CORRECT / FLAWED / FITTED-TO-GOLDEN / DOWNSTREAM-FABRICATION / ARCHITECTURE-VIOLATION / SCOPE-CREEP); the mechanical re-verify (the agent's exit codes are claims; YOUR runs are evidence); the adversarial sweep with the two-sided adjudication (probe-error vs real defect — only confirmed Side-B defects are findings; zero open CRITICAL/HIGH is the ship bar).
+
+### The multi-session scope law
+
+The sidecars (`wave-spec.json` / `wave-plan.md` / `wave-planning-state.json`) live in THE PROJECT's `.trident` — auto-scoped to the session's codebase root (resolved from the session's real file activity — bash `workdir` anchors + read/grep filepaths — then PINNED for the session's lifetime; later log-grep noise can never flush the resolution), with `projectToken` as the explicit override. Concurrent sessions on different codebases never collide; same-codebase sessions correctly share.
+
+### The identity — WARHEADS 1-23 (two [CRITICAL])
+
+The identity carries 23 warheads (disk + inline + bundle): **16 — [CRITICAL] THE WAVE-MANAGER EXECUTION LAW** (the 7-section law: the generate flow, the telemetry hallucination guard, the session-stream truth, the control-plane table, the orchestration loop, the scope law, the wave audit) and **22 — THE RED-TEAM-BY-DEFAULT LAW** (every claim a suspect; multiple independent evidence forms; batteries are regression guards; verify the mechanism never the switch; hunt the mock-split; re-run everything yourself; design every test to break the thing; state the presumption), plus **19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE LAW**, **20 — THE ASCII-EXPLANATION LAW**, **21 — THE MEMORY-EFFICIENT-DATA-RETRIEVAL LAW**.
 
 ### The knowledge layer — LLM_FLOW_STATE_ENGINEERING.md
 
@@ -147,134 +89,50 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 
 ### The verification record
 
-- `tsc --noEmit` (strict): 0 errors · the bundle: 437 modules, 16.26 MB — injection-free, pro-free, the Omni-Vision v5.1.4 engine vendored.
-- The container suites (OpenCode 1.14.51): the 7/7 forward iteration (the T.E.B. happy path + the memory gate + the promptFile firewall + the wave-mandate + the dispatch memory screen + the deferred wipe + the measured window), the #25 S2-S4 (the partial-dispatch reconcile + the derive-from-manifest + the re-fire protection — with the two container-caught bugs fixed: the custom-waveId discriminator + the recorded-status adopted-set), the omni-vision S2-S4 (the tool registered + the direct mode + the validator gate + the full api vision path through the SSE transport + the memory write), and the 8-scenario red-team (the full firewall stack live).
-- The direct 0-trust red team (the deployed merged runtime): the wave-mandate + the promptFile firewall blocks (the T.E.B. input classifier + the "input is a filepath and nothing else" bullet), the byte-exact T.E.B. injection (the runtime sqlite sha proof), the 434s generation (the measured window), the memory gate, the engine-log gating, and the omni-vision narrative-coherence test on the DXY Gold Standard image set (the operator's confirmation: "this omni vision tool is properly working").
-- The battery: 469/469 (29 files) · the dist: baaf7769 — the ship-approved build.
+- `tsc --noEmit` (strict): 0 errors on all touched files · the battery: **628 pass / 0 fail / 2,504 expect (39 files)** · the bundle: 1,542 modules, 18.59 MB.
+- The GO-primary live proof: the paid rung served **15/15 LLM calls, zero fallbacks touched** (the 2-agent tool-call run, 104s wall; ledger `successCount120s:15`, every other provider 0); the 3-agent wave 114/132/188s per-agent, 3/3 auto-dispatched.
+- The control plane, live-proven against real spawned agents (explore + build): steer soft/hard delivered as the session's OWN agent (both steer acknowledgments visible verbatim in the part stream), pause = pure interrupt (no chat message), kill ×3 forms, resume-all with the tracker row flipping killed→running in the persisted sqlite, the stream read showing the full interleaved history.
+- The telemetry-hallucination fix proven by rename: `generationTelemetry` carries `agentStatus:'dispatched'` — generation timings can no longer masquerade as run completion.
 
 ### The documentation
 
 | Doc | Contents |
 |---|---|
-| `BUILD_REPORT_V6.md` | the complete build record — the T.E.B. machine, the shadow-brain 3-fix, the WARHEAD 20/21, the firewall disables, the RAM-bomb prevention, the #25 firewall-intelligence, the Omni-Vision v5.1.4 merge, the ship-approval |
-| `DEBUG_LOG_V6.md` | the full incident record — M1-M22 (every bug class + the fix + the lesson) |
+| `DEBUG_LOG.md` | the consolidated incident record — EN 1-179 (every bug class + the fix + the lesson, append-only) |
+| `BUILD_REPORT.md` | the build record |
 | `LLM_FLOW_STATE_ENGINEERING.md` | the flow-state engineering bible |
-| `docs/history/` | the historical versioned docs (BUILD_REPORT_V3-V6, DEBUG_LOG_V3-V5 — the 4.4.2 iteration's legacy record) |
-| `context_management/` | the canon docs (all bumped to the ship-approved state) |
-| `KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md` | the T.E.B. machine bible (the 5-part anatomy + the 6 machines + the replication recipes) |
+| `docs/history/` | the historical versioned docs |
+| `context_management/` | the canon docs (CURRENT_STATE at the v2 ship state) |
+| `KNOWLEDGE_LIBRARY/agent_plugin_boilerplates/shadow_agent_backend/` | the plug-and-play boilerplate (the same architecture, zero embedded secrets — the env contract) |
 
 ### The deployment
 
-- **The dist:** `dist/index.js` — SHA `baaf776978b49506187016ff0adcca4ff956d5644ee76fbd67c47924bb5df432` (the ship-approved build — the Omni-Vision v5.1.4 merge + the SSE transport re-wire).
-- **Deploy:** through the sanctioned deploy channel — never direct config writes.
+- **The dist:** `dist/index.js` — SHA `9cbd86478ad06d66e61848235aecc517d260ddaa0a0e4b6f0242bc0dfa524c72`.
+- Deploy: atomic copy (tmp + mv) + an opencode restart (never the hot-reload watcher). The host environment owns the provider keys (the env contract above).
 
 ---
 
----
+## The Shadow Pipeline — The Prompt-Generation Engine
 
-## The Wave Manager Internals — The Shadow Pipeline, The Firewalls, The Batch
+When the orchestrator calls `trident-wave-manager action=generate`, the shadow pipeline produces each agent's prompt through the 13-stage machine (`src/tools/shadow/shadow-runner.ts` — the ONE-PLACE composition): the tether → the sidecar → the memory → the reattach gate → the validation (the CTX floors) → buildContext (the session stream + the memory chain + the inference) → buildBrief (the 84-slot weave + THE SUPREMACY CONTRACT + the [SHADOW INFERENCE] section) → **the pi execution loop** (the real pi-SDK `Agent` with read + batch-edit tools, 2 mandatory rounds, the validated-break — the model's TEXT never lands in the file; the edit tool is the ONLY write path) → silentVerify (the markers / structure / floors / the ≥100c inference tail) → appendPrompt → the manifest → the copy-paste hook.
 
-The modern Trident core is a **prompt-generation engine** (the shadow pipeline) feeding a **subagent-orchestration system** (the wave manager). This is the machinery behind every wave — what actually happens when the orchestrator generates a wave.
+The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, the reading order, the known context, the doctrine quotes, the measurements table, the per-task expansions, the verification commands, the return format — woven from the spec's context args, then mechanically verified before it reaches dispatch.
 
-### The Shadow Pipeline (the prompt-generation engine)
+**The ShadowAgent harness** (`src/tools/shadow/shadow-agent.ts`): the pi SDK verbatim — `createModels()` + the native providers, `NodeExecutionEnv`, the native read/edit tools force-path-bound to the prompt file (cross-file writes mechanically impossible), `thinkingLevel: medium`, and `chainedStream` — the per-call retry+fallback wrapper around `models.streamSimple` that walks the 5-rung chain with the ledger admission, the stall guard, and the per-rung visibility logging (`[chain] try/OK/FAIL` per attempt — a slow generation is SEEN, never a mystery).
 
-When the orchestrator calls `trident-wave-manager action=generate`, the shadow pipeline produces the agent's prompt file through a 13-stage machine (`src/tools/shadow/shadow-runner.ts` — the ONE-PLACE composition):
+### The wave state machinery
 
-```
-THE SHADOW PIPELINE — 13 STAGES (the prompt is WOVEN, never written by hand)
-
- 1. THE TETHER        the sessionKey / projectId / parentSessionId / pid
- 2. THE SIDECAR       register → touch → handleSessionSwitch
- 3. THE MEMORY        shadow-memory.open({project}, {sessionKey})
- 4. THE REATTACH GATE 3 checks — FAIL = the ERROR string, never a log line
- 5. VALIDATE          the CTX_FLOORS + the path existence (the shared validators)
- 6. BUILDCONTEXT      the session stream + the memory chain + the inference (Stage 4)
- 7. BUILDBRIEF        the 84-slot weave + THE SUPREMACY CONTRACT
-                      + the [SHADOW INFERENCE] section (Stage 3)
- 8. THE PI EXECUTION LOOP  (Stage 5 — the agentic loop):
-      prompt → stream (DeepSeek V4 Flash max) → the SCOPED TOOL-CALLS
-      (read_file / grep / stat on the filepaths — the read-before-write,
-      MECHANICALLY) → the results fed back → continue until the acceptance /
-      the target / the rounds cap (6) — the best content ALWAYS written
-      (the partial-save). The round-1 retry on the transient timeout class.
- 9. SILENTVERIFY      the markers / structure / verbatim-doctrine / freshness /
-                      [SHADOW INFERENCE]-presence; the repair on the unmet floors
-10. APPENDPROMPT      the sqlite row + the JSON mirror
-11. SYNCPROMPT        SKIP unless a remote exists
-12. THE MANIFEST      the STRING return — the per-agent { name, path, lines,
-                      sha256, validated, ready, subagentType, error?, notes? }
-13. THE COPY-PASTE    the tool.after hook delivers the per-agent prompt files
-```
-
-The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, the reading order, the known context (the measured state), the doctrine quotes, the measurements table, the per-task expansions, the verification commands, the return format — woven from the orchestrator's context args + the shadow brain's inference, then mechanically verified (the markers, the structure, the floors) before it reaches the wave manager.
-
-### The Shadow Brain (the transport)
-
-`src/tools/shadow/shadow-brain.ts` is the LLM transport behind the pipeline:
-
-- **The model is FROZEN:** DeepSeek V4 Flash ONLY (`SHADOW_MODEL = 'deepseek-v4-flash'`), `reasoning_options.effort = 'max'` — no other model, no fallback model (D-SH-2). NO model/provider switching ever (the operator's ruling).
-- **The streaming transport:** SSE (`stream: true`) — the first chunk lands in ~1s, the total body streams at ~30KB/s.
-- **THE MEASURED STALL WINDOW (the F1 fix — 2026-08-14):** the old fixed 45s window was a knife-edge (the provider's 35-50s first-event latency on the large 384K generations killed healthy streams — the SHADOW_BRAIN_TIMEOUT class). The window is now `avg × 3` of the rolling first-event latency, bounded `[45s, 5m]` (the shadow-health sqlite store records every call) — a dead provider still fails in 45s (the floor), a slow-but-alive one gets the measured margin. THE 900s total safety net (`SHADOW_TIMEOUT_MS`).
-- **THE BACKOFF RETRY (the F2 fix):** a round-1 timeout/500 retries ONCE at 2× the measured window after a 3s gap — slow, not dead; NO provider/model switching.
-- **THE DENSITY MEMORY (the F3 fix):** the wave-tracker persists the per-agent context-arg totals; a re-generation at <0.7 the prior density appends the DENSITY WARNING (reuse the original args verbatim).
-
-### The Wave Manager (the orchestrator's generation + dispatch)
-
-`src/tools/wave-dispatch.ts` is the **generator-only** dispatch path — it NEVER spawns:
-
-```
-THE WAVE MANAGER — the generate flow
-
- the agents[] spec → normalizeAgents → validateAgentSpec (the CTX floors)
- → the SHADOW PIPELINE per agent (bounded concurrency 3) → the prompt files
-  → the wave manifest (the per-agent SHA-256 — the [WAVE VERBATIM] anchor)
-  → the per-agent manifest records (the [WAVE BATCH] passing shape)
-  → the atomic wave registry (the batch gate's window + the derive-from-manifest)
-  → the tracker (registerWave — the agent states)
-  → THE BATCH FORM: { tool: 'batch', parameters: { tools: [ { tool: 'task',
-    parameters: { description, promptFile, subagent_type } } ] } }  ← the 3-field
-    T.E.B. shape — NO prompt, NO background (the loader injects both at the hook)
-  → the flow-safe check-in
-```
-
-### The Firewalls (the 2026-08-15 intelligence overhaul)
-
-- **[WAVE MANDATE]** — the ONLY dispatch path is the wave manager: a task dispatch NOT matching a generated wave agent is BLOCKED with the generate directive.
-- **[WAVE VERBATIM]** — the PROMPTFILE FIREWALL: a wave-agent dispatch WITHOUT the promptFile is BLOCKED — the T.E.B. loader's `tebHadPromptFile` flag is the mechanical fact the prompt file was passed; an inline prompt is the GLM-compression derailment class, structurally impossible.
-- **THE T.E.B. INPUT CLASSIFIER** — the path-vs-prompt lexicon (the workspace-root anchor in the first 3 branches + the token-shape): a single workspace-anchored path token = the promptFile (ALLOW); a bunch of tokens = a written prompt (BLOCK with "input is a filepath and nothing else. Do NOT write the prompt text.").
-- **THE DISPATCH MEMORY SCREEN** — the dispatched prompt's command lines are screened (the SAME memory lexicon): the OUTPUT_BOMB (a recursive grep on a built artifact) + the BUNDLE_EXEC (executing a dist/bundle) BLOCK the dispatch with the bounded rewrite — the RAM-bomb class never reaches a subagent.
-- **[WAVE BATCH]** — the atomic registry's call-count window: a single dispatch of a multi-agent wave is BLOCKED; the PARTIAL-DISPATCH RECONCILE adopts the running agents + names the missing (never the blind regenerate); the missing-registry wave DERIVES from the manifest; the custom-waveId shapes resolve (the content-aware wave-level discriminator).
-- **The T.E.B. loader** — the promptFile channel: the task call carries ONLY `promptFile` (inside the trident-tmp folder); the loader injects the file's byte-exact content + `background: true` + strips promptFile BEFORE the runtime executes — the orchestrator's hands NEVER touch the prompt text, and the GLM compression is structurally impossible.
-
-### The T.E.B. Machine + the 2026-08-15 additions (the intelligence layer)
-
-- **THE T.E.B. MACHINE (the promptFile-only dispatch):** the batch form emits ONLY `{ description, promptFile, subagent_type }` — the loader hook (trident-hooks.ts) intercepts the task call, reads the promptFile, mutates `promptFile → prompt` byte-exact + `background: true` + strips promptFile BEFORE the runtime executes. **The prompt NEVER passes through the model's output** — the GLM compression derailment is structurally impossible (verified: the subagent's received prompt sha == the prompt file's sha at the runtime sqlite).
-- **THE DEFERRED T.E.A. WIPE:** the prompt files + the manifests survive until the wave's FULL dispatch (calls.length == total && all accepted) — the retry/re-dispatch path intact.
-- **THE MEMORY-READ LEXICON (the RAM-bomb gate):** the typed PatternFamily + the classifyMemoryRead state machine on the bash tool.before — the RAM_BOMB (`.readlines()`/`.read()` on an unsized file — the 7.9GB → 14.6GB RSS incident), the OUTPUT_BOMB (a recursive grep on a built artifact), and the BUNDLE_EXEC (executing a dist/bundle) BLOCKED with the named streaming remedy; the SIZED_READ / LAZY_ITERATE / STREAM_TOOLS / NON_READ allowed. The gate discriminates, never misfires on the safe reads.
-- **THE #25 FIREWALL-BACKEND INTELLIGENCE:** the simple remedy bullets (every block says WHAT WENT WRONG + WHAT TO DO in plain words — "input is a filepath and nothing else"), the partial-dispatch reconcile (adopt-the-running + dispatch-the-missing with the copy-pasteable paths), the derive-from-manifest (the stale wave's registry derived from the manifest — the 15-block dead-end dead), the custom-waveId discriminator (the alias waveIds resolve — the container-caught bypass fixed).
-- **THE OMNI-VISION V5.1.4 MERGE:** the vendored engine (src/tools/omni-vision-v5/ — the 18-file self-contained project) with the TRIDENT'S SSE TRANSPORT RE-WIRE (the forked non-streaming fetch's 35-50s buffered first-byte → the trident's opencodeShadowStreamFn ~1.0s first-byte + the measured window). The tool: the dual-mode media processing (direct + api), the silent-backend pipeline (the context manager + the SQLite/TDB memory + the silent verify + the quality gate + the ledger), the validator floors (the api-mode context args 500+/200+/3+), the chain hook (the batch-read directive injection). Container-verified (the direct mode, the validator gate, the full api vision path through the SSE + the memory write) + the host narrative-coherence test on the DXY Gold Standard set (the operator's confirmation).
-- **THE ENGINE-LOG GATING + THE GATE-1 FIXES:** the tridentLog DEBUG-level writes gated behind TRIDENT_DEBUG=1 + the ~10MB rotation (the 81MB engine log bounded); the CTX-02 stat read-verb; the sqlite3 NON_READ exclusion (the unguarded-open frame tightened to the function-call form).
-- **THE WARHEADS 20/21:** the ASCII-EXPLANATION LAW (explanation requests open with the box-drawing diagram) + the MEMORY-EFFICIENT-DATA-RETRIEVAL LAW (the RAM-bomb prevention's behavioral law).
-- **THE T.E.B. BIBLE:** KNOWLEDGE_LIBRARY/Bibles/TEB_MACHINES_FOR_BEHAVIOR_ENGINEERING_T1.md — the 5-part anatomy (the interceptor / the lexicon / the state machine / the enforcer / the remediation) + the 6-machine inventory + the replication recipes for ANY build.
-
-### The Batch Process
-
-The **message is the unit of execution**: ALL the wave's task calls go out as the parts of ONE message, and the runtime's tool loop executes them in one concurrent pass. The batch form's `tools` array maps 1:1 to the message's tool parts. NEVER one task call at a time, NEVER hand-picking a subset — the batch is the message.
-
-### The Full Flow (how it all fits)
-
-```
-the orchestrator → trident-wave-manager (generate)
-  → the SHADOW PIPELINE weaves the DPL1 prompt (13 stages, 5-8 min, synchronous)
-  → the wave manager returns the BATCH FORM (background:true) + the flow-safe check-in
-  → the orchestrator DISPATCHES the batch as ONE message
-  → the task calls return IMMEDIATELY with task_ids (the background dispatch)
-  → the orchestrator CAPTURES the task_ids + CONTINUES its own work
-  → the agents run in the background, streaming their work to the session DB
-  → check-ins: task_status (the state) + trident-wave-status sessionId (the part stream)
-  → the cron's isBackgroundTerminal marks completion → the wave auto-completes
-  → the COLLECT directive: audit the results, apply to the build, advance
-```
+| File | Role |
+|---|---|
+| `src/tools/wave-dispatch.ts` | THE manager — the spec-file generate flow, the auto-dispatch, the control plane (steer/pause/kill/resume), the session-sticky scope resolver |
+| `src/tools/wave-tracker.ts` | the sqlite-backed wave state (kill/resume state sync, the archive, findWaveBySession, the BUN_TEST auto-isolation) |
+| `src/tools/wave-status.ts` | the session-stream reader + the kill/kill-wave abort paths (`client.session.abort` — the SDK's real surface) |
+| `src/tools/wave-read.ts` | `trident-wave-read` — the dedicated liveness instrument |
+| `src/tools/wave-spec.ts` | the spec-file validation (floors, count contract, template-intent) + the template reset |
+| `src/tools/wave-cron.ts` | the watchdog — the terminal guard + the read-and-kick (exactly-once steer, the escalation window) |
+| `src/tools/wave-planning-gate.ts` | the count-based plan budget (WAVES: N — pure check, zero consumption on refusal) |
+| `src/tools/template-intent.ts` | the template/spec mismatch filter (the ISE canon: PatternFamily + state machine + evidence triads) |
+| `src/tools/shadow/*` | the pipeline: shadow-runner (13 stages), shadow-agent (the pi harness + chainedStream), rpm-ledger, shadow-memory, shadow-sidecar, shadow-brief-builder, shadow-slot-injector, shadow-context-manager, shadow-degeneracy |
 
 ---
 
@@ -286,7 +144,7 @@ the orchestrator → trident-wave-manager (generate)
 - **Recursive→Iterative Conversions** — `auto-discover.ts` and `code-classifier.ts` converted from recursion to queue-based traversal. Stack overflows eliminated on 157+ file codebases.
 - **Fail-Closed Semantics** — VERIFY gate, CONTAINER_TEST, and Poseidon gates all default to `false`. No more rubber-stamped approvals.
 - **Version Purge** — Zero references to v4.3.3 remain. Zero "Trident Brain" references. Agent identity is simply "Trident Agent."
-- **trident-vision Purge** — Removed from all functional code. The tool suite is now **18 tools** (the wave-manager async family + the infrastructure tools added to the 8-tool base).
+- **trident-vision Purge** — Removed from all functional code. The tool suite is now **16 tools** (the wave-manager family folded to ONE control tool + wave-read + probe, alongside the mode + infrastructure tools).
 - **Build System: esbuild → bun** — 436 modules (bun tree-shakes more aggressively). Both `package.json` files use `bun build`.
 - **Poseidon God Loop (AUDIT → PLAN → BUILD → VERIFY):** 11-phase closed-loop quality enforcement — Trident audits, generates remediation plans, dispatches Trident_Build, re-audits, and loops until 96%+ runtime grade, then runs container validation
 - **Semantic activation system:** PoseidonDetector uses regex first-pass + signal-word scoring second-pass. No single-string activation. The agent CANNOT activate Poseidon Mode — only the user can
@@ -305,8 +163,8 @@ the orchestrator → trident-wave-manager (generate)
 - **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
 - **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
 - **Read Efficiency Enforcement (.md files):** The `tool.execute.before` hook mechanically forces `limit=1500` when reading `.md` files with `limit < 1000`. Code files (`.ts`, `.js`) are exempt — targeted reads for surgical edits remain allowed. Prevents the #1 waste of turns: reading documentation in 200-line chunks.
-- **The T.E.B. Machine:** the promptFile-only dispatch — `{ description, promptFile, subagent_type }` ONLY; the loader injects the prompt byte-exact + `background: true` at the hook; the prompt NEVER passes through the model's output (the GLM compression derailment structurally impossible). The deferred T.E.A. wipe preserves the prompt files until the full-wave dispatch.
-- **The Firewall-Backend Intelligence (#25):** the wave-mandate (the wave manager is the ONLY dispatch path), the promptFile firewall (the inline-pass blocked), the T.E.B. input classifier (the path-vs-prompt lexicon), the dispatch memory screen (the RAM-bomb commands blocked before any subagent), the partial-dispatch reconcile (adopt-the-running + dispatch-the-missing), the derive-from-manifest (the stale-wave dead-end dead).
+- **The Auto-Dispatch Wave Manager:** the spec file is the ONLY input; generation AUTO-DISPATCHES each agent the moment its prompt validates (real sessionIds, correct subagent type); the GO-primary provider chain (paid mimo-v2.5 rung 1, ledger-gated fallbacks); the full control plane (steer soft/hard STEER-ONLY, pure-interrupt pause, kill ×3, resume-all + the tracker state sync).
+- **The Dispatch Firewalls:** the wave-mandate (the wave manager is the ONLY dispatch path), the dispatch memory screen (the RAM-bomb command classes blocked before any subagent), the template-intent mismatch filter (a research spec on a code-extract template refused BEFORE generation), the spec-file floors (the thin-args compiler-style diagnostics).
 - **The Memory-Read Lexicon:** the typed PatternFamily + the state machine on the bash tool.before — the RAM_BOMB / OUTPUT_BOMB / BUNDLE_EXEC classes blocked with the named streaming remedy; the safe reads (the sized / the lazy iteration / the streaming tools) allowed. The RAM-bomb prevention (the 7.9GB → 14.6GB RSS incident class).
 - **The Omni-Vision v5.1.4:** the vendored engine + the trident's SSE transport re-wire (the ~1.0s first-byte vs the 35-50s non-streaming buffering) — the dual-mode media processing + the silent-backend pipeline (the context manager + the memory + the silent verify) + the validator floors. Container + host verified.
 - **The Engine-Log Gating:** the tridentLog DEBUG writes gated behind TRIDENT_DEBUG=1 + the ~10MB rotation — the 81MB engine log bounded.
@@ -401,7 +259,7 @@ the orchestrator → trident-wave-manager (generate)
 
 ---
 
-## Tools (18)
+## Tools (16)
 
 ### Mode Tools (5):
 
@@ -413,14 +271,13 @@ the orchestrator → trident-wave-manager (generate)
 | `trident-context-synthesis` | 4-layer synthesis (collect→score→compress→inject); `outputMode=T2` → the dense bible-style knowledge file written to disk, `T1` → the lightweight injectable; 5+ keyFacts + the structured fields at 1000+ chars each | T1_INJECTABLE / T2_KNOWLEDGE |
 | **`trident-poseidon`** | **God Loop orchestrator — quality-enforced build execution with auto-lock** | **BUILD REPORT** |
 
-### The Wave-Manager Async Tools (4 — the v4.4.2 async wire-in):
+### The Wave-Manager Tools (3 — the v2 one-tool control plane):
 
 | Tool | Description |
 |------|-------------|
-| `trident-wave-manager` | THE ONLY subagent dispatch path — the wave GENERATOR: the shadow pipeline → the prompt files → the BATCH FORM (every task carries `background: true`) → the flow-safe check-in. The orchestrator dispatches the returned batch as ONE message |
-| `trident-wave-status` | THE WATCH INSTRUMENT — the in-flight vision: `sessionId` reads the session part stream (the full-scroll reader — totalParts/parts/lastTools/beforeId), no-arg lists ALL active waves, `kill`/`kill-wave` the per-agent abort |
-| `trident-wave-steer` | THE STEERING SURFACE — send ANY prompt into an existing subagent session; the message QUEUES, processed after the agent's current tool call (the interrupt mode conditional on a runtime cancel) |
-| `trident-wave-probe` | The Phase-0 probes (P1/P2/P3 — the load-bearing design verifications) |
+| `trident-wave-manager` | THE ONLY subagent dispatch path + THE control plane: `generate` (spec-file-only, auto-dispatch per completion), `steer` (soft/hard — MODE MANDATORY, steer-only), `pause` (pure interrupt), `kill`/`kill-wave`, `resume` (taskIds or waveId=ALL), `status` (wave or session), `release`. One tool, nine actions |
+| `trident-wave-read` | THE LIVENESS INSTRUMENT — `sessionId` reads the session part stream (status: stream/idle/complete/absent, computed FROM the session data — never the job registry) |
+| `trident-wave-probe` | The Phase-0 probes (the load-bearing design verifications) |
 
 ### The Infrastructure Tools (5):
 
@@ -432,14 +289,13 @@ the orchestrator → trident-wave-manager (generate)
 | `trident-task-queue` | The SQLite-backed idea/task queue |
 | `trident-omni-vision` | The media reader (video/PDF/image/audio) |
 
-### Support Tools (4):
+### Support Tools (3):
 
 | Tool | Description |
 |------|-------------|
 | `trident-gate` | Evaluate specific audit layers (R0-R16) |
 | `trident-status` | Current Trident state (mode, layer, iteration, artifacts) |
 | `trident-help` | Reference for all commands and modes |
-| `task_status` | The runtime's native background-task poll — allowlisted in v4.4.2 (the completion/state channel) |
 
 ---
 
@@ -840,7 +696,7 @@ Say "Poseidon Mode Activate" when ready to build again.
 - compactingHook guard runs BEFORE identity injection
 - `output.args` read at all tool.execute.before enforcement points
 - Trident_Build has its OWN identity system: `isTridentBuildAgent()`, separate T1 prompt, separate hooks
-- **The behavioral layer — WARHEADS 1-19:** the identity carries 19 warheads (disk + inline + bundle) — the scope/execution/standards laws, the wave-dispatch law (background reality), the host-pipeline law, the basic-fucking-logic law, and **WARHEAD 19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW** (the deep-focus operating condition).
+- **The behavioral layer — WARHEADS 1-23:** the identity carries 23 warheads (disk + inline + bundle) — the scope/execution/standards laws, the host-pipeline law, the basic-fucking-logic law, **WARHEAD 16 — [CRITICAL] THE WAVE-MANAGER EXECUTION LAW** (the 7-section orchestration law), **WARHEAD 19 — [CRITICAL] THE POSEIDON-AGI FLOW STATE + DEEP FOCUS LAW**, and **WARHEAD 22 — THE RED-TEAM-BY-DEFAULT LAW** (the zero-trust verification canon).
 
 ---
 
@@ -848,8 +704,8 @@ Say "Poseidon Mode Activate" when ready to build again.
 
 ```bash
 sha256sum dist/index.js
-# dce7ca40063757a392296cf5017ef3db5148dfde5ec527a89f622b0d6440f488
-# (the current record lives in dist/sha256.txt — the wave-manager async build)
+# 9cbd86478ad06d66e61848235aecc517d260ddaa0a0e4b6f0242bc0dfa524c72
+# (the v2 wave-manager state — the GO-primary chain + the live-proven control plane)
 ```
 
 ---
@@ -870,8 +726,18 @@ src/
 │   └── identity-enforcer-hook.ts         # Identity enforcement
 ├── tools/
 │   ├── trident-tools.ts                  # Tool registry — adds trident-poseidon
-│   ├── trident-poseidon.ts               # NEW: God Loop orchestrator tool
-│   └── trident-vision.ts                 # VLM integration
+│   ├── trident-poseidon.ts               # God Loop orchestrator tool
+│   ├── trident-vision.ts                 # VLM integration
+│   ├── wave-dispatch.ts                   # THE wave manager — generate + the control plane
+│   ├── wave-tracker.ts                    # sqlite wave state (kill/resume sync, archive)
+│   ├── wave-status.ts                     # the session-stream reader + the abort paths
+│   ├── wave-read.ts                       # trident-wave-read (the liveness instrument)
+│   ├── wave-spec.ts                       # the spec-file validation + template reset
+│   ├── wave-cron.ts                       # the watchdog (terminal guard + read-and-kick)
+│   ├── wave-planning-gate.ts              # the count-based plan budget
+│   ├── template-intent.ts                 # the template/spec mismatch filter
+│   └── shadow/                            # the prompt-generation pipeline (9 modules:
+│       └── ...                            #   runner, agent, rpm-ledger, memory, sidecar...)
 ├── poseidon/
 │   ├── poseidon-state.ts                 # NEW: Session-scoped state management
 │   ├── god-loop.ts                       # NEW: God Loop orchestrator
