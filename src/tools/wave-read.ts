@@ -26,7 +26,8 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { tridentLog } from '../utils.js';
-import { readSessionStream, type SessionStreamPage } from './wave-status.ts';
+import { readSessionStream, detectReturnTruncation, type SessionStreamPage } from './wave-status.ts';
+export { detectReturnTruncation };   // re-exported for the tests (the canonical home is wave-status — the single source)
 
 // THE STATUS — the session truth, computed from the session's own data:
 //   stream   — new parts in the window AND the last step unfinished (working)
@@ -41,6 +42,12 @@ export interface WaveReadResult {
   sessionId: string;
   status: WaveReadStatus;
   live: boolean;            // THE SESSION-TRUTH LIVENESS (2026-08-16 — the spec §2.1: "The live field is the boolean liveness (the parts' recency — NEVER the job registry)". The S1 container test caught its absence: the explicit boolean the orchestrator reads for 'is this subagent alive' — status stream = live true; idle/complete/absent = live false. The incident's fix surfaces BOTH the status AND the explicit live flag.)
+  /** THE RETURN-INTEGRITY FLAG: `complete` means the session TERMINATED —
+   *  a provider cut mid-return STILL lands a terminal finish. This flag scans
+   *  the final text part's tail for the truncation signals; true = the return
+   *  is INCOMPLETE → the agent needs a KICK (action=resume), never a harvest. */
+  returnTruncated?: boolean;
+  truncationSignals?: string[];
   partCount: number;
   returnedParts: number;
   moreAvailable: boolean;
@@ -66,7 +73,7 @@ export const STREAM_WINDOW_MS = 300_000;
 // THE TOOL DESCRIPTION (exported for the unit tests — the incident warning is
 // part of the tool surface, asserted mechanically):
 export const WAVE_READ_TOOL_DESCRIPTION =
-  'THE DEDICATED SESSION READER — reads a subagent session\'s LIVE STREAM + returns the session STATUS computed FROM THE SESSION DATA (the opencode.db part stream — the same data the TUI renders). Call with ONE arg (sessionId) + optional limit/beforeId. THE STATUS: \'stream\' (new parts in the window + the last step unfinished — the agent is WORKING), \'idle\' (no new parts + the last step finished — the agent paused/awaiting), \'complete\' (the session has a terminal message finish — the task_result rendered), \'absent\' (no rows in the db). THE INCIDENT WARNING: task_status reports the background-JOB state — it can report \'cancelled\' for a LIVE session (the 2026-08-16 FALSE-LIVENESS incident: the loop-killer + the memory-repair subagents were writing files while the job registry said cancelled). THE SESSION STREAM IS THE ONLY LIVENESS TRUTH — for \'is this subagent alive\', use THIS tool (or trident-wave-manager action=status sessionId=<id>) — NEVER task_status.';
+  'THE DEDICATED SESSION READER — reads a subagent session\'s LIVE STREAM + returns the session STATUS computed FROM THE SESSION DATA (the opencode.db part stream — the same data the TUI renders). Call with ONE arg (sessionId) + optional limit/beforeId. THE STATUS: \'stream\' (new parts in the window + the last step unfinished — the agent is WORKING), \'idle\' (no new parts + the last step finished — the agent paused/awaiting), \'complete\' (the session has a terminal message finish — the session TERMINATED), \'absent\' (no rows in the db). ⚠ COMPLETE ≠ THE WORK IS WHOLE: a provider cut mid-return still lands a terminal finish. THE returnTruncated FLAG is the integrity layer — when true (dangling-connective / unclosed-code-fence / unclosed-inline-code / trailing-structure-opener / mid-word-cut on the final text part), the return is INCOMPLETE: KICK the agent (trident-wave-manager action=resume taskIds) — NEVER harvest a truncated return as fact. THE INCIDENT WARNING: task_status reports the background-JOB state — it can report \'cancelled\' for a LIVE session. THE SESSION STREAM IS THE ONLY LIVENESS TRUTH — for \'is this subagent alive\', use THIS tool (or trident-wave-manager action=status sessionId=<id>) — NEVER task_status.';
 
 // THE NEWEST-PART RECENCY PROBE (the WINDOW CLOCK — the part table's
 // time_updated for the session's newest part). The stream rule needs a REAL
@@ -164,12 +171,36 @@ export function composeWaveReadResult(
   newestAge: number | null,
 ): WaveReadResult {
   const status = computeWaveReadStatus(page, hasTerminalFinish, newestAge);
+  // THE RETURN-INTEGRITY LAYER (the live incident's fix): on complete, scan
+  // the FINAL text part's tail — the truncation signals (the regexes are the
+  // DETECTION layer only; prose tails have no AST — the string shape IS the
+  // evidence). A truncated flag = the return is incomplete → the agent gets
+  // a KICK (action=resume), never a harvest.
+  let returnTruncated: boolean | undefined;
+  let truncationSignals: string[] | undefined;
+  if (status === 'complete') {
+    let finalText = '';
+    for (let i = page.parts.length - 1; i >= 0; i--) {
+      const p = page.parts[i] as { type?: string; text?: string };
+      if (p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0) {
+        finalText = p.text;
+        break;
+      }
+    }
+    if (finalText.length > 0) {
+      const det = detectReturnTruncation(finalText);
+      returnTruncated = det.truncated;
+      truncationSignals = det.signals;
+    }
+  }
   return {
     ok: page.ok,
     error: page.error,
     sessionId,
     status,
     live: status === 'stream',   // THE SESSION-TRUTH LIVENESS — status stream = the agent is producing = live. NEVER the job registry.
+    returnTruncated,
+    truncationSignals,
     partCount: page.totalParts,
     returnedParts: page.returnedParts,
     moreAvailable: page.moreAvailable,

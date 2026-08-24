@@ -43,6 +43,45 @@ function toKillReason(reason: string | undefined): KillReason {
   return 'ORCHESTRATOR_ABORT';
 }
 
+// ═══ THE TRUNCATION DETECTOR (the return-integrity layer). `complete` is the
+// session-termination signal, NOT the work-wholeness signal: a provider that
+// dies mid-return still writes the terminal finish (the runtime closes the
+// turn on the truncated text). The detector scans the FINAL text part's tail
+// for the high-precision cut signatures. CONSERVATIVE BY DESIGN: only the
+// signals that never appear in a legitimately-finished report — a false
+// "truncated" costs a harmless kick; a missed truncation eats degenerate
+// work as fact (the live incident: a report cut at "- Writer: `report" read
+// as COMPLETE (full report) and the harvest nearly shipped it).
+export function detectReturnTruncation(text: string): { truncated: boolean; signals: string[] } {
+  const t = text.trimEnd();
+  if (t.length === 0) return { truncated: false, signals: [] };
+  const signals: string[] = [];
+  // 1. THE DANGLING CONNECTIVE — a tail ending in a connective/lead-in word
+  //    (lowercase, no terminal punctuation after it) = cut mid-sentence.
+  if (/[,:;-]\s*(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|Writer|CONFIRMED|DEGENERATE)$/i.test(t)
+    || /\b(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|as|at)$/i.test(t.split(/\s+/).slice(-1)[0] ?? '')) {
+    signals.push('dangling-connective');
+  }
+  // 2. THE UNCLOSED CODE FENCE — an odd count of fence markers = a block
+  //    opened and never closed.
+  const fences = (t.match(/^```/gm) ?? []).length;
+  if (fences % 2 === 1) signals.push('unclosed-code-fence');
+  // 3. THE UNCLOSED INLINE CODE / STRAY BACKTICK TAIL — the live incident's
+  //    exact shape: the cut landed INSIDE `` `report ``.
+  if (/`[^`\n]*$/.test(t) && !/^`/.test(t.split('\n').slice(-1)[0] ?? '')) signals.push('unclosed-inline-code');
+  // 4. THE TRAILING STRUCTURE OPENER — a line ending in an opening
+  //    paren/bracket/colon-hyphen = the structure was announced, never filled.
+  if (/[([{:]$/.test(t)) signals.push('trailing-structure-opener');
+  // 5. THE MID-WORD CUT — a tail ending in a letter directly after a hyphen
+  //    join or a camelCase seam with no terminal punctuation (rare; only
+  //    fires when nothing else terminal exists).
+  if (!/[.!?:;)"'`\]}>|*_/]$/.test(t) && /[a-z]$/i.test(t) && signals.length === 0
+    && t.split(/\s+/).slice(-1)[0]?.length === 1) {
+    signals.push('mid-word-cut');
+  }
+  return { truncated: signals.length > 0, signals };
+}
+
 // THE CLIENT SURFACE the status tool consumes (the session.reads + the abort):
 export interface WaveStatusClient {
   status(opts: { query?: Record<string, unknown> }): Promise<{ data?: { status?: string } | null }>;
@@ -88,6 +127,11 @@ export interface WaveSessionStatusReport {
   sessionId: string;
   status: string;
   live: boolean;
+  /** THE RETURN-INTEGRITY FLAG (the truncated-return incident): complete =
+   *  TERMINATED, not whole — true = the final text part carries a cut
+   *  signature; the agent needs a KICK (action=resume), never a harvest. */
+  returnTruncated?: boolean;
+  truncationSignals?: string[];
   partCount: number;
   returnedParts: number;
   lastTools: string[];
@@ -481,6 +525,26 @@ export async function executeWaveStatus(
     // stream page — NOT the WaveStatusReport's agents[] per-agent wrapper (the
     // wave-scoped generation noise). The caller asks "is THIS session alive?"
     // and gets the session answer, never the wave framing.
+    // THE RETURN-INTEGRITY LAYER: the same detector the wave-read tool runs —
+    // on a terminal status, the final text part's tail is scanned; a cut
+    // signature flags the return incomplete.
+    let returnTruncated: boolean | undefined;
+    let truncationSignals: string[] | undefined;
+    if (rawStatus === 'complete' && page.ok) {
+      let finalText = '';
+      for (let i = page.parts.length - 1; i >= 0; i--) {
+        const p = page.parts[i] as { type?: string; text?: string };
+        if (p.type === 'text' && typeof p.text === 'string' && p.text.trim().length > 0) {
+          finalText = p.text;
+          break;
+        }
+      }
+      if (finalText.length > 0) {
+        const det = detectReturnTruncation(finalText);
+        returnTruncated = det.truncated;
+        truncationSignals = det.signals;
+      }
+    }
     const sessionReport: WaveSessionStatusReport = {
       ok: page.ok,
       error: page.error,
@@ -488,6 +552,8 @@ export async function executeWaveStatus(
       sessionId: args.sessionId,
       status: rawStatus,
       live,
+      returnTruncated,
+      truncationSignals,
       partCount: page.ok ? page.totalParts : fallbackPartCount,
       returnedParts: page.returnedParts,
       lastTools: page.lastTools,

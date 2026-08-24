@@ -185411,7 +185411,7 @@ THE LAW:
 
 **\xA72 \u2014 THE TELEMETRY HALLUCINATION GUARD.** The generate result carries 'generationTelemetry' per agent \u2014 the PROMPT-GENERATION timings ('status:'generated'', 'agentStatus:'dispatched''). These are NOT the agent's run. An agent that dispatched 5 seconds ago is WORKING, not finished. **DISPATCH \u2260 DONE. GENERATION TIME \u2260 RUN TIME. The ONLY completion truth is the session stream reaching 'complete'.** Never verify, harvest, or build on an agent whose stream you have not read to 'complete'.
 
-**\xA73 \u2014 THE SESSION-STREAM TRUTH.** 'trident-wave-read sessionId=<id>' (or 'action=status sessionId=<id>') is the ONLY liveness instrument: it reads the opencode.db part stream directly. 'task_status' is BANNED for liveness \u2014 it reports the background-JOB registry which can say 'cancelled' for a LIVE session. The status values: 'stream' = actively working (new parts + unfinished step \u2014 LEAVE IT ALONE); 'idle' = paused/awaiting mid-task (no new parts + last step finished \u2014 THIS is when a kick lands); 'complete' = terminal, the result rendered (harvest + audit now); 'absent' = wrong id. Between polls, read the part content: 'lastTools' shows what it is doing; a frozen part count past the ETA = investigate (\xA75).
+**\xA73 \u2014 THE SESSION-STREAM TRUTH.** 'trident-wave-read sessionId=<id>' (or 'action=status sessionId=<id>') is the ONLY liveness instrument: it reads the opencode.db part stream directly. 'task_status' is BANNED for liveness \u2014 it reports the background-JOB registry which can say 'cancelled' for a LIVE session. The status values: 'stream' = actively working (new parts + unfinished step \u2014 LEAVE IT ALONE); 'idle' = paused/awaiting mid-task (no new parts + last step finished \u2014 THIS is when a kick lands); 'complete' = the session TERMINATED \u2014 \u26A0 TERMINATED \u2260 THE WORK IS WHOLE: a provider cut mid-return still lands the terminal finish, and the report can be truncated mid-sentence. The read result's 'returnTruncated' flag (the truncation signals on the final text part: dangling-connective / unclosed-code-fence / unclosed-inline-code / trailing-structure-opener) is the integrity layer \u2014 a truncated return = an interrupted agent = KICK (resume), NEVER a harvest; 'absent' = wrong id. Between polls, read the part content: 'lastTools' shows what it is doing; a frozen part count past the ETA = investigate (\xA75).
 
 **\xA74 \u2014 THE CONTROL PLANE.**
 | Action | Call | Semantics |
@@ -185431,7 +185431,7 @@ The tracker DB is always in sync: kill \u2192 row killed; resume \u2192 row runn
 3. **DECIDE per stream-state** (poll on a rhythm; every state has exactly one action):
    - 'stream' \u2192 WORKING. Leave it alone. Do CTO work.
    - 'idle' mid-task \u2192 KICK: 'action=resume taskIds=["ses_X"]' \u2014 delivers "continue" as the session's own agent. If it says "already running," the message queued at the step boundary \u2014 poll, don't re-send in a panic loop.
-   - 'complete' \u2192 HARVEST + AUDIT (\xA77 + the RED-TEAM-BY-DEFAULT LAW). Then advance the plan.
+   - 'complete' \u2192 THE RETURN-INTEGRITY GATE FIRST: read the final return's tail (the returnTruncated flag, or your own read of the closing text) \u2014 a truncated/mid-sentence/dangling return is an INTERRUPTED agent \u2192 KICK ('action=resume taskIds'), never a harvest. "No stall" requires POSITIVE evidence of an intact return (the closing section present, the report's own end reached) \u2014 the status field alone is NEVER the all-clear. Intact \u2192 HARVEST + AUDIT (\xA77 + the RED-TEAM-BY-DEFAULT LAW). Then advance the plan.
    - off-course content in the parts (wrong tool, wrong path, scope creep) \u2192 STEER: hard mid-generation, soft between tools. Redirect, don't destroy.
    - frozen part count past the ETA \u2192 INVESTIGATE the stream tail + reasoning before ANY kill (a mid-composition cut with all work done gets kicked with "report what EXISTS on disk now"; a session dead 3+ kicks with ZERO work gets killed + fresh-dispatched \u2014 a session that did 200 parts of work gets kicked forever, one that produced nothing gets replaced).
 4. **SEQUENCE the DEPENDENT waves.** Wave N must complete + pass audit before any wave that depends on it fires \u2014 building on unaudited work is building on claims. Independent waves NEVER wait on each other \u2014 parallel by default, serialized only by true dependency or file conflict.
@@ -185454,7 +185454,7 @@ THE UNIGNORABLE FORM: the loop runs until the build is DONE \u2014 "the wave is 
 
 **\xA77 \u2014 THE WAVE AUDIT.** ALL "finished" work from departments is INDEPENDENTLY VERIFIED \u2014 every returned wave is a CLAIM until you mechanically destroy or confirm it. The audit is half your job; dispatch is the other half. FOR EVERY RETURNED AGENT:
 
-1. **THE STREAM GATE.** The session stream must read 'complete'. A return whose stream never reached complete is not a return \u2014 kick it (\xA75) or discard it.
+1. **THE STREAM + INTEGRITY GATE.** The session stream must read 'complete' AND the return must be intact (no truncation signals \u2014 the returnTruncated flag or the closing-structure read). A return whose stream never completed is not a return; a return that completed TRUNCATED is not a return either \u2014 both get kicked (\xA75), never harvested. The status field says the session ended; ONLY the return's tail says the work is whole.
 2. **THE PHANTOM-COMPLETION CHECK.** "Completed" + zero disk change = the agent wrote nothing. SHA the target files against the pre-wave values; unchanged = phantom \u2014 kick it back with "you completed with NO file changes."
 3. **THE PER-HUNK WHAT/WHY/HOW.** WHAT did it actually do \u2014 read the diff list, verify each hunk EXISTS on disk (grep the claimed line, sha256 before/after). WHY \u2014 does its stated reason hold against the spec/doctrine? A plausible reason that contradicts the spec is a defect. HOW \u2014 the blast radius: who imports the changed surface, what breaks downstream.
 4. **THE VERDICT per hunk:** CORRECT | FLAWED | FITTED-TO-GOLDEN (the test was bent to pass, not the code fixed) | DOWNSTREAM-FABRICATION (claimed effects on files it never touched) | ARCHITECTURE-VIOLATION | SCOPE-CREEP. Every verdict recorded in '.trident/wave-audit/<wave>.md' with the spec-coverage map.
@@ -288480,6 +288480,27 @@ function toKillReason(reason) {
   }
   return "ORCHESTRATOR_ABORT";
 }
+function detectReturnTruncation(text) {
+  const t = text.trimEnd();
+  if (t.length === 0)
+    return { truncated: false, signals: [] };
+  const signals = [];
+  if (/[,:;-]\s*(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|Writer|CONFIRMED|DEGENERATE)$/i.test(t) || /\b(?:and|the|a|an|with|for|of|to|in|on|by|from|that|which|is|are|was|then|so|but|or|if|when|as|at)$/i.test(t.split(/\s+/).slice(-1)[0] ?? "")) {
+    signals.push("dangling-connective");
+  }
+  const fences = (t.match(/^```/gm) ?? []).length;
+  if (fences % 2 === 1)
+    signals.push("unclosed-code-fence");
+  if (/`[^`\n]*$/.test(t) && !/^`/.test(t.split(`
+`).slice(-1)[0] ?? ""))
+    signals.push("unclosed-inline-code");
+  if (/[([{:]$/.test(t))
+    signals.push("trailing-structure-opener");
+  if (!/[.!?:;)"'`\]}>|*_/]$/.test(t) && /[a-z]$/i.test(t) && signals.length === 0 && t.split(/\s+/).slice(-1)[0]?.length === 1) {
+    signals.push("mid-word-cut");
+  }
+  return { truncated: signals.length > 0, signals };
+}
 async function abortSession(client, id2) {
   const scoped = client.session?.abort;
   if (typeof scoped === "function") {
@@ -288791,6 +288812,23 @@ async function executeWaveStatus(args, client, mainSessionId) {
         tridentLog("WARN", "wave-status", "raw session read failed for " + args.sessionId + ": " + (mErr instanceof Error ? mErr.message : String(mErr)));
       }
     }
+    let returnTruncated;
+    let truncationSignals;
+    if (rawStatus === "complete" && page.ok) {
+      let finalText = "";
+      for (let i = page.parts.length - 1;i >= 0; i--) {
+        const p = page.parts[i];
+        if (p.type === "text" && typeof p.text === "string" && p.text.trim().length > 0) {
+          finalText = p.text;
+          break;
+        }
+      }
+      if (finalText.length > 0) {
+        const det = detectReturnTruncation(finalText);
+        returnTruncated = det.truncated;
+        truncationSignals = det.signals;
+      }
+    }
     const sessionReport = {
       ok: page.ok,
       error: page.error,
@@ -288798,6 +288836,8 @@ async function executeWaveStatus(args, client, mainSessionId) {
       sessionId: args.sessionId,
       status: rawStatus,
       live,
+      returnTruncated,
+      truncationSignals,
       partCount: page.ok ? page.totalParts : fallbackPartCount,
       returnedParts: page.returnedParts,
       lastTools: page.lastTools,
@@ -288965,12 +289005,31 @@ function computeWaveReadStatus(page, hasTerminalFinish, newestPartAgeMs2) {
 }
 function composeWaveReadResult(sessionId, page, hasTerminalFinish, newestAge) {
   const status = computeWaveReadStatus(page, hasTerminalFinish, newestAge);
+  let returnTruncated;
+  let truncationSignals;
+  if (status === "complete") {
+    let finalText = "";
+    for (let i = page.parts.length - 1;i >= 0; i--) {
+      const p = page.parts[i];
+      if (p.type === "text" && typeof p.text === "string" && p.text.trim().length > 0) {
+        finalText = p.text;
+        break;
+      }
+    }
+    if (finalText.length > 0) {
+      const det = detectReturnTruncation(finalText);
+      returnTruncated = det.truncated;
+      truncationSignals = det.signals;
+    }
+  }
   return {
     ok: page.ok,
     error: page.error,
     sessionId,
     status,
     live: status === "stream",
+    returnTruncated,
+    truncationSignals,
     partCount: page.totalParts,
     returnedParts: page.returnedParts,
     moreAvailable: page.moreAvailable,
@@ -289002,7 +289061,7 @@ function createWaveReadTool() {
     }
   });
 }
-var STREAM_WINDOW_MS = 300000, WAVE_READ_TOOL_DESCRIPTION = "THE DEDICATED SESSION READER \u2014 reads a subagent session's LIVE STREAM + returns the session STATUS computed FROM THE SESSION DATA (the opencode.db part stream \u2014 the same data the TUI renders). Call with ONE arg (sessionId) + optional limit/beforeId. THE STATUS: 'stream' (new parts in the window + the last step unfinished \u2014 the agent is WORKING), 'idle' (no new parts + the last step finished \u2014 the agent paused/awaiting), 'complete' (the session has a terminal message finish \u2014 the task_result rendered), 'absent' (no rows in the db). THE INCIDENT WARNING: task_status reports the background-JOB state \u2014 it can report 'cancelled' for a LIVE session (the 2026-08-16 FALSE-LIVENESS incident: the loop-killer + the memory-repair subagents were writing files while the job registry said cancelled). THE SESSION STREAM IS THE ONLY LIVENESS TRUTH \u2014 for 'is this subagent alive', use THIS tool (or trident-wave-manager action=status sessionId=<id>) \u2014 NEVER task_status.";
+var STREAM_WINDOW_MS = 300000, WAVE_READ_TOOL_DESCRIPTION = "THE DEDICATED SESSION READER \u2014 reads a subagent session's LIVE STREAM + returns the session STATUS computed FROM THE SESSION DATA (the opencode.db part stream \u2014 the same data the TUI renders). Call with ONE arg (sessionId) + optional limit/beforeId. THE STATUS: 'stream' (new parts in the window + the last step unfinished \u2014 the agent is WORKING), 'idle' (no new parts + the last step finished \u2014 the agent paused/awaiting), 'complete' (the session has a terminal message finish \u2014 the session TERMINATED), 'absent' (no rows in the db). \u26A0 COMPLETE \u2260 THE WORK IS WHOLE: a provider cut mid-return still lands a terminal finish. THE returnTruncated FLAG is the integrity layer \u2014 when true (dangling-connective / unclosed-code-fence / unclosed-inline-code / trailing-structure-opener / mid-word-cut on the final text part), the return is INCOMPLETE: KICK the agent (trident-wave-manager action=resume taskIds) \u2014 NEVER harvest a truncated return as fact. THE INCIDENT WARNING: task_status reports the background-JOB state \u2014 it can report 'cancelled' for a LIVE session. THE SESSION STREAM IS THE ONLY LIVENESS TRUTH \u2014 for 'is this subagent alive', use THIS tool (or trident-wave-manager action=status sessionId=<id>) \u2014 NEVER task_status.";
 var init_wave_read = __esm(() => {
   init_tool_schema();
   init_zod();

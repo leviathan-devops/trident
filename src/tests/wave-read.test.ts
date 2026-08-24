@@ -99,7 +99,10 @@ describe('WAVE-READ: the status computation (stream / idle / complete / absent)'
     expect(WAVE_READ_TOOL_DESCRIPTION).toContain('task_status');
     expect(WAVE_READ_TOOL_DESCRIPTION).toContain('cancelled');
     expect(WAVE_READ_TOOL_DESCRIPTION).toContain('THE SESSION STREAM IS THE ONLY LIVENESS TRUTH');
-    expect(WAVE_READ_TOOL_DESCRIPTION).toContain('2026-08-16');
+    // THE INTEGRITY LAYER PIN: complete is TERMINATED-not-whole + the flag
+    expect(WAVE_READ_TOOL_DESCRIPTION).toContain('COMPLETE ≠ THE WORK IS WHOLE');
+    expect(WAVE_READ_TOOL_DESCRIPTION).toContain('returnTruncated');
+    expect(WAVE_READ_TOOL_DESCRIPTION).toContain('NEVER harvest a truncated return as fact');
   });
 
   test('S3 — the ABSENT session: a !ok page (db absent) = absent', () => {
@@ -231,5 +234,44 @@ describe('WAVE-READ: the action=status sessionId surface (S5)', () => {
     expect('agents' in report).toBe(true);
     expect(Array.isArray(report.agents)).toBe(true);
     expect('etaMs' in report).toBe(true);
+  });
+});
+
+// ═══ THE RETURN-INTEGRITY DETECTOR (the truncated-return incident): the
+// adversarial battery — the LIVE incident's exact shapes must flag; the
+// legitimately-finished reports must NOT.
+describe('detectReturnTruncation — the return-integrity layer', async () => {
+  const { detectReturnTruncation } = await import('../tools/wave-read.ts');
+
+  test('THE LIVE INCIDENT: the cut inside `report — flags unclosed-inline-code', () => {
+    const r = detectReturnTruncation('### 7b. DEAD-PARAMETER CONFIRMATION\n\nCONFIRMED — DEGENERATE.\n- Writer: `report');
+    expect(r.truncated).toBe(true);
+    expect(r.signals).toContain('unclosed-inline-code');
+  });
+
+  test('the dangling connective tail flags', () => {
+    expect(detectReturnTruncation('the fix lands in the writer and').truncated).toBe(true);
+    expect(detectReturnTruncation('verified at the call site, then').truncated).toBe(true);
+    expect(detectReturnTruncation('the evidence:\n- Writer').truncated).toBe(true);
+  });
+
+  test('the unclosed code fence flags', () => {
+    const r = detectReturnTruncation('the verification output:\n```bash\nbun test\n# (cut');
+    expect(r.truncated).toBe(true);
+    expect(r.signals).toContain('unclosed-code-fence');
+  });
+
+  test('the trailing structure opener flags', () => {
+    expect(detectReturnTruncation('the findings table (' as string).truncated).toBe(true);
+    expect(detectReturnTruncation('the plan:').truncated).toBe(true);
+  });
+
+  test('THE NO-MISFIRE CASES: legitimately-finished reports stay clean', () => {
+    expect(detectReturnTruncation('All 12 scenarios passed. The artifact is at .trident/container-test-results.json.').truncated).toBe(false);
+    expect(detectReturnTruncation('## VERIFICATION OUTPUTS\n1. bun test — 628 pass\n2. tsc — 0 errors').truncated).toBe(false);
+    expect(detectReturnTruncation('The build is complete.').truncated).toBe(false);
+    expect(detectReturnTruncation('```bash\nbun test\n```\nExit 0 — done.').truncated).toBe(false);
+    expect(detectReturnTruncation('| finding | verdict |\n|---|---|\n| F-1 | CORRECT |').truncated).toBe(false);
+    expect(detectReturnTruncation('').truncated).toBe(false);
   });
 });
