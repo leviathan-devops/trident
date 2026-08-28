@@ -1,73 +1,55 @@
 // ═══ THE MACHINE-DISPATCH TESTS (SPEC_MACHINE_DISPATCH.md — the
-// zero-transcription dispatch, 2026-08-17) ═══
-// THE DESIGN: action=dispatch waveId=<id> — the model passes ONE string; the
-// plugin reads the wave's manifest + the prompt files, CONSTRUCTS the task
-// calls from the FILES (never from the model), spawns via the shared
-// batch-tool spawnTask (the {type:'subtask'} proven channel), records the
-// wave registry, returns the task ids + the session ids.
-// THE BATTERY: the findManifestSha + spawnTask shared exports (the batch-tool),
-// the schema's waveId-only surface (no prompt/description transcription), the
-// manifest-driven construction.
+// zero-transcription dispatch) ═══
+// 2026-08-27 — CLIENT-SPAWN IS DEAD: spawnTask dispatches via the
+// taskDispatch surface ONLY (the fork TaskTool background — card + inject +
+// wake). The tests assert the taskDispatch params are exact.
 
 import { describe, expect, test } from 'bun:test';
 import { findManifestSha, spawnTask, type BatchToolCall } from '../tools/batch-tool.ts';
 import { createHash } from 'node:crypto';
 
-// ═══ THE SHARED SPAWN (the batch-tool's spawnTask — the machine-dispatch's
-// spawn mechanism) ═══
-describe('machine-dispatch — the shared spawn (batch-tool spawnTask)', () => {
-  test('spawnTask: creates the child session + promptAsync with the {type:subtask} part', async () => {
-    const calls: Array<{ createBody: unknown; promptBody: unknown }> = [];
-    const client = {
-      session: {
-        create: async (opts: { body: { parentID?: string; title: string } }) => {
-          calls.push({ createBody: opts.body, promptBody: null });
-          return { data: { id: 'ses_child_1' } };
-        },
-        promptAsync: async (opts: { path: { id: string }; body: unknown }) => {
-          calls.push({ createBody: null, promptBody: opts.body });
-          return { data: true };
-        },
-      },
+// ═══ THE SHARED SPAWN (taskDispatch-only) ═══
+describe('machine-dispatch — the shared spawn (taskDispatch-only)', () => {
+  test('spawnTask: dispatches via taskDispatch with the exact params + background:true', async () => {
+    const calls: Array<{ description: string; prompt: string; subagent_type: string; background?: boolean }> = [];
+    const taskDispatch = async (p: { description: string; prompt: string; subagent_type: string; background?: boolean }) => {
+      calls.push(p);
+      return { sessionId: 'ses_child_1' };
     };
     const entry: BatchToolCall = {
       tool: 'task',
       parameters: { description: 'lk-s1', prompt: 'EXECUTE THE FOLLOWING...', subagent_type: 'trident_explore' },
     };
-    const r = await spawnTask(client as never, 'ses_parent', entry);
+    const r = await spawnTask(taskDispatch, 'ses_parent', entry);
     expect(r.ok).toBe(true);
     expect(r.sessionId).toBe('ses_child_1');
-    // THE CREATE: the parentID lineage + the title
-    expect((calls[0].createBody as { parentID?: string; title: string }).parentID).toBe('ses_parent');
-    expect((calls[0].createBody as { title: string }).title).toBe('lk-s1');
-    // THE PROMPT-ASYNC: the {type:'subtask'} part + the agent + the content
-    const pb = calls[1].promptBody as { agent: string; parts: Array<{ type: string; prompt: string; description: string }> };
-    expect(pb.agent).toBe('trident_explore');
-    expect(pb.parts[0].type).toBe('subtask');
-    expect(pb.parts[0].prompt).toBe('EXECUTE THE FOLLOWING...');
-    expect(pb.parts[0].description).toBe('lk-s1');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].description).toBe('lk-s1');
+    expect(calls[0].prompt).toBe('EXECUTE THE FOLLOWING...');
+    expect(calls[0].subagent_type).toBe('trident_explore');
+    expect(calls[0].background).toBe(true);
   });
 
   test('spawnTask: the missing prompt → the loud [TRIDENT PROMPT FILE] error (no empty shell)', async () => {
-    const client = { session: { create: async () => ({ data: { id: 'x' } }), promptAsync: async () => ({}) } };
-    const r = await spawnTask(client as never, null, { tool: 'task', parameters: { description: 'no-prompt' } });
+    const taskDispatch = async () => { throw new Error('should not be called'); };
+    const r = await spawnTask(taskDispatch, null, { tool: 'task', parameters: { description: 'no-prompt' } });
     expect(r.ok).toBe(false);
     expect(r.error).toContain('[TRIDENT PROMPT FILE]');
   });
 
   test('spawnTask: a prompt whose SHA mismatches the manifest → the [WAVE VERBATIM] block', async () => {
-    // The manifest for 'lk-s1' carries a sha; a DIFFERENT prompt → the block
-    const client = { session: { create: async () => ({ data: { id: 'x' } }), promptAsync: async () => ({}) } };
-    const r = await spawnTask(client as never, null, {
+    // HERMETIC (2026-08-27): a live manifest for 'lk-s1' exists in TRIDENT_TMP_DIR
+    // from real runs — the shared name made this test environment-dependent. The
+    // unique name guarantees the no-manifest branch; the SHA pin stays identical.
+    const taskDispatch = async () => ({ sessionId: 'ses_herm' });
+    const r = await spawnTask(taskDispatch, null, {
       tool: 'task',
-      parameters: { description: 'lk-s1', prompt: 'a condensed version of the prompt', subagent_type: 'trident_explore' },
+      parameters: { description: 'lk-s1-hermetic-x7', prompt: 'a condensed version of the prompt', subagent_type: 'trident_explore' },
     });
-    // The manifest may be absent in the test env (the tmp dir) — the block only
-    // fires when the manifest EXISTS + the sha mismatches. The pin: the sha of
-    // an identical prompt ALWAYS matches (the deterministic hash).
+    // The manifest is absent for the unique name → no verbatim record → no block:
     const sha = createHash('sha256').update('a condensed version of the prompt').digest('hex');
     expect(sha).toMatch(/^[0-9a-f]{64}$/);
-    expect(r.ok).toBe(true); // no manifest in the test env → no verbatim record → no block
+    expect(r.ok).toBe(true);
   });
 });
 
@@ -107,56 +89,8 @@ describe('machine-dispatch — the zero-transcription surface', () => {
   });
 });
 
-// ═══ THE VISIBILITY REGISTRATION (2026-08-17 — the phantom-session fix, the
-// [CORRECT SUBAGENT DISPATCH MECHANICS FOR CUSTOM TOOLS] canon) ═══
-// THE BUG: the spawnTask created the child + ran the subtask but NEVER called
-// the ToolContext's metadata() — the child existed in the DB but the parent's
-// message metadata had no record → the TUI rendered NO subagent (the phantom).
-// THE FIX: spawnTask gains the metadataCb + calls it per child with
-// { title, metadata: { parentSessionId, sessionId, background } } — the SAME
-// registration the native task tool does (task.ts:161-177).
-describe('machine-dispatch — the visibility registration (the phantom fix)', () => {
-  test('spawnTask: the metadataCb registers the child in the parent\'s metadata (the TUI visibility)', async () => {
-    const registrations: Array<{ title?: string; metadata?: Record<string, unknown> }> = [];
-    const client = {
-      session: {
-        create: async () => ({ data: { id: 'ses_child_vis' } }),
-        promptAsync: async () => ({ data: true }),
-      },
-    };
-    const entry: BatchToolCall = {
-      tool: 'task',
-      parameters: { description: 'vis-agent', prompt: 'THE PROMPT', subagent_type: 'trident_explore' },
-    };
-    const r = await spawnTask(
-      client as never,
-      'ses_parent_vis',
-      entry,
-      (input) => registrations.push(input),
-    );
-    expect(r.ok).toBe(true);
-    expect(r.sessionId).toBe('ses_child_vis');
-    // THE REGISTRATION: the title + the metadata with the parent + the child + background
-    expect(registrations).toHaveLength(1);
-    expect(registrations[0].title).toBe('vis-agent');
-    expect((registrations[0].metadata as Record<string, unknown>).parentSessionId).toBe('ses_parent_vis');
-    expect((registrations[0].metadata as Record<string, unknown>).sessionId).toBe('ses_child_vis');
-    expect((registrations[0].metadata as Record<string, unknown>).background).toBe(true);
-  });
-
-  test('spawnTask: WITHOUT the metadataCb, the spawn still works (the registration is additive)', async () => {
-    const client = {
-      session: {
-        create: async () => ({ data: { id: 'ses_child_2' } }),
-        promptAsync: async () => ({ data: true }),
-      },
-    };
-    const entry: BatchToolCall = {
-      tool: 'task',
-      parameters: { description: 'no-meta', prompt: 'THE PROMPT', subagent_type: 'trident_explore' },
-    };
-    const r = await spawnTask(client as never, 'ses_parent_2', entry); // NO metadataCb
-    expect(r.ok).toBe(true);
-    expect(r.sessionId).toBe('ses_child_2');
-  });
-});
+// ═══ THE VISIBILITY REGISTRATION — DELETED (2026-08-27): the metadataCb
+// hand-registration was the client-spawn's fake-card substitute. With
+// taskDispatch-only spawning, the REAL card comes from the fork's
+// createLiveToolPart (tool:"task" part + the live ctx.toolcalls entry) —
+// no plugin-side visibility hack exists or is needed. ═══

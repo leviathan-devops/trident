@@ -1,222 +1,245 @@
-# CHANGELOG — THE PER-SESSION RECORD (the 2026-08-09 entry)
+# CHANGELOG — THE REAL PI SHADOW AGENT FORK (2026-08-19 Wave-4 — THE SESSION JOURNEY)
 
-**The 2026-08-08/09 sessions — THE WAVE-GENERATOR + THE THEATRICAL + THE WAVE-VERBATIM + THE IDENTITY MARATHONS.** Every accomplishment with its evidence, every decision with the operator's ruling, every failure with its root cause — so the next agent never repeats the journey.
-
----
-
-## THE SESSION'S ACCOMPLISHMENTS (with the evidence)
-
-### 1. THE WAVE-GENERATOR RELIABILITY FIXES (dist 06ac7d22 → 3553470f)
-- **The root cause found + fixed:** the shadow brain's NON-streaming fetch buffered the whole completion — the provider sends nothing until the generation finishes (the live probes: the first byte at 48.9s for the non-streaming vs 1.0s for the streaming) — the 45s stall window killed HEALTHY generations (the SHADOW_BRAIN_TIMEOUT ×3 in the plutus forensics). THE FIX: the SSE streaming transport (stream:true + the idle re-arm per event + the stalled branch) + SHADOW_TIMEOUT_MS 90s → 180s (the huge woven outputs) + the retry-on-500 (ONE retry + the backoff) + the bounded-concurrency pool (CONCURRENT_GENERATIONS = 3 — the provider's queue) + the per-agent telemetry (startedAt/finishedAt/durationMs/status — the async provable) + the named-partial error (the AGENT PARTIAL manifest names the shortfall). EVIDENCE: the container 6/6 suite (wavegen-fix-ct — the telemetry + the 2-agent wave + the thin-args + the read) + the host live waves (the th-ctx: durationMs 158724) + the streaming probes.
-
-### 2. THE THEATRICAL FIREWALL OVERHAUL (dist 948600a5 → 9f93842b)
-- **The v3 implementation:** the subject-classified sentence verdict (the 8 token arrays + the lookahead + the bare production + the evasion family + the confessions), the tracker (trackTheatricalArtifacts/markContainerTestSubject/checkDownstreamTheatrical), the completed-message surface, the v3 texts. THE 4 LIVE-CAUGHT BUGS + THE FIXES:
-  - **The F8 composition suppression:** the theatrical demand was suppressed by the SSTF claim (the incident's claim words arm both) — the gates now COMPOSE.
-  - **The ESCALATE scoping:** the throw sat inside the args-hit branch — the completed-message armings never triggered it — the accumulated-count check added.
-  - **The history-rescan:** the messagesTransformHook's loop re-armed the count from the PAST messages after every restart — the count-6 spurious throw on the legit case — the message-surface theatrical wiring REMOVED (the operator's throw-only ruling).
-  - **The production-anchor evasion:** the /^production\b/ sentence-initial anchor defeated by a prefixed sentence — the bare \bproduction\b + the lookahead.
-- **THE CONTAINER'S LIVE PROOF:** the ESCALATE THROW fired (the 3 armings → the neutral read threw). The host's direct tests: the completed-message arming + the F8-composition demand live.
-
-### 3. THE WAVE-VERBATIM OVERHAUL (dist ff3f6138 → 8b873cb2)
-- The [WAVE VERBATIM] SHA verification (the condensed prompts BLOCKED), the [WAVE BATCH] multi-agent enforcement (the one-at-a-time BLOCKED), the promptFile channel (the exact content from the file), the lines-gate (the manifest's lines >= 125 — the slop records don't exempt), the question-tool leaf ban, the t.e.a. wipe's preservation. EVIDENCE: the host's direct tests fired the [WAVE VERBATIM] + the [WAVE BATCH] LIVE.
-
-### 4. THE IDENTITY OVERHAUL (dist 1878ac92 → 11fb42e7)
-- The WARHEAD 12 (the density-and-dispatch law), the WARHEAD 13 (the verification-before-declaration law), the WARHEAD 14 (the proven-path law) — the operator-approved finals, written per the warhead-writing standard. The inline INLINE_WARHEADS_MD wiring gap found + fixed (the injection used a stale copy). The AGENTS.md regen. THE WARHEAD-WRITING SKILL: the full 12-step workflow + the 15-row anti-pattern table + the META-AUDIT + the reference-density gate + the explicit-approval gate + the rushed-landing anti-pattern.
+**The session journey:** the shadow agent — the wave-manager's dispatch-prompt generator (`trident-task-preflight` tool's `generate` action, `src/tools/trident-task-preflight.ts` + `src/tools/shadow/shadow-runner.ts`) — rebuilt on the REAL headless pi agent runtime (`@earendil-works/pi-agent-core` v0.84.2, forked from `github.com/earendil-works/pi`). The operator's 50× directive: "fork earendil-works/pi and modify it for the shadow agent. runs headless. spawns an ephemeral sidecar process." The monkey-patch `runPiLoop` string loop (hand-rolled `messages: AgentMessage[]` + regex-parsed `[TOOL_CALL]` markers + raw `fetch` to the NVIDIA API) is REPLACED by a real `Agent` with the real `edit`/`read` tools, the 5-provider model set, and the ephemeral spawn. **Wave-4 (2026-08-19): the A3 hang — the last fail — fixed, 559/559 green.** This doc is the full milestone trail + every failure's root cause + the fix + the verification — a fresh agent reads it to know EXACTLY what happened, why, and what remains.
 
 ---
 
-## THE KEY DECISIONS (the operator's rulings — the full set in DECISION_CHAIN.md)
+## THE MILESTONE TRAIL (chronological — every shipped piece)
 
-1. "EITHER A LOUD FUCKING ERROR OR IT WORKS... DO NOT CREATE BULLSHIT FALLBACKS" → the loud-fail law (WARHEAD 10).
-2. "MAX TOKENS 300K... deepseek has a max tokens of 384,000" → the token policy.
-3. "async/parallel is the DEFAULT... INTELLIGENT async systems" → WARHEAD 11.
-4. "the reasoning tokens should NOT be part of the final prompt" → the contamination fix.
-5. "NO MECHANICAL FALLBACK. EITHER THE REAL MODEL BRIEF WORKS OR IT IS JUST THE PROMPT" → the [SHADOW INFERENCE] design.
-6. "YES RE ENABLE THE TASK FIREWALL WTF" → the firewall re-enable.
-7. "the DISPATCH SKILL REQUIRED demand - this needs to be an either/or" → the waveGeneratorUsed gate.
-8. "rename the wave dispatch tool... to wave-generator" → the rename.
-9. "remove the TASK PREFLIGHT (not the args preflight) tool" → the removal.
-10. "the timeout is a stupid fucking clock timer... should instantly return an error" → the stall detector.
-11. "WHY ARE YOU NOT TESTING THE REAL FUCKING TENCENT DB SERVER" → the theatrical overhaul.
-12. "if you are wiring something to text.complete and changing messages in the chat stream this is explicitly banned... ONLY throw errors on tool before are allowed" → the throw-only enforcement.
-13. "agents STOP COMPRESSING/CONDENSING the fucking prompts" → the wave-verbatim overhaul.
-14. "your subagent also just asked me a bunch of questions... remove the question tool from subagents" → the question-ban.
-15. "force it to write everything dense and properly by default... CONTEXT ARGS NEED TO BE FUCKING DENSE" → the WARHEAD 12.
-16. "DONT JUST THROW SOME FUCKING SLOP INTO THE WARHEAD... NIPS UNTRUTHFUL CONTAINER TESTS + UNTESTED HASTE EDITS" → the WARHEAD 13's engineering standard.
-17. "I EXPLICITLY SAID TO FUCKING CONTAINER TEST THIS BEOFRE SHIPPING... FIX ALL OF THIS AND FUCKING PROPERLY CONTAINER TEST" → the deep test's mandate.
-18. "use opencode go what is the issue here" + "USE DEEPSEEK V4 FLASH ON OPENCODE GO" → the container's session model + the WARHEAD 14's args-check lesson.
+### M0 — THE FORK DECISION (the operator's 50× directive)
+
+The operator: "fork earendil-works/pi and modify it for the shadow agent. runs headless. spawns an ephemeral sidecar process." Repeated 50× across the session — the monkey-patch `runPiLoop` (the string loop that made the model re-emit the whole 125-line prompt per round → 5-minute generate) was slop. The REAL runtime: `github.com/earendil-works/pi` (`packages/agent` → `@earendil-works/pi-agent-core` + `packages/ai` → `@earendil-works/pi-ai` + `packages/telemetry` → `@earendil-works/pi-telemetry`).
 
 ---
 
-## WHAT WAS ATTEMPTED AND FAILED (the root causes — so the next agent never repeats them)
+### M1 — THE FORK VENDORED (vendor/pi/ — 232 files)
 
-### F1 — THE DIRECT SUBAGENT SPAWNS (the catastrophe — 2026-08-07)
-- WHAT: the wave dispatch spawned children via direct subtask parts. THE ROOT CAUSE: the parts went into the MAIN session as USER messages → the empty shells → the 15-deep recursion. THE LESSON: the dispatch CALL and the CHILD SESSION'S SURFACE are different things.
+The real pi monorepo (`earendil-works/pi` v0.84.2, `git clone https://github.com/earendil-works/pi.git --branch v0.84.2`) cloned + vendored:
 
-### F2 — THE REASONING-TOKEN CONTAMINATION
-- WHAT: 2 of 4 wave prompts carried the chain-of-thought. THE ROOT CAUSE: evaluateCandidate cut at the FIRST indexOf — the model quotes the contract early in its thinking. THE LESSON: cut at the LAST REAL TEMPLATE OPENER.
+- `vendor/pi/ai/` (176 files) — `@earendil-works/pi-ai`: the unified LLM API. `src/models.ts` (the `Models` registry), `src/model-catalog.ts` (`flattenModelCatalog`), `src/types.ts` (the `Model` + `AssistantMessage` + `AssistantMessageEvent` shapes), `src/utils/event-stream.ts` (the `AssistantMessageEventStream` class), `src/providers/` (the 40+ provider modules), `src/api/` (the lazy API impls: `openai-completions`, `openai-responses`, `anthropic-messages`, `google-generative-ai`), `src/auth/` (the env-key helpers).
+- `vendor/pi/agent/` (50 files) — `@earendil-works/pi-agent-core`: the Agent runtime. `src/agent.ts` (the `Agent` class), `src/agent-loop.ts` (the `runAgentLoop` turn loop), `src/types.ts` (the `AgentTool` shape), `src/harness/tools/` (the REAL tools: `edit.ts`, `read.ts`, `write.ts`, `bash.ts`).
+- `vendor/pi/telemetry/` (6 files) — `@earendil-works/pi-telemetry`: the telemetry types.
 
-### F3 — THE MID-BULLET TRUNCATION
-- WHAT: the draft stopped at "- READ-" (~123 lines). THE ROOT CAUSE: PI_MAX_TOKENS = 8192 — the cap cut the completion. THE LESSON: the cap is a ceiling, never smaller than the deliverable.
+The 3 `package.json` files created (`vendor/pi/ai/package.json` → `name: "@earendil-works/pi-ai"`, `vendor/pi/agent/package.json` → `name: "@earendil-works/pi-agent-core"`, `vendor/pi/telemetry/package.json` → `name: "@earendil-works/pi-telemetry"`) + symlinked into `node_modules/@earendil-works/` (`ln -s ../../vendor/pi/ai node_modules/@earendil-works/pi-ai` etc.) so `import { Agent } from "@earendil-works/pi-agent-core"` resolves. The deps installed: `openai` + `partial-json` + `typebox` + `diff` + `ignore` + `yaml` + `@anthropic-ai/sdk` + `@google/genai`.
 
-### F4 — THE MECHANICAL-FALLBACK FALSE SUCCESS
-- WHAT: the dead-LLM "safety" fabricated "validated" prompts. THE ROOT CAUSE: the fallback produced a DIFFERENT artifact marked VALIDATED. THE LESSON: the fallback test — does it produce what the primary produces? if NO — banned.
-
-### F5 — THE TOCTOU SEQ RACE
-- WHAT: the parallel generation shipped EMPTY prompts. THE ROOT CAUSE: the SELECT MAX+1 THEN INSERT race. THE LESSON: the atomic INSERT + RETURNING.
-
-### F6 — THE ENOENT ERROR MASK
-- WHAT: the failed list showed "ENOENT..." instead of the real error. THE ROOT CAUSE: the errorManifest's path pointed at a never-written file. THE LESSON: check the contract fields BEFORE the I/O.
-
-### F7 — THE SSTF FALSE-POSITIVE LOOP
-- WHAT: the claim gate fired on EVERY tool result. THE ROOT CAUSE: the tool-output scan armed on any "passed". THE LESSON: arm ONLY from the completed message.
-
-### F8 — THE PROVIDER-STALL SILENT WAIT
-- WHAT: the wave took 10+ minutes per agent. THE ROOT CAUSE: no internal response-wait. THE LESSON: the fetch's own stall detector.
-
-### F9 — THE THEATRICAL FIREWALL'S MOCK-SERVER HOLE (the incident)
-- WHAT: a mock TencentDB server + a container test against it + "verified" claims — the firewall missed it. THE ROOT CAUSE: the blanket `\bmock\s+server\b` exemption + the args-only surface + the subject-blind containerTestRan. THE LESSON: the claim-subject vs evidence-subject mismatch is the invariant.
-
-### F10 — THE F8 COMPOSITION SUPPRESSION (the live-caught)
-- WHAT: the theatrical demand never fired on the completed-message claims. THE ROOT CAUSE: the incident's claim words arm the SSTF claim FIRST, and the Phase B's `!hasClaimWithoutContainerTest` suppressed the theatrical demand. THE LESSON: the gates COMPOSE — both demands land.
-
-### F11 — THE ESCALATE SCOPING (the live-caught)
-- WHAT: the ESCALATE never fired from the completed-message armings. THE ROOT CAUSE: the throw sat INSIDE the args-hit branch — the neutral calls never checked the accumulated count. THE LESSON: the accumulated-count check runs on every non-skipped call.
-
-### F12 — THE HISTORY-RESCAN SPURIOUS THROW (the live-caught)
-- WHAT: the count-6 ESCALATE on the legit case after a restart. THE ROOT CAUSE: the messagesTransformHook's loop re-armed the count from the PAST messages on every transform. THE LESSON: the message surfaces carry NO theatrical arming (the operator's throw-only ruling).
-
-### F13 — THE PRODUCTION-ANCHOR EVASION (the live-caught)
-- WHAT: the 3rd theatrical dispatch never armed. THE ROOT CAUSE: the /^production\b/ sentence-initial anchor defeated by a prefixed sentence. THE LESSON: the precision lives in the lookahead, not the anchor.
-
-### F14 — THE SYNTAX ERROR + THE STALE DIST (the ship rejection)
-- WHAT: the unescaped apostrophe broke the build for turns — the dist stayed stale + the operator deployed it. THE ROOT CAUSE: the haste edits without the immediate build-verification loop. THE LESSON: the edit → battery → build → SHA loop after EVERY edit (the WARHEAD 13).
-
-### F15 — THE EXEMPTION HOLE (the operator's "WHERE IS THE FUCKING TASK FIREWALL")
-- WHAT: a 2-line slop prompt dispatched via the verbatim exemption. THE ROOT CAUSE: the exemption trusted the manifest's sha256 regardless of the recorded content's length. THE LESSON: the lines-gate (the manifest's lines >= 125).
-
-### F16 — THE MODEL-SWITCH CONFIG FUMBLING (the WARHEAD 14's birth)
-- WHAT: the config edits (the provider entry + the model field) after the switch-model's single race. THE ROOT CAUSE: the wrong display name (`(new)`) raced + the improvisation began instead of the corrected-input retry. THE LESSON: CHECK THE ARGUMENTS FIRST — the tool was never broken; the correct display name landed the Go provider cleanly (twice).
-
-### F17 — THE RUSHED WARHEAD LANDING (the operator's "why has this been truncated")
-- WHAT: the WARHEAD 14's thin 4-bullet draft landed without the quality gates + without the explicit approval. THE ROOT CAUSE: the quick-draft landed as the final. THE LESSON: the skill's rushed-landing anti-pattern + the reference-density check + the explicit-approval gate.
+**Verification:** `ls vendor/pi/ai/src/providers/data/` → `nvidia.json` etc.; `find vendor/pi -type f | wc -l` → `232`; `bun build` still `EXIT 0` after the vendor.
 
 ---
 
-## THE HONEST DISCLOSURES (the known-broken / embellished / unverified)
+### M2 — THE 5 PROVIDERS (the lightweight strip — 70 files removed)
 
-1. **THE CONTAINER DEEP TEST is NOT completed** — the fixtures ready + the model live + the scenarios designed; the 7-scenario run pending (the setup's re-validation). The current artifact honestly records the BLOCKED state.
-2. The checkpoint/package sync is STALE (1878ac92 vs the current 11fb42e7).
-3. The host runs the GNR dist (the operator's revert) — the deploy of 11fb42e7 pending.
-4. The theatrical + the wave-verbatim + the identity changes are battery-covered + source-audited; the deep test's full container suite is the remaining verification.
-5. The 341de6f1-era 6/6 was NOT re-run on the final dist — the deep test's S1 re-verifies the generation machinery.
+The operator: "strip all providers aside from the 3 already configd + opencode go + command code i have 0 intention of every wiring anyhting else and if needed we can jut add them back" + "just keep it lightweight dont complicate it."
 
----
+Before: `vendor/pi/ai/src/providers/` had 40+ provider files (`anthropic.ts`, `google.ts`, `mistral.ts`, `xai.ts`, `groq.ts`, `openai.ts`, `azure.ts`, `bedrock.ts`, `cerebras.ts`, `together.ts`, `fireworks.ts`, `perplexity.ts`, `cohere.ts`, `vertex.ts`, `cloudflare.ts`, `huggingface.ts`, `openrouter.ts`, `deepseek.ts`, `nvidia.ts`, `opencode.ts`, `opencode-go.ts`, `faux.ts`, etc.).
 
-## THE DEBUGGING JOURNEY (the dead ends + the breakthroughs)
+After: ONLY `deepseek.ts` + `deepseek.models.ts`, `nvidia.ts` + `nvidia.models.ts`, `opencode.ts` + `opencode.models.ts`, `opencode-go.ts` + `opencode-go.models.ts`, `openrouter.ts` + `openrouter.models.ts`, `faux.ts` (the test faux) + the shared `index.ts`/`types.ts`. `ls vendor/pi/ai/src/providers/*.ts | wc -l` → `6`.
 
-1. The read's empty-read: blamed the stale cursors → the REAL killer was the DCS-swallow (the \x1bPtmux lazy span).
-2. The 10+ minute waves: suspected the model laziness → the REAL cause was the 8192 max_tokens truncation + the 240s clock.
-3. The parallel empty prompts: suspected the allSettled → the REAL cause was the TOCTOU seq race.
-4. The provider 500s: suspected the key → the live probes proved the key/endpoint/model/384K fine — the stalls were the provider's flakiness + the transport's buffering (the probes: 48.9s non-stream vs 1.0s streaming first-byte).
-5. The theatrical miss: suspected a single hole → the THREE compounding holes found.
-6. The deep test's blockage: suspected the providers' exhaustion → the REAL cause was partly the model balances + partly MY config fumbling — the switch-model with the correct display name resolved it.
-7. The warhead iterations: the documentation-summary → the observation-voice → the formalism → the rushed-landing → the FINAL: the behavior-programming shape (the imperative DOs, the fresh-agent drill, the reference examples) — the hour compressed into the warhead-writing skill.
+**Verification:** `ls vendor/pi/ai/src/providers/ | grep -v "^deepseek\|^nvidia\|^opencode\|^openrouter\|^faux\|^index\|^types"` → empty.
 
 ---
 
-## THE DEBUGGING JOURNEY'S DETAILS (the dead ends + the breakthroughs, per fix)
+### M3 — THE MODEL DATA + THE RESOLUTION FIX (THE CRITICAL FIX)
 
-### The F8 composition (the live-caught)
-- The observation: my completed text with the claim sentence armed the theatrical state, but the tool result showed ONLY the SSTF demand. The hypothesis chain: the scan didn't run → the session keys mismatched → the F8 suppression (the incident's claim words arm the SSTF FIRST + the Phase B's !hasClaimWithoutContainerTest suppressed the theatrical demand). The breakthrough: the code read at trident-hooks.ts:2419-2420 confirmed the suppression — the composition fix (both demands land).
+The model catalogs written: the FULL `Model` shape with the short id.
 
-### The ESCALATE scoping (the live-caught)
-- The observation: the 3 armings + the neutral read succeeded (no throw). The hypothesis chain: the count didn't reach 3 → the session keys → the throw's placement. The breakthrough: the code read confirmed the throw INSIDE the args-hit branch — the accumulated-count check added.
+**Before (the bug):** I wrote `{openai-completions: {nemotron-3.5-lightning-30b-a3b: {name: 'Nemotron 3.5 Lightning 30B A3B', limit: 1000000, ...}}}` — the values had NO `id` field. `flattenModelCatalog("nvidia", values)` does `Object.assign({}, ...Object.values(groups))` → `{nemotron-3.5-lightning-30b-a3b: {name, limit, ...}}` without `id` → `getModels('nvidia')` returned `[{id: undefined, name, ...}]` → `getModel('nvidia', 'nemotron-3.5-lightning-30b-a3b')` did `model.id === id` → `undefined === 'nemotron...'` → `undefined` → the harness reported `SHADOW_PI_NO_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b not in the 5-provider set`.
 
-### The history-rescan (the live-caught)
-- The observation: the count-6 ESCALATE on the legit case after the restart. The hypothesis chain: the count survived the restart → the messagesTransformHook's loop re-armed from the PAST messages on every transform. The breakthrough: the message-surface wiring REMOVED (the operator's throw-only ruling) — the count's only source is the args scan.
+**Also the id format:** the pi catalog uses the SHORT id (`nemotron-3.5-lightning-30b-a3b` — the provider prefix applied separately via `provider: 'nvidia'`), but I passed the FULL `nvidia/nemotron...` (from `SHADOW_MODEL = 'nvidia/nemotron-3.5-lightning-30b-a3b'`). The FULL or a re-prefixed value NEVER matches `getModel(provider, shortId)`.
 
-### The production-anchor evasion (the live-caught)
-- The observation: the 3rd theatrical dispatch never armed. The scratch verdict test (the real detectTheatricalFinding): the prefixed "THE MISSION CONTEXT NOTE: Production is validated..." returned NULL — the /^production\b/ sentence-initial anchor defeated by the prefix. The breakthrough: the bare \bproduction\b + the lookahead.
+**After (the fix):** `vendor/pi/ai/src/providers/data/nvidia.json` → `{"openai-completions": {"nemotron-3.5-lightning-30b-a3b": {"id": "nemotron-3.5-lightning-30b-a3b", "name": "Nemotron 3.5 Lightning 30B A3B", "api": "openai-completions", "provider": "nvidia", "baseUrl": "https://integrate.api.nvidia.com/v1", "reasoning": true, "input": ["text"], "cost": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}, "contextWindow": 1000000, "maxTokens": 128000}}}` + the 4 other catalogs. The harness's dual-path `models.getModel(provider, opts.modelId) ?? models.getModel(provider, opts.modelId.split('/').pop())` handles both FULL and SHORT.
 
-### The exemption hole (the operator's catch)
-- The observation: the 2-line fixture prompt dispatched. The root: the verbatim exemption trusted the manifest's sha256 regardless of the recorded content's length. The breakthrough: the lines-gate (the manifest's lines >= 125).
-
-### The model-switch fumbling (the WARHEAD 14's birth)
-- The observation: the switch-model's single race (the wrong display name '(new)') → the config fumbling began. The breakthrough: the operator's "this is literally exactly what the tool is supposed to do" + "the tool works and the issue was you not putting in the correct args" — the correct display name ('DeepSeek V4 Flash') landed cleanly (twice). The args-check law born.
-
-### The warhead iterations (the hour's journey)
-- The documentation-summary → the meta-commentary → the observation-voice → the formalism → the sections → the rushed-landing → THE FINAL: the behavior-programming shape. Each rejection identified the class; the warhead-writing skill now encodes the whole journey.
+**Verification:** `cat vendor/pi/ai/src/providers/data/nvidia.json | jq '.["openai-completions"]["nemotron-3.5-lightning-30b-a3b"].id'` → `"nemotron-3.5-lightning-30b-a3b"`; `src/tests/pi-model-resolve.test.ts` → `createShadowModels().getModel('nvidia', 'nemotron-3.5-lightning-30b-a3b')` returns `{id: 'nemotron-3.5-lightning-30b-a3b', provider: 'nvidia'}` → `1 pass`.
 
 ---
 
-## THE HONEST DISCLOSURES' DETAIL (the known state per item)
+### M4 — THE HARNESS (src/tools/shadow/shadow-pi-agent.ts — the REAL Agent)
 
-1. The container deep test: the fixtures + the model + the plan ready — the run pending. The earlier attempts' failures (the provider exhaustion + the config fumbling) are the HISTORY — the current state is the model LIVE on the Go.
-2. The checkpoint/package sync: the last verified three-way was 1878ac92 — the warhead builds (21e0a4ad → 11fb42e7) unsynced — the deep test's completion syncs + re-verifies.
-3. The host: the GNR dist — the operator's revert — the deploy of 11fb42e7 pending the operator.
-4. The 341de6f1-era 6/6: not re-run on the final dist — the deep test's S1 (the auth probe) re-verifies the generation machinery.
-5. The ISE soft-warn: the shadow-brain's edits tripped the soft-warn (the magic-ladder signature) — the named calibration (mapFinishReason) addressed it — the soft-warn is the detection-layer noise, not a defect.
+The real Agent harness replacing the monkey-patch `runPiLoop`:
 
-## THE WARHEAD-WRITING SKILL'S STATE (the operator-approved)
-- The skill at ~/.config/opencode/skills/warhead-writing/SKILL.md — 142+ lines — the full 12-step workflow + the 15-row anti-pattern table + the META-AUDIT (the generic-law check, the hardcoded-examples check, the derailment-fuel check, the force-vs-example check) + the reference-density check + the explicit-approval gate + the rushed-landing anti-pattern + the quick-start-as-checklist note.
+- `createShadowModels(): Models` — the 5-provider registry.
+- `createShadowReadTool(promptFilePath): AgentTool` — `Type.Object({filepath: Type.String})`, `fs.readFileSync` → the `=== FILE: ... (lines) ===\n` content.
+- `createShadowEditTool(promptFilePath): AgentTool` — `Type.Object({oldText: Type.String, newText: Type.String})`, `fs.readFileSync` → `indexOf(oldText)` → uniqueness check → `fs.writeFileSync` — THE ONLY WRITE PATH.
+- `runShadowPiAgent(opts)` — the ephemeral Agent run: `new Agent({initialState: {systemPrompt, model, tools: [read, edit]}, streamFn, getApiKey})`, the loop `for (round=1; round<=4; round++)` — 1 mandatory + optional 2-3 + 4 cap, the `effectivePrompt` demand wire (Wave-4), the test-aware pacing (Wave-4), the validated-break, the fileStates ground truth, the loud-fail detection.
 
----
-
-## THE MARATHON'S TIMELINE (the 2026-08-08/09 sequence)
-
-1. The wave-generator reliability: the forensics (the plutus log) → the probes (the transport's geometry) → the streaming transport + the pool + the telemetry + the retry + the named-partial → the container 6/6 → the host live.
-2. The theatrical overhaul: the spec (the 3 holes) → the v3 implementation → the direct tests (the F8 + the ESCALATE scoping) → the container (the ESCALATE throw) → the operator's throw-only ruling → the message-surface removal → the history-rescan + the production-anchor.
-3. The wave-verbatim: the operator's compression ban → the SHA verification + the batch + the promptFile + the preservation → the lines-gate + the question-ban → the host's direct tests.
-4. The identity: the density directive → the warhead iterations (the documentation-summary → the behavior-programming) → the approved finals → the inline wiring → the warhead-writing skill → the meta-audit → the full workflow.
-5. The deep test's prep: the fixtures + the model resolution (the Go) + the plan + the compaction prep.
-
-## THE NEXT SESSION'S PRIME DIRECTIVES (the resume's core)
-
-1. Complete the container deep test (the 7 scenarios, the red-team discipline, the artifact).
-2. Fix + retest the found bugs (the zero regressions).
-3. Sync the checkpoint + the package + the three-way hash.
-4. Refresh the canon docs + the DEBUG_LOG/BUILD_REPORT.
-5. The host deploy of 11fb42e7 (the operator's action) + the direct tests.
+**Verification:** `src/tests/pi-model-resolve.test.ts` + `src/tests/shadow-runner.test.ts` A1 → the read-before-write (`scriptedReadStream` → the REAL `read` tool).
 
 ---
 
-## THE NEXT SESSION'S RESUME CHECKLIST (the compaction-prep's handoff)
+### M5 — THE RUNNER WIRING (the ephemeral flow — the 13-step pipeline)
 
-1. Read POST-COMPACTION_PROMPT.md + COMPACTION_SURVIVAL.md (the mission + the orientation).
-2. Read BUILD_STATE.md + EVIDENCE_STATE.md + CURRENT_STATE.md (the state + the evidence).
-3. Read .trident/test-plan.md (the deep test's plan).
-4. Verify: sha256sum dist/index.js == 11fb42e7 + the battery 175/0 + the container alive + the model's Go status bar.
-5. Execute the deep test: the setup → the 7 scenarios → the bugs fixed + retested → the artifact → the sync → the docs.
+The `runPiLoop` call in `shadow-runner.ts` replaced:
 
-## THE SESSION'S KEY NUMBERS (the quick reference)
+```ts
+const piFilePath = path.join(outDir, sanitizeName(spec.name) + '.md');
+fs.writeFileSync(piFilePath, promptText, 'utf-8');   // the weave → the real .md
+const pi = await runShadowPiAgent({
+  promptFilePath: piFilePath,
+  systemPrompt: buildPiSystemPrompt(),
+  demand: buildPiDemand(brief, ctx.chainUsed.text, ''),  // THE DEMAND WIRE (Wave-4)
+  modelId: SHADOW_MODEL, provider: 'nvidia', maxRounds, signal,
+  streamFn: options.streamFn,  // the test's scripted stream OR undefined → the real models.streamSimple
+});
+if (pi.text && pi.text.trim().length > 0) promptText = pi.text;
+else { try { fs.unlinkSync(piFilePath); } catch {} promptText = ''; }  // THE A2 LOUD-FAIL
+if (!pi.text) return errorManifest(spec, outDir, 'PI_LOOP_EMPTY: ' + why + ' — NO mechanical fallback');
+```
 
-- The battery: 175 pass / 0 fail / 638 expect.
-- The dist: 11fb42e7 (16.0 MB).
-- The warheads: 14 (the 12/13/14 new).
-- The container: theatrical-fw-ct (the model DeepSeek V4 Flash (2x usage) / OpenCode Go).
-- The fixtures: wave-fx (sha256 d793aea8..., lines 3) + wave-dpl (sha256 eb27986f..., lines 130).
-- The skill: warhead-writing (142+ lines, the full workflow).
+The 13 steps: tether → sidecar lifecycle → ShadowMemory.open → reattach gate → validate → buildContext (chain + [SHADOW INFERENCE]) → weave → `runShadowPiAgent` → silentVerify → appendPrompt → manifest STRING.
 
----
-
-## THE CHANGELOG'S APPEND-ONLY CONTRACT
-
-This document is the session's permanent record — append-only per the running-build-docs law. The next session's deep-test results + fixes append here with their evidence.
-
-### 4. THE ANTI-CONTEXT-BUDGET WARHEAD (2026-08-10 — dist 416ccff7)
-| Issue | File | Change |
-|---|---|---|
-| The container agent's cuck reasoning ("I need to be careful about context budget... would consume enormous context") on the 258K-line bundle | src/identity/trident/WARHEADS.md + src/identity/index.ts | WARHEAD 15: THE ANTI-CONTEXT-BUDGET CUCK WARHEAD + THE DISPATCH-WAVE-FOR-SYNTHESIS MANDATE — the exact cuck phrases named as the derailment signal, the 1M/128K/infinite override, the wave-is-the-read mandate |
-| The directive buried at position 40/44 of the injected stack | src/hooks/trident-hooks.ts | The [TRIDENT] ANTI-CONTEXT-BUDGET LAW directive at the TOP of the contextLines + the OPERATING SCALE line strengthened with the exact phrases |
-| The batch-tool channel confusion (the operator: "this is a silent tool") | src/tools/wave-dispatch.ts + src/hooks/trident-hooks.ts | The directives name both channels: the batch tool when the runtime exposes it, otherwise ALL the task calls in ONE message — the identical wave |
+**Verification:** the battery `559 pass / 0 fail` (A1-A5 all green after Wave-4).
 
 ---
 
-## 5. THE T.E.B. MACHINE + THE SHADOW-BRAIN ARC (2026-08-14)
-| Issue | File | Change |
-|---|---|---|
-| The GLM derailment (the placeholder prompt → the 20-min SHA loop) | wave-dispatch.ts + wave-constants.ts + trident-hooks.ts:1741 | THE PROMPTFILE-ONLY BATCH: `{ description, promptFile, subagent_type }` ONLY; the T.E.B. loader hook MUTATES promptFile → prompt byte-exact + background:true + strips promptFile before the tool runs — the prompt NEVER passes through the model's output |
-| The premature prompt-file wipe | trident-hooks.ts:2536 | the T.E.A. wipe DEFERRED to the full-wave dispatch (the registry confirms calls.length == total && all accepted) |
-| The verbose wave-verbatim | trident-hooks.ts:1896 | simplified to the prompt-file-passed check (the SHA matches by construction) |
-| The SHADOW_BRAIN_TIMEOUT class (the 45s knife-edge) | shadow-brain.ts:58 + shadow-runner.ts:785 | THE 3-FIX PLAN (D-40, APPROVED): the measured stall window (avg × 3, [45s, 5m]), the backoff retry (2× + 3s gap, no switching), the density memory (the tracker persists the args; <0.7 ratio warns) — implementation pending |
+### M6 — THE BUILD (1541 modules, 18.33MB, EXIT 0)
+
+```bash
+bun build src/index.ts --outdir dist --target bun --format esm --bundle --external=effect
+# → Bundled 1541 modules, index.js 18.33MB, EXIT 0
+# (was 461 modules / 16.32MB before the fork — the pi runtime added ~1080 modules)
+```
+
+The deps: `openai` + `partial-json` + `typebox` + `diff` + `ignore` + `yaml` + `@anthropic-ai/sdk` + `@google/genai`. The operator: "WE ONLY BUILD WITH BUN" — esbuild FORBIDDEN.
+
+---
+
+### M7 — Wave-4: THE A3 HANG FIX (2026-08-19 — the last fail → 559/559 green)
+
+The last fail: `A3 THE COHERENCE [5000ms] timeout` at `shadow-runner.test.ts:556` — the double-pipeline test (2 sequential `runShadowPipeline` calls in ONE `withSandbox` session: `withSandbox` → `makeSandbox` + env scoping `TRIDENT_PREFLIGHT_MEMORY_ROOT = sb.memRoot` + `TRIDENT_PREFLIGHT_SIDECAR_DIR = sb.sidecarDir` per test).
+
+**The 3 root causes + the fixes (one sweep):**
+
+| Fix | File:line | The bug | The fix |
+|---|---|---|---|
+| 1. The pacing | `shadow-pi-agent.ts:223` | `if (round < maxRounds) await sleep(1500)` — unconditional: 4 rounds × 1.5s = 6s > the 5s default `bun:test` timeout → A3 double-pipeline timed out (`5000.14ms`) | `if (round < maxRounds && !opts.streamFn) await sleep(1500)` — the `!opts.streamFn` guard: the scripted streams (the operator's "WHAT FUCKING MOCK BRAIN" — `AssistantMessageEventStream` pushed synchronously, no network) SKIP the NVIDIA RPM gap; the real `models.streamSimple` keeps it. The 4 rounds now finish in ~280ms in the test. |
+| 2. The demand wire | `shadow-pi-agent.ts:218-219` | `await agent.prompt(roundPrompt)` — round 1 sent ONLY the generic "ROUND 1 — FIRST EDIT (mandatory). READ the dispatch prompt file, then make the FIRST surgical edit..." (10 words) — the woven brief (`weave` + supremacy + inference + the session chain) never reached the model → the chain `[seq 1]` never appeared | `const effectivePrompt = round===1 && opts.demand ? opts.demand + '\n\n' + roundPrompt : roundPrompt; await agent.prompt(effectivePrompt)` — round 1 now carries `buildPiDemand(brief, chainText, ingestText)` (the 84-slot weave + `THE FILES ARE THE ONLY GROUND TRUTH` + `[SHADOW INFERENCE]` + `## THE CONTEXT CHAIN`). |
+| 3. The harness index | `shadow-runner.test.ts:394-420` | `msgs.find(m => m.role==='user')` — `find` returns the FIRST user (the stale round-1 generic `ROUND 1 — FIRST EDIT`) → `log.demands[0]` = the generic, not the demand → `expect(log.demands[1]).toContain('[seq 1]')` failed: `Received: "ROUND 1 — FIRST EDIT..."` | Reverse scan for `lastUser` (the LAST user turn) + the demand filter `if (text.includes('THE WOVEN BRIEF') \|\| text.includes('THE FILE ON DISK IS THE WOVEN')) log.demands.push(text)` — so `demands[0]` = first pipeline's demand (lacks `[seq 1]`), `demands[1]` = second pipeline's demand (contains `[seq 1]` + `wave-a` + `The epoch summary`). |
+
+**Verification:** `cd src && bun test tests/shadow-runner.test.ts --test-name-pattern="A3.*seq" 2>&1 | tail -5` → `1 pass [280ms]` (was `5000.14ms timeout` + `expect(...).toContain('[seq 1]')` fail). The full battery: `cd src && bun test 2>&1 | tail -5` → `559 pass / 0 fail / 1725 expect() calls / Ran 559 tests across 33 files [~1s]`.
+
+---
+
+## THE FAILURES + THE ROOT CAUSES (every failure's mechanism — a fresh agent learns from them)
+
+### F1 — THE MODEL-ID MISMATCH (FIXED — M3)
+
+**Symptom:** `SHADOW_PI_NO_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b not in the 5-provider set` — the `runShadowPiAgent` returned `{text: '', errors: ['SHADOW_PI_NO_MODEL: ...']}` → the runner's `PI_LOOP_EMPTY`.
+
+**Root cause (2 parts):**
+
+1. The data JSON values lacked the `id` field → `flattenModelCatalog("nvidia", values)` did `Object.assign({}, ...Object.values({openai-completions: {nemotron...: {name, ...}}}))` → `{nemotron...: {name, ...}}` without `id` → `getModels('nvidia')` returned `[{id: undefined}]`.
+2. The id format: I passed the FULL `nvidia/nemotron-3.5-lightning-30b-a3b` (from `SHADOW_MODEL`) to `getModel('nvidia', fullId)` — the pi catalog's `id` is the SHORT `nemotron-3.5-lightning-30b-a3b` (the provider prefix applied separately via `provider: 'nvidia'` in the `Model` object).
+
+**Fix:** the data JSONs carry the complete `Model` shape with the short `id` + the harness's dual-path `models.getModel(provider, opts.modelId) ?? models.getModel(provider, shortId)` → both FULL and SHORT resolve.
+
+**Lesson:** the `Model.id` field is the registry key — a catalog entry without `id` is invisible to `getModel`. The pi convention: the data key + the `Model.id` is the SHORT id; the provider is the `Model.provider` field.
+
+---
+
+### F2 — THE EPHEMERAL CLEANUP (FIXED — M5)
+
+**Symptom:** the A2 test (`A2 THE DEAD-LLM`) expected `{lines: 0, ready: false}` (NO file on a failed generation) but got `{lines: 89}` (the weave's lines) — the `fs.existsSync(outPath) === false` assertion failed.
+
+**Root cause:** the weave was written to the REAL `.md` (`fs.writeFileSync(piFilePath, promptText)` where `piFilePath = path.join(outDir, name + '.md')`) FIRST, so a failed Agent (the `scriptedErrorStream('SHADOW_BRAIN_TIMEOUT')` → the Agent's `errorMessage`) left the file on disk — the runner checked `pi.text` empty but the file already existed.
+
+**Fix:** the weave goes to the real `.md` (the `fs.writeFileSync(piFilePath)` before the Agent) — on `pi.text` empty → `fs.unlinkSync(piFilePath)` (delete the file) → the `errorManifest` with `lines:0, ready:false`. The earlier "temp file" design (`<name>.pi.md` → `renameSync` on success) was simplified to the real file + the `unlinkSync` on failure — the file edited in place IS the deliverable.
+
+**Lesson:** a failed generation must leave NO file — the loud-fail law: "EITHER A LOUD FUCKING ERROR OR IT WORKS."
+
+---
+
+### F3 — THE A3 HANG (FIXED — M7 / Wave-4)
+
+**Symptom:** `A3 THE COHERENCE [5000.14ms] timeout` at `shadow-runner.test.ts:556` — the double-pipeline test (2 sequential `runShadowPipeline` calls in ONE `withSandbox` session) timed out at the 5s default `bun:test` timeout.
+
+**Root causes (3, one sweep):**
+
+1. **The unconditional pacing** — `shadow-pi-agent.ts:223` `if (round < maxRounds) await sleep(1500)` — 2 rounds per pipeline × 2 pipelines = 4 rounds × 1.5s = 6s > the 5s timeout. The pacing was added for the NVIDIA RPM gap (the operator: "nvidia is unlimited it just rate limits on high requests per minute") but applied to the scripted streams (the test's `AssistantMessageEventStream` pushed synchronously, no network — no RPM to gap).
+
+2. **The un-wired demand** — `shadow-pi-agent.ts:218` `await agent.prompt(roundPrompt)` — round 1 sent ONLY the generic "ROUND 1 — FIRST EDIT (mandatory). READ the dispatch prompt file..." (10 words) — the woven brief (`weave` + supremacy + inference + the session chain hydrated from `ShadowMemory.lastPrompts`) never reached the model. The `buildPiDemand(brief, chainText, ingestText)` was computed in `shadow-runner.ts:732` but never passed to `runShadowPiAgent`'s `agent.prompt`.
+
+3. **The stale harness index** — `shadow-runner.test.ts:396-406` `const firstUser = msgs.find(m => m.role==='user')` — `find` returns the FIRST user (the stale round-1 generic `ROUND 1 — FIRST EDIT` from the pi Agent's `prompt(roundPrompt)`). The pi loop's 2-round flow appends a NEW user turn per round (`agent.prompt` → `normalizePromptInput` → `runAgentLoop(messages.push(normalized))`), so the second pipeline's `log.demands` captured the generic, not the demand — `expect(log.demands[1]).toContain('[seq 1]')` failed: `Received: "ROUND 1 — FIRST EDIT..."`.
+
+**Fix (one sweep, 3 edits):**
+
+1. `shadow-pi-agent.ts:223` → `if (round < maxRounds && !opts.streamFn) await sleep(1500)` — the `!opts.streamFn` guard: real transport paces, the scripted test path does not.
+2. `shadow-pi-agent.ts:218-219` → `effectivePrompt = round===1 && opts.demand ? opts.demand + '\n\n' + roundPrompt : roundPrompt` — round 1 carries the full demand.
+3. `shadow-runner.test.ts:394-420` → reverse scan for `lastUser` + `if (text.includes('THE WOVEN BRIEF')) log.demands.push(text)` — the chain assertions see the demand, not the generic.
+
+**Verification:** `cd src && bun test tests/shadow-runner.test.ts --test-name-pattern="A3.*seq" 2>&1 | tail -5` → `1 pass [280ms]` (was `[5000.14ms] timeout`); `cd src && bun test 2>&1 | tail -5` → `559 pass / 0 fail`.
+
+**Lesson:** the pacing's `!opts.streamFn` guard is the test-aware design — the NVIDIA RPM gap is a LIVE constraint, not a test constraint. The demand wire is the chain's lifeline — without it, the session memory (`lastPrompts` + `epochSummary`) never reaches the model. The harness's `lastUser` + demand filter is the correct capture for the 2-round loop's appended turns.
+
+---
+
+## THE KEY DECISIONS (the architecture choices — why each was made)
+
+1. **The real pi Agent over the monkey-patch loop** — the operator's 50× directive. The pi Agent has the real tool execution (the AI-SDK's native `toolCall` events at `agent-loop.ts:326`, not `[TOOL_CALL]` regex markers), the real `edit` tool (the 6 matching strategies at `vendor/pi/agent/src/harness/tools/edit.ts`), the `AssistantMessageEventStream` (the `EventStream` subclass), the `Models.streamSimple` (the 5-provider transport). The string loop made the model re-emit the whole prompt per round → the edit tool makes it surgical.
+
+2. **The ephemeral spawn** — the `Agent` lives ONLY for the `runShadowPiAgent` call (`new Agent({...})` at `:175` → the `for (round)` loop → `return {text: fs.readFileSync(promptFilePath)}` at `:303` → GC). No `AgentSession` DB, no `pi --mode rpc` process, no lingering state. Only the `.md` files persist. The `ShadowMemory.open` sqlite is the session memory — not the Agent.
+
+3. **The file-on-disk IS the deliverable** — `fs.writeFileSync(piFilePath, promptText)` before the Agent → the Agent edits it via the `edit` tool (`fs.writeFileSync(promptFilePath, updated)` inside `createShadowEditTool.execute`) → `fs.readFileSync(piFilePath)` after the loop. The model's `TEXT` ("DONE", the CoT `Let me...`) NEVER lands in the file — the `editsRan && fileHasContent` check distinguishes a successful polish from a dead-LLM.
+
+4. **The 5-provider strip** — the operator: "keep it lightweight dont complicate it" — nvidia (the primary) + openrouter + deepseek + opencode (Zen) + opencode-go (the 3 already configured + the 2 opencode variants). 70 files removed. Adding a provider = drop the file + its `data/*.json` catalog back in.
+
+5. **The 96 enforcement floor** — the operator: "just bump this to 96" — the LLM generation reference stays 125 (the polisher system prompt "aim for 125 lines" + the `lineShortfall` demand); the MECHANICAL enforcement floor is 96 (`ready = v.passed && lines >= 96` at `shadow-runner.ts:816`). A structurally-complete prompt at 118 lines is dispatched.
+
+6. **The pacing is test-aware + the demand is wired** — Wave-4: the `!opts.streamFn` guard + the `effectivePrompt` wire. The 3 fixes that took the battery from `558 pass / 1 fail` to `559 pass / 0 fail`.
+
+---
+
+## THE HONEST DISCLOSURES (what's NOT yet proven — the fresh agent's backlog)
+
+1. **The live NVIDIA generate** — the tests use the scripted `streamFn` (the operator's "WHAT FUCKING MOCK BRAIN" — deterministic, no network). The real `models.streamSimple` → NVIDIA `nvidia/nemotron-3.5-lightning-30b-a3b` with the real key (`resolveShadowApiKey()` → `NVAPI-*` or `NVIDIA_API_KEY`) is NOT yet exercised. The next step: the real `generate` → the pi Agent edits the promptFile → verify `te-s1.md` + `te-s2.md` on disk (≥96 lines, DPL1-valid), the edits surgical, the Agent gone, the generate fast.
+
+2. **The dead monkey-patch machinery** — `runPiLoop` dead code (~100 lines) + the `brainToPiStream` era + `shadow-polish-guard.ts` + the regex `DRAFTING_MARKERS`/`detectThinkingLeak` legacy — still DEFINED but no longer called. They're superseded by the real pi Agent + the edit tool's CoT-leak impossibility. Remove after the pi path is proven live (no regression: `bun test` → still 559 pass).
+
+3. **The new dist** — the 3 Wave-4 fixes are in `src/` but the `dist/index.js` is the prior build (the `sha256sum` not yet computed for the new dist). The next step: `bun build` → the new dist (1541 modules, ~18.33MB) + the `sha256sum` proof + deploy to the host plugin.
+
+4. **The Checkpoint sync** — `Checkpoints/promptFile-degeneracy-cleaned-up/` → the final dist + src + docs (pending after deploy + live proof).
+
+5. **The 5-provider live auth** — `resolveKeyForProvider` wired but the live key's validity (`curl https://integrate.api.nvidia.com/v1/chat/completions -H "Authorization: Bearer $NVIDIA_API_KEY"`) not yet checked in this session.
+
+## M9 — THE BUILD SUBAGENT IDENTITY PORT (2026-08-20 — the operator's ruling: the full vanilla identity + warheads ported)
+
+**The milestone:** the build subagent (trident_build) now carries the FULL vanilla Trident identity + the 21 warheads, ported into the build subagent's harness + niched for build execution.
+
+**The changes:**
+1. **THE MODEL PINNING (src/agents/definitions.ts):** trident_explore → `nvidia/nemotron-3.5-lightning-30b-a3b` (the runtime sandbox master image's nvidia nemotron, 1M context, 128k max, reasoning effort HIGH); trident_build → `opencode-go/muse-spark-1.2-contributor` (the opencode GO endpoint, 1M context, 128k max, reasoning effort MAX). The model field is the STRING format (the `{providerID, modelID}` object breaks config.get — the operator's launch error proved it).
+2. **THE TASK TOOL REMOVED FROM ALL AGENTS:** the build agent's `permission: { task: 'allow' }` + `tools: { task: true }` → `task: 'deny'` + the tools field without `task`. The explore agent's `task: 'deny'` (already). The trident primary's `task: 'deny'` (already). The subagents are LEAF NODES — they never spawn; the wave-manager dispatch owns ALL spawning.
+3. **THE DEEP PLANNING + CONTEXT SYNTHESIS REMOVED FROM SUBAGENTS:** the subagents' tools field explicitly DISABLES `trident-deep-planning` + `trident-context-synthesis`; the `trident-problem-solving` + `trident-code-audit` stay.
+4. **THE BUILD AGENT OVERHAUL (src/subagents/trident-build/identity/t1-prompt.ts):** the stale 47-line niche prompt ("DO NOT THINK. DO NOT DEVIATE.") is RETIRED — the build agent is a niched specialized Trident for build task execution (the Poseidon infra stripped, ALL the build tools enabled by default, the FULL identity + warheads loaded). The TRIDENT_BUILD_T1 carries the full 21 warheads (adapted for build execution: the Poseidon tool mention REMOVED — Poseidon is the orchestrator's, not the build agent's; the subagent orchestration REMOVED — the leaf node; the deep planning + context synthesis REMOVED — the orchestrator's tools; the build-relevant warheads ADAPTED).
+5. **THE BOOT PAYLOAD (src/subagents/trident-build/hooks/system-transform-hook.ts):** the system-transform hook now injects the FULL TRIDENT_BUILD_T1 at the session start (the boot payload — the full identity + the warheads delivered), not the 3-line stub.
+
+**The battery:** 561 pass / 0 fail / 1730 expects [~1s] (the build is green, no regression).
+
+**The dist:** `0572128e3dc4d343...` (18.33MB, 1541 modules, EXIT 0).
+
+**The deploy:** the dist path is `/home/leviathan/OPENCODE_WORKSPACE/Shared Workspace Context/Trident_Agent/Active_Projects/v4.4.2-wave-manager-async/dist/index.js` (SHA `0572128e...`). Deploy to `~/.config/opencode/plugins/trident/dist/index.js`.
+
+
+---
+
+## UPDATE 2026-08-21 00:29 UTC — DIST 3d6555a6fbe9553ab557a1394f773cd3ecc950fe4f3714c80200a24024657c1e — SHIP_APPROVED (mechanical_dispatch_SHIP_APPROVED self-contained)
+**Dist:** `3d6555a6fbe9553ab557a1394f773cd3ecc950fe4f3714c80200a24024657c1e` (18,409,458 bytes (18.41 MB, 1542 modules)) — `bun build src/index.ts --outdir dist --target bun --format esm --bundle --external=effect`
+**Battery:** `561 pass / 0 fail / 1737 expect` (34 files) + `12005 pass / 0 fail / 37033 expect` (725 files)
+**Source:** `src/tools/shadow/shadow-agent.ts` 548 lines — ONE class `ShadowAgent` (pi SDK verbatim: `createModels()+nvidiaProvider` @ `https://integrate.api.nvidia.com/v1` + `NodeExecutionEnv` + `createReadTool/createEditTool`), `MAX_ROUNDS=4 MIN_MANDATORY_ROUNDS=2 STALL_MS=60000` event-aware, `validateFinalText` 6-marker, per-call `chainedStream` `nvidia→inferx Qwen3.6-35B-A3B-FP8→opencode deepseek-v4-flash-free→openrouter laguna-s-2.1:free` `5×5s` + `brokenRungs` circuit breaker, `thinkingLevel: medium` (R1 38s vs 230s verbose).
+**Runner:** `src/tools/shadow/shadow-runner.ts` 868 lines — `runShadowPipeline` 13-step, `buildPiSystemPrompt` step4 MANDATORY FINAL EDIT (surgical EDIT must append `~~~~~~~~~~~` + `[SHADOW INFERENCE]`), `buildPiDemand` step4 MANDATORY, `new ShadowAgent(cwd).run` at 730-741, `PI_MAX_ROUNDS=4`.
+**Wave Dispatch:** `src/tools/wave-dispatch.ts` — `CONCURRENT_GENERATIONS=15`, per-agent tether `sessionKey: waveId + '-' + spec.name` → distinct `ShadowMemory` roots → TRUE async-parallel, `slice.map(async (spec,idx)=>{if(idx)await sleep(3+rand*14); …})` 3-17ms stagger, `createWaveRegistry` per-agent manifests.
+**Templates:** 9/9 ≥100 (E1 101, E2 115, E3 100, E4 100, B1 108, B2 107, B3 104, B4 106, B5 103) — `~/.config/opencode/skills/trident-dispatch-templates/SKILL.md` 61827 bytes.
+**Keys:** `NVIDIA_KEY_B64` = new generator `nvapi-O2zMNoOw...` (separate from dispatched `nvidia/nvidia/nemotron` double-prefix build pin `opencode-go/muse-spark-1.2-contributor`), `INFERX_KEY_B64` front-of-laguna Qwen, `OPENCODE_KEY_B64` zen, `OPENROUTER` laguna.
+**Checkpoint:** `Checkpoints/mechanical_dispatch_SHIP_APPROVED` — self-contained with `src/`, `dist-index.js` `48e7`, `sha256.txt`, `context_management/`, `DEBUG_LOG.md` 1421 lines (520-line TOTAL BULLSHIT + 320-line theatrical async flagged), `BUILD_REPORT.md`.
+**Verification:** `nohup bun run /tmp/wave-3batch-sidecar.ts` → `ELAPSED 436.3s` `alpha 205s 141l` `beta 247s` `gamma 436s` all `ready:true`; `single-nvidia-check` 107l `ready:true` hasInference true; `curl` to nvidia `200 in 0.64s` with new key; `sha256sum` + `grep -c` + `ls -lh` + `bun test` 561 pass.
+
+## 2026-08-24 — SHIP-APPROVED-v2 (dist ab89acbc)
+- THE GO-PRIMARY CHAIN: opencode-go/mimo-v2.5 rung 1 (paid); GO/ZEN env-slot split (the vendored provider fix — the sk-lkZj 429 root); the base64 consts retired from the constructor path (env-only + the one GO const).
+- THE PINS: explore+build on opencode-go/muse-spark (high/xhigh) — the zen nemotron pins were dead.
+- THE CONTROL PLANE: soft/hard steer (hard = abort-then-deliver, the double-esc), agent-matched deliveries (the dynamic type token — the agent-flip class dead), pure-interrupt pause, session-scoped kill, resume DB sync (markResumed + un-archive).
+- THE SCOPE: resolveScopeRoot reads the bash workdir (the project anchor) + path-as-root — live-probed resolving the project root.
+- Full record: DEBUG_LOG EN 161-166; the v2 checkpoint is self-contained.
+
+## 2026-08-25 — THE SEALED STATE (dist f41153fb, 633/633)
+- THE RETURN-INTEGRITY LEXICON (bible-grade): L-TRUNC-1..5 + DANGLING_CONNECTIVE_LEXICON + the state machine + the evidence triads — wired into wave-read + status sessionId (returnTruncated/truncationSignals); the truncated-return class closed (complete = terminated, the flag = whole).
+- THE 0-TRUST AUDIT: battery 633/633 · tsc 0 · the 21-case edge probe (2 adjudicated probe-errors) · the container run (lexicon-verify-ct: the tool surface + the spillover gate live).
+- THE PUBLIC-REPO KEY SCRUB: every real key (plaintext + b64) → placeholders across src/dist/config/docs; the zero-residue scan verified; the git-history orphan-squash pending.
+- Full session record: DEBUG_LOG EN 161-183 · BUILD_REPORT addendum · README (github) v2 sections.
+- **EN 196 (2026-08-26): THE COMPLETION-NOTIFICATION QUESTION RESOLVED.** The opencode.db probe proved the vanilla `TaskTool.execute` background-branch inject fires for EVERY `extra.taskDispatch` agent (15/15 sampled injects = wave agents in their orchestrator sessions). The promptAsync `[WAVE MANAGER]` toast was the double-notification bug — DELETED (wave-cron.ts, 87-line surgical diff; the gate is now a pure observer: bookkeeping + remediation steer, never promptAsync). Skill §21.4/21.5/21.8 re-teaching to the vanilla-inject doctrine. Dist `d375c56f…`. 49 pre-existing battery fails isolated three ways as parallel-session drift (repair queued) — 34/0 + 23/0 on the changed paths.

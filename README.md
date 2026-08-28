@@ -1,9 +1,10 @@
 # TRIDENT v4.4.2 — Code Audit & Build Orchestration Engine
 
-**Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER ASYNC
-**Bundle:** ~18.59 MB (ESM, bun-built — 1,542 modules)
-**Runtime:** opencode 1.14.51+
+**Status:** ✅ GOD LOOP — 18-LAYER AUDIT ENGINE — POSEIDON MODE — IDENTITY INLINED — PIPELINE RESTORED — WAVE MANAGER v3 (SINGLE-NOTIFICATION END STATE)
+**Bundle:** ~18.63 MB (ESM, bun-built)
+**Runtime:** opencode 1.14.51+ (fork: the task-dispatch aperture)
 **Source:** 277 .ts files
+**Battery:** 666 pass / 0 fail
 
 > **Trident Audits & Generates Review Artifacts. Build Agents Implement All Changes.**
 
@@ -13,25 +14,39 @@ Trident inverts the standard AI coding relationship: most tools write code and c
 
 ---
 
-## The Wave Manager — The Subagent Orchestration System (v2)
+## The Wave Manager — The Subagent Orchestration System
 
-The wave manager is Trident's subagent-dispatch orchestration system. The model-facing input surface is exactly ONE FILE: `.trident/wave-spec.json` (validated: name/template/filepaths-must-exist/mission/knownContext/doctrine/measurements/acceptance/taskTargets/position, each at its char floor). `trident-wave-manager action=generate` reads the spec, runs the shadow pipeline (the GO-primary provider chain, below), and **AUTO-DISPATCHES each agent the moment its prompt validates** — no separate dispatch step, no batch form to paste, no prompt file to carry. The result returns real sessionIds immediately; the wave is already live when generation completes.
+The wave manager is Trident's subagent-dispatch orchestration system. The model-facing input surface is exactly ONE FILE: `.trident/wave-spec.json` (validated: name/template/filepaths-must-exist/mission/knownContext/doctrine/measurements/acceptance/taskTargets/position, each at its char floor). `trident-wave-manager action=generate` reads the spec, runs the shadow pipeline, and **AUTO-DISPATCHES each agent the moment its prompt validates** — no separate dispatch step, no batch form to paste, no prompt file to carry. The result returns real sessionIds immediately; the wave is already live when generation completes.
+
+### THE COMPLETION NOTIFICATION
+
+Every wave-dispatched subagent receives its completion notification through the runtime's native `TaskTool.execute({background:true})` machinery — the same path a model-issued `task(background:true)` call uses. When the child session's generation loop terminates, the runtime writes a synthetic text part into the parent session's transcript and kicks the next generation when the parent goes idle. The plugin does not generate its own completion messages — the runtime's inject IS the notification.
+
+The inject carries the child's full result: the agent name, the child session id, the completion state, and the complete task output. The parent orchestrator reads this directly from its context and acts on it — audit, canon update, next wave.
+
+The cron's completion gate evaluates each agent's return against its declared artifact class (computed at dispatch from the spec's filepaths and template) before marking it complete. Evidence types are matched per class: TYPE_BATTERY agents need battery output, RUNTIME agents need execution proof, DOC agents need structure. A gate HOLD triggers a remediation steer; a second insufficient return is marked FAILED. The gate is a pure observer — it never generates completion messages itself.
+
+The inject tripwire monitors every gate-passed agent: if the synthetic part is not found in the owner session's transcript, the cron logs a visible warning naming the agent and the likely cause. This ensures the failure mode is detectable, not silent.
+
+### The dispatch surface
+
+Spawns go through one surface: `extra.taskDispatch` → `TaskTool.execute({background:true})`. This is the only path that produces the live TUI card, the completion inject, and the idle wake. The runtime must be the task-dispatch fork — if `context.extra.taskDispatch` is missing, the generate action throws a loud error naming the missing surface. Client-side spawns (direct `session.create` + `promptAsync`) produce real child sessions but bypass the TaskTool machinery — no card, no inject, no wake — and are structurally unreachable in this codebase.
 
 ### The generate flow + the control plane (how it ACTUALLY runs)
 
 ```
-              THE WAVE MANAGER v2 — GENERATE + CONTROL
+              THE WAVE MANAGER — GENERATE + CONTROL
 
   .trident/wave-spec.json (THE ONLY INPUT)  +  .trident/wave-plan.md (WAVES: N budget)
         │
         ▼
   action=generate ── validate floors/template-intent/paths ──► SHADOW PIPELINE
-        │              (per agent, bounded concurrency 15, 3-17ms stagger)
-        │                     GO-primary chain: opencode-go/mimo-v2.5 (PAID)
-        │                     └─ only-if-dead → zen×5 cycler → nvidia → openrouter → inferx
+        │              (per agent, bounded concurrency 15, 1-3s stagger)
+        │                     THE PROVIDER CHAIN: opencode-go/mimo-v2.5
+        │                     (the single paid rung — reasoning medium)
         ▼
-  AUTO-DISPATCH per completed prompt (extra.taskDispatch — real sessionIds,
-  correct subagent_type E/B) ──► THE WAVE IS LIVE
+  AUTO-DISPATCH per completed prompt (extra.taskDispatch → TaskTool.execute
+  background:true → live card + synthetic inject + idle wake)
         │
         ▼
   generationTelemetry: { status:'generated', agentStatus:'dispatched' }
@@ -50,19 +65,15 @@ The wave manager is Trident's subagent-dispatch orchestration system. The model-
 
 **THE TRACKER STATE SYNC:** kill → row killed; resume → row running + un-archive; the tracker DB can never hold a killed-row-over-live-session or a running-row-over-dead-session. Test runs are auto-isolated (BUN_TEST detection + env-gated disk wipe — the battery can never touch production tracker state).
 
-### The provider chain (the GO-primary architecture)
+### The provider chain (the single paid rung)
 
 ```
- 1. opencode-go/mimo-v2.5        THE PAID PRIMARY — unlimited, reasoning medium
- 2. opencode/zen nemotron-free   the 5-key cycler (ZEN_KEYS rotation on 429)
- 3. nvidia nemotron              40 RPM fallback
- 4. openrouter nemotron:free     20 RPM fallback
- 5. inferx Qwen3.6-35B           the last resort
+ 1. opencode-go/mimo-v2.5        THE ONLY RUNG — unlimited, reasoning medium
 ```
 
-Per rung: 5 retries × 2.5s backoff on 429, the RPM-ledger admission gate (per-provider token buckets + a 45s shared TTL exile — one agent's observed 429 exiles the rung for the whole wave, never a permanent breaker), the event-aware 60s stall guard (fires on NO events — a live stream is never killed), and the degenerate-done verifier (a terminal event without content routes to the next rung).
+Per rung: 5 retries × 2.5s backoff on 429, the RPM-ledger admission gate (per-provider token buckets + a 45s shared TTL exile — one agent's observed 429 exiles the rung for the whole wave, never a permanent breaker), the event-aware 60s stall guard (fires on NO events — a live stream is never killed), and the degenerate-done verifier (a terminal event without content routes to the next rung). There are no fallback rungs — the single paid rung is the chain.
 
-**THE GO/ZEN ENV SPLIT (the load-bearing invariant):** the vendored `opencode-go` provider reads `OPENCODE_GO_API_KEY` — its OWN env slot, never the zen slot. Two providers on one account = the same key VALUE in TWO DISTINCT env vars. A provider reading another provider's slot gets stomped mid-flight by the cycler's rotation. One env var per provider, always.
+**THE GO ENV SPLIT (the load-bearing invariant):** the vendored `opencode-go` provider reads `OPENCODE_GO_API_KEY` — its OWN env slot, never the zen slot. Two providers on one account = the same key VALUE in TWO DISTINCT env vars. A provider reading another provider's slot gets stomped mid-flight by the cycler's rotation. One env var per provider, always.
 
 ### The subagent pins
 
@@ -89,8 +100,8 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 
 ### The verification record
 
-- `tsc --noEmit` (strict): 0 errors on all touched files · the battery: **628 pass / 0 fail / 2,504 expect (39 files)** · the bundle: 1,542 modules, 18.59 MB.
-- The GO-primary live proof: the paid rung served **15/15 LLM calls, zero fallbacks touched** (the 2-agent tool-call run, 104s wall; ledger `successCount120s:15`, every other provider 0); the 3-agent wave 114/132/188s per-agent, 3/3 auto-dispatched.
+- `tsc --noEmit` (strict): 0 errors on all touched files · the battery: **666 pass / 0 fail / 2,657 expect (44 files)** · the bundle: 18.63 MB.
+- The paid-rung live proof: **15/15 LLM calls, zero fallbacks touched** (the 2-agent tool-call run, 104s wall; ledger `successCount120s:15`, every other provider 0); the 3-agent wave 114/132/188s per-agent, 3/3 auto-dispatched.
 - The control plane, live-proven against real spawned agents (explore + build): steer soft/hard delivered as the session's OWN agent (both steer acknowledgments visible verbatim in the part stream), pause = pure interrupt (no chat message), kill ×3 forms, resume-all with the tracker row flipping killed→running in the persisted sqlite, the stream read showing the full interleaved history.
 - The telemetry-hallucination fix proven by rename: `generationTelemetry` carries `agentStatus:'dispatched'` — generation timings can no longer masquerade as run completion.
 
@@ -102,7 +113,7 @@ The flow-state engineering bible (481 lines, 23 sections): the two operating sta
 | `BUILD_REPORT.md` | the build record |
 | `LLM_FLOW_STATE_ENGINEERING.md` | the flow-state engineering bible |
 | `docs/history/` | the historical versioned docs |
-| `context_management/` | the canon docs (CURRENT_STATE at the v2 ship state) |
+| `context_management/` | the canon docs (CURRENT_STATE at the current ship state) |
 | `KNOWLEDGE_LIBRARY/agent_plugin_boilerplates/shadow_agent_backend/` | the plug-and-play boilerplate (the same architecture, zero embedded secrets — the env contract) |
 
 ### The deployment
@@ -163,7 +174,7 @@ The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, th
 - **Autonomous Operation:** 22 per-turn directives enforce senior-engineer behavior — never asks "should I continue?", never stops between phases, never tells user to activate anything. Drives from initial prompt to shipped package autonomously.
 - **Gate Compact Output:** trident-gate returns severity breakdown + top 15 findings + shared correction detection (~2KB) instead of full findings dump (~31KB).
 - **Read Efficiency Enforcement (.md files):** The `tool.execute.before` hook mechanically forces `limit=1500` when reading `.md` files with `limit < 1000`. Code files (`.ts`, `.js`) are exempt — targeted reads for surgical edits remain allowed. Prevents the #1 waste of turns: reading documentation in 200-line chunks.
-- **The Auto-Dispatch Wave Manager:** the spec file is the ONLY input; generation AUTO-DISPATCHES each agent the moment its prompt validates (real sessionIds, correct subagent type); the GO-primary provider chain (paid mimo-v2.5 rung 1, ledger-gated fallbacks); the full control plane (steer soft/hard STEER-ONLY, pure-interrupt pause, kill ×3, resume-all + the tracker state sync).
+- **The Auto-Dispatch Wave Manager:** the spec file is the ONLY input; generation AUTO-DISPATCHES each agent the moment its prompt validates (real sessionIds, correct subagent type); the provider chain (opencode-go/mimo-v2.5 — the single paid rung); the full control plane (steer soft/hard STEER-ONLY, pure-interrupt pause, kill ×3, resume-all + the tracker state sync).
 - **The Dispatch Firewalls:** the wave-mandate (the wave manager is the ONLY dispatch path), the dispatch memory screen (the RAM-bomb command classes blocked before any subagent), the template-intent mismatch filter (a research spec on a code-extract template refused BEFORE generation), the spec-file floors (the thin-args compiler-style diagnostics).
 - **The Memory-Read Lexicon:** the typed PatternFamily + the state machine on the bash tool.before — the RAM_BOMB / OUTPUT_BOMB / BUNDLE_EXEC classes blocked with the named streaming remedy; the safe reads (the sized / the lazy iteration / the streaming tools) allowed. The RAM-bomb prevention (the 7.9GB → 14.6GB RSS incident class).
 - **The Omni-Vision v5.1.4:** the vendored engine + the trident's SSE transport re-wire (the ~1.0s first-byte vs the 35-50s non-streaming buffering) — the dual-mode media processing + the silent-backend pipeline (the context manager + the memory + the silent verify) + the validator floors. Container + host verified.
@@ -271,7 +282,7 @@ The result: a **DPL1-grade prompt** — the mission, the acceptance criteria, th
 | `trident-context-synthesis` | 4-layer synthesis (collect→score→compress→inject); `outputMode=T2` → the dense bible-style knowledge file written to disk, `T1` → the lightweight injectable; 5+ keyFacts + the structured fields at 1000+ chars each | T1_INJECTABLE / T2_KNOWLEDGE |
 | **`trident-poseidon`** | **God Loop orchestrator — quality-enforced build execution with auto-lock** | **BUILD REPORT** |
 
-### The Wave-Manager Tools (3 — the v2 one-tool control plane):
+### The Wave-Manager Tools (3 — the one-tool control plane):
 
 | Tool | Description |
 |------|-------------|
@@ -705,7 +716,7 @@ Say "Poseidon Mode Activate" when ready to build again.
 ```bash
 sha256sum dist/index.js
 # 9cbd86478ad06d66e61848235aecc517d260ddaa0a0e4b6f0242bc0dfa524c72
-# (the v2 wave-manager state — the GO-primary chain + the live-proven control plane)
+# (the current wave-manager state — the single paid rung + the live-proven control plane)
 ```
 
 ---

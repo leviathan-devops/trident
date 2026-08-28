@@ -171,7 +171,10 @@ export function recordWaveServed(
   state[key] = {
     plannedAt: prev && prev.planMtimeMs === (plan?.mtimeMs ?? 0) ? prev.plannedAt : new Date().toISOString(),
     planNote: prev?.planNote || planNote,
-    wavesGenerated: (prev?.wavesGenerated ?? 0) + 1,
+    // THE BUDGET RESET (2026-08-28 — the task-35 fix, confirmed live as 19/3):
+    // a CHANGED plan (new mtime) = a FRESH budget contract — wave 1 of N, not
+    // lifetime-count+1. Only the SAME plan accumulates.
+    wavesGenerated: prev && prev.planMtimeMs === (plan?.mtimeMs ?? 0) ? prev.wavesGenerated + 1 : 1,
     planMtimeMs: plan ? plan.mtimeMs : 0,
   };
   writePlanningState(statePath, state);

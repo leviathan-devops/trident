@@ -185411,6 +185411,8 @@ THE LAW:
 
 **\xA72 \u2014 THE TELEMETRY HALLUCINATION GUARD.** The generate result carries 'generationTelemetry' per agent \u2014 the PROMPT-GENERATION timings ('status:'generated'', 'agentStatus:'dispatched''). These are NOT the agent's run. An agent that dispatched 5 seconds ago is WORKING, not finished. **DISPATCH \u2260 DONE. GENERATION TIME \u2260 RUN TIME. The ONLY completion truth is the session stream reaching 'complete'.** Never verify, harvest, or build on an agent whose stream you have not read to 'complete'.
 
+**\xA72.1 \u2014 THE CANON-UPDATE MANDATE.** UPDATE THE CANON DOCS AFTER EVERY WAVE IS COMPLETED AND ITS QUALITY CONTROL IS DONE, BEFORE DISPATCHING THE NEXT WAVE. The canon is the self-continue mechanism \u2014 a compaction mid-build must leave a fresh agent able to pick up exactly where you are. THE MANDATE, per wave: UPDATE context_management/CURRENT_STATE.md (the architecture as it now is), BUILD_STATE.md (the current dist SHA + the battery), CHANGELOG.md (the wave's history, appended), EVIDENCE_STATE.md (the per-wave evidence \u2014 the gate verdicts, the audits, the test results), DECISION_CHAIN.md (any ruling the wave produced), NEXT_STEPS.md + TASK_QUEUE.md (the queued work, the fired ideas), POST-COMPACTION_PROMPT.md (the resume point \u2014 what a fresh agent reads first), COMPACTION_SURVIVAL.md (the session record, current). A wave whose canon docs are stale is an UNFINISHED wave \u2014 the update is PART of the wave's completion, never deferred to 'later'. The canon-update law applies BETWEEN EVERY WAVE, not only at the build's end. USE THE canon-doc-update SKILL FOR THE UPDATE \u2014 load it via the skill tool with name='canon-doc-update' and follow its protocol: read the CANON_MANIFEST, update each doc per its semantics (the append-only logs append, the state docs reflect the current state), and verify the density + the cross-consistency gates before closing the wave.
+
 **\xA73 \u2014 THE SESSION-STREAM TRUTH.** 'trident-wave-read sessionId=<id>' (or 'action=status sessionId=<id>') is the ONLY liveness instrument: it reads the opencode.db part stream directly. 'task_status' is BANNED for liveness \u2014 it reports the background-JOB registry which can say 'cancelled' for a LIVE session. The status values: 'stream' = actively working (new parts + unfinished step \u2014 LEAVE IT ALONE); 'idle' = paused/awaiting mid-task (no new parts + last step finished \u2014 THIS is when a kick lands); 'complete' = the session TERMINATED \u2014 \u26A0 TERMINATED \u2260 THE WORK IS WHOLE: a provider cut mid-return still lands the terminal finish, and the report can be truncated mid-sentence. The read result's 'returnTruncated' flag (the truncation signals on the final text part: dangling-connective / unclosed-code-fence / unclosed-inline-code / trailing-structure-opener) is the integrity layer \u2014 a truncated return = an interrupted agent = KICK (resume), NEVER a harvest; 'absent' = wrong id. Between polls, read the part content: 'lastTools' shows what it is doing; a frozen part count past the ETA = investigate (\xA75).
 
 **\xA74 \u2014 THE CONTROL PLANE.**
@@ -259988,7 +259990,7 @@ function resolveShadowOpenRouterApiKey() {
   } catch (e) {}
   return "";
 }
-var EMBEDDED_KEY_B64 = "c2stUExBQ0VIT0xERVItWkVOLUtFWS01", EMBEDDED_OPENROUTER_KEY_B64 = "c2stb3ItUExBQ0VIT0xERVItT1BFTlJPVVRFUi1LRVk=", EMBEDDED_NVIDIA_KEY_B64 = "bnZhcGktUExBQ0VIT0xERVItTlZJRElBLU9MRC1LRVk=", ENV_PATHS;
+var EMBEDDED_KEY_B64 = "c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==", EMBEDDED_OPENROUTER_KEY_B64 = "c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==", EMBEDDED_NVIDIA_KEY_B64 = "bnZhcGktaEtEUEVvUngzUlljVlZXMExrT3BMOW9rdm40WDJKVUN3VExybl9YUUxWZ01aN2FxdTBCR2RLSDdsWG93S1hSQg==", ENV_PATHS;
 var init_shadow_secrets = __esm(() => {
   ENV_PATHS = [
     path18.join(process.cwd(), ".env"),
@@ -275147,12 +275149,190 @@ var init_rpm_ledger = __esm(() => {
   };
 });
 
-// src/tools/shadow/shadow-agent.ts
+// src/tools/shadow/capture.ts
 import * as fs20 from "fs";
+import * as path26 from "path";
+function captureDir() {
+  return process.env.TRIDENT_SHADOW_CAPTURE_DIR ?? "/tmp/trident-shadow-captures";
+}
+function escCell(v) {
+  return redactControls(v.replace(/\|/g, "\\|").replace(/\r?\n/g, "\u23CE"));
+}
+function redactControls(v) {
+  return v.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, (c) => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+}
+function fmtData(data) {
+  try {
+    const s = typeof data === "string" ? data : JSON.stringify(data);
+    return escCell(String(s ?? "").slice(0, 2000));
+  } catch {
+    return "CAPTURE_SERIALIZE_FAIL";
+  }
+}
+function beginCapture(key, waveId, agentName) {
+  try {
+    const dir = path26.join(captureDir(), waveId);
+    fs20.mkdirSync(dir, { recursive: true });
+    const file2 = path26.join(dir, (agentName || "agent").replace(/[^A-Za-z0-9_-]/g, "-") + "-capture.md");
+    const t0 = Date.now();
+    if (fs20.existsSync(file2)) {
+      fs20.appendFileSync(file2, `
+
+---
+
+## RE-BEGIN (retry pass) \u2014 ` + new Date(t0).toISOString() + `
+
+`, "utf-8");
+    } else {
+      fs20.writeFileSync(file2, "# SHADOW CAPTURE \u2014 " + waveId + " / " + agentName + `
+
+` + "- started: " + new Date(t0).toISOString() + `
+` + "- captureKey: `" + key + "`\n" + `- THE TIMELINE (below): one compact row per event \u2014 chain LLM calls (rung/attempt/duration/events), rounds, tools, the dispatch columns.
+` + `- THE TRANSCRIPT (below the timeline): full /export-level detail \u2014 system prompt, round prompts verbatim, every LLM call's reasoning + text + tool calls with FULL args, every tool result with FULL content, the raw done-message JSON per call.
+
+` + `## TIMELINE
+
+` + `| # | wallclock | +ms | stage | data |
+` + `|---|---|---|---|---|
+`, "utf-8");
+    }
+    active.set(key, { file: file2, t0, seq: 0 });
+    return file2;
+  } catch {
+    return "";
+  }
+}
+function captureEvent(key, stage, data) {
+  const st = active.get(key);
+  if (!st)
+    return;
+  try {
+    const now = Date.now();
+    st.seq++;
+    fs20.appendFileSync(st.file, "| " + st.seq + " | " + new Date(now).toISOString().slice(11, 23) + " | +" + (now - st.t0) + "ms | " + stage + " | " + fmtData(data) + ` |
+`, "utf-8");
+  } catch {}
+}
+function captureSection(key, title, body, fence) {
+  const st = active.get(key);
+  if (!st)
+    return;
+  try {
+    const now = Date.now();
+    const f = fence ?? "";
+    fs20.appendFileSync(st.file, `
+### [` + new Date(now).toISOString().slice(11, 23) + " +" + (now - st.t0) + "ms] " + title + `
+
+` + (f ? "```" + f + `
+` : "") + redactControls(body) + (f ? "\n```" : "") + `
+`, "utf-8");
+  } catch {}
+}
+function endCapture(key, stage, data) {
+  captureEvent(key, stage, data);
+  active.delete(key);
+}
+function fragment(ev) {
+  const e = ev;
+  for (const k of ["delta", "content", "text", "thinking", "args", "arguments", "input", "data"]) {
+    if (typeof e[k] === "string")
+      return e[k];
+  }
+  return "";
+}
+function assembleCall(events) {
+  const out = { reasoning: "", text: "", toolCalls: [], eventCount: events.length, errorText: null };
+  let curTool = null;
+  let mode = "none";
+  for (const ev of events) {
+    const e = ev ?? {};
+    const t = String(e.type ?? "");
+    if (t === "thinking_delta" || t === "reasoning_delta") {
+      mode = "thinking";
+      out.reasoning += fragment(e);
+      continue;
+    }
+    if (t === "text_delta") {
+      mode = "text";
+      out.text += fragment(e);
+      continue;
+    }
+    if (t === "toolcall_start" || t === "tool_call_start") {
+      curTool = { id: typeof e.toolCallId === "string" ? e.toolCallId : typeof e.id === "string" ? e.id : undefined, name: typeof e.toolName === "string" ? e.toolName : typeof e.name === "string" ? e.name : undefined, args: "" };
+      out.toolCalls.push(curTool);
+      mode = "tool";
+      continue;
+    }
+    if (t === "toolcall_delta" || t === "tool_call_delta") {
+      if (curTool)
+        curTool.args += fragment(e);
+      continue;
+    }
+    if (t === "error") {
+      const err2 = e.error;
+      out.errorText = typeof err2?.errorMessage === "string" ? err2.errorMessage : JSON.stringify(e).slice(0, 500);
+      continue;
+    }
+  }
+  return out;
+}
+function writeCallTranscript(key, header, events, doneMessage) {
+  const a = assembleCall(events);
+  const parts = [];
+  parts.push("**" + header + "** \u2014 " + a.eventCount + " stream events");
+  if (a.errorText)
+    parts.push(`
+**ERROR:** ` + a.errorText);
+  if (a.reasoning.trim().length > 0) {
+    parts.push(`
+**REASONING (assembled from thinking deltas):**
+
+` + a.reasoning);
+  }
+  if (a.text.trim().length > 0) {
+    parts.push(`
+**TEXT (assembled):**
+
+` + a.text);
+  }
+  if (a.toolCalls.length > 0) {
+    parts.push(`
+**TOOL CALLS (assembled):**`);
+    for (const tc of a.toolCalls) {
+      parts.push("\n- `" + (tc.name ?? "tool") + "`" + (tc.id ? " (" + tc.id + ")" : "") + " args:\n\n```json\n" + tc.args + "\n```");
+    }
+  }
+  parts.push(`
+**RAW DONE-MESSAGE (authoritative, full JSON):**
+
+\`\`\`json
+` + safeJson(doneMessage) + "\n```");
+  captureSection(key, "LLM CALL", parts.join(`
+`), "");
+}
+function safeJson(v) {
+  try {
+    return redactControls(JSON.stringify(v, null, 2) ?? String(v));
+  } catch {
+    return "CAPTURE_JSON_FAIL: " + redactControls(String(v).slice(0, 2000));
+  }
+}
+function captureJson(v) {
+  return safeJson(v);
+}
+var active;
+var init_capture = __esm(() => {
+  active = new Map;
+});
+
+// src/tools/shadow/shadow-agent.ts
+import * as fs21 from "fs";
 
 class ShadowAgent {
   models;
   env;
+  capKey = "";
+  w1State = null;
   chain;
   ledger;
   constructor(cwd, opts) {
@@ -275175,11 +275355,7 @@ class ShadowAgent {
     this.models.setProvider(this.inferxProvider());
     this.env = new NodeExecutionEnv({ cwd: cwd ?? process.cwd() });
     this.chain = [
-      { provider: "opencode-go", modelId: "mimo-v2.5" },
-      { provider: "opencode", modelId: "nemotron-3.5-lightning-free" },
-      { provider: "nvidia", modelId: "nemotron-3.5-lightning-30b-a3b" },
-      { provider: "openrouter", modelId: "nvidia/nemotron-3.5-lightning:free" },
-      { provider: "inferx", modelId: "Qwen3.6-35B-A3B-FP8" }
+      { provider: "opencode-go", modelId: "mimo-v2.5" }
     ];
   }
   inferxProvider() {
@@ -275208,6 +275384,8 @@ class ShadowAgent {
   }
   nativeTools(promptFilePath) {
     const ctx = { env: this.env };
+    const w1 = { editCallsThisRound: 0, editedSinceLastRead: false };
+    this.w1State = w1;
     const read = createReadTool();
     const edit2 = createEditTool();
     const bindRead = (tool4) => ({
@@ -275215,7 +275393,26 @@ class ShadowAgent {
       label: "read",
       description: "read { filepath } \u2014 file content. Batch your reads when several are needed.",
       parameters: tool4.parameters,
-      execute: async (toolCallId, params, signal, onUpdate) => tool4.execute(toolCallId, params, signal, onUpdate, ctx)
+      execute: async (toolCallId, params, signal, onUpdate) => {
+        captureEvent(this.capKey, "TOOL_CALL", { tool: "read", args: params });
+        const r = await tool4.execute(toolCallId, params, signal, onUpdate, ctx);
+        try {
+          const p = params ?? {};
+          if (w1.editedSinceLastRead && typeof p.path === "string" && p.path === promptFilePath && (p.limit === undefined || p.limit >= 60)) {
+            w1.editedSinceLastRead = false;
+          } else if (w1.editedSinceLastRead && typeof p.path === "string" && p.path === promptFilePath && typeof p.limit === "number" && p.limit < 60) {
+            const rec = r;
+            const warn = `
+[W1 KEYHOLE GUARD] You re-read a small slice of the file you just edited \u2014 the edit result ALREADY confirmed the applied change. Do NOT re-verify edits by keyhole reads; plan the next batched edit or finish the round.`;
+            if (Array.isArray(rec.content))
+              rec.content = [...rec.content, { type: "text", text: warn }];
+            else if (typeof rec.content === "string")
+              rec.content = rec.content + warn;
+          }
+        } catch {}
+        captureSection(this.capKey, "TOOL RESULT \u2014 read", captureJson(r), "json");
+        return r;
+      }
     });
     const bindEdit = (tool4) => ({
       name: "edit",
@@ -275225,7 +275422,27 @@ class ShadowAgent {
       execute: async (toolCallId, params, signal, onUpdate) => {
         const incoming = params ?? {};
         const forced = { ...incoming, path: promptFilePath };
-        return await tool4.execute(toolCallId, forced, signal, onUpdate, ctx);
+        const pairCount = Array.isArray(incoming.edits) ? incoming.edits.length : 0;
+        w1.editCallsThisRound++;
+        if (w1.editCallsThisRound > 3) {
+          captureEvent(this.capKey, "W1_ENFORCED_REFUSAL", { call: w1.editCallsThisRound, pairCount });
+          throw new Error("[W1 ENFORCED \u2014 EDIT REFUSED] This is edit call #" + w1.editCallsThisRound + " this round (budget: 3). You are DRIPPING single edits \u2014 a W1 violation. STOP. Re-plan EVERY remaining replacement and fire ONE final edit call whose edits[] array carries ALL pairs. Do NOT read the file to re-plan \u2014 you already know the defects. Consolidate now.");
+        }
+        captureEvent(this.capKey, "TOOL_CALL", { tool: "edit", edits: pairCount, call: w1.editCallsThisRound });
+        captureSection(this.capKey, "TOOL CALL \u2014 edit (full args)", captureJson(forced), "json");
+        const r = await tool4.execute(toolCallId, forced, signal, onUpdate, ctx);
+        w1.editedSinceLastRead = true;
+        try {
+          const rec = r;
+          const rider = `
+[W1] Edit call ` + w1.editCallsThisRound + "/3 this round \u2014 " + pairCount + " pair(s) APPLIED (this result IS the verification; do NOT re-read to confirm). Remaining edits this round MUST ride ONE consolidated call.";
+          if (Array.isArray(rec.content))
+            rec.content = [...rec.content, { type: "text", text: rider }];
+          else if (typeof rec.content === "string")
+            rec.content = rec.content + rider;
+        } catch {}
+        captureSection(this.capKey, "TOOL RESULT \u2014 edit", captureJson(r), "json");
+        return r;
       }
     });
     return [bindRead(read), bindEdit(edit2)];
@@ -275235,6 +275452,7 @@ class ShadowAgent {
     const base = options2 ?? {};
     const chainT0 = Date.now();
     console.error("[chain] START \u2014 the per-call retry+fallback chain (opencode-go/mimo-v2.5 PAID \u2192 opencode/zen\xD75 \u2192 nvidia \u2192 openrouter \u2192 inferx, ledger-gated, key-pooled)");
+    captureEvent(this.capKey, "CHAIN_START", { at: 0 });
     (async () => {
       let lastError = null;
       const admissions = this.chain.map((e) => this.ledger.admission(e.provider));
@@ -275271,6 +275489,7 @@ class ShadowAgent {
           const buffer = [];
           const attemptT0 = Date.now();
           console.error("[chain] try", entry.provider + "/" + entry.modelId, "attempt", attempt + "/" + RETRY_ATTEMPTS, "at +" + Math.round((Date.now() - chainT0) / 1000) + "s");
+          captureEvent(this.capKey, "CHAIN_TRY", { rung: entry.provider + "/" + entry.modelId, attempt: attempt + 1, atS: Math.round((Date.now() - chainT0) / 1000) });
           const ac = new AbortController;
           let lastEventAt = Date.now();
           const stallTimer = setInterval(() => {
@@ -275293,7 +275512,9 @@ class ShadowAgent {
             const inner = this.models.streamSimple(entryModel, context3, {
               ...base,
               apiKey: key,
-              signal: ac.signal
+              signal: ac.signal,
+              reasoningEffort: "medium",
+              thinkingBudgets: { minimal: 512, low: 1024, medium: 2048, high: 4096 }
             });
             let eventCount = 0;
             for await (const event of inner) {
@@ -275304,6 +275525,7 @@ class ShadowAgent {
               if (eventCount === 1 || eventCount % 25 === 0) {
                 const ev2 = event;
                 console.error("[chain]", entry.provider + "/" + entry.modelId, "attempt", attempt, "event", eventCount, ev2.type, "at +" + Math.round((Date.now() - attemptT0) / 1000) + "s");
+                captureEvent(this.capKey, "CHAIN_EVENT", { rung: entry.provider + "/" + entry.modelId, attempt: attempt + 1, event: eventCount, type: ev2.type ?? "", atS: Math.round((Date.now() - attemptT0) / 1000) });
               }
               const ev = event;
               if (ev.type === "error") {
@@ -275326,6 +275548,11 @@ class ShadowAgent {
             clearInterval(stallTimer);
             if (succeeded) {
               console.error("[chain] OK", entry.provider + "/" + entry.modelId, "attempt", attempt, "events", eventCount, "at +" + Math.round((Date.now() - attemptT0) / 1000) + "s");
+              captureEvent(this.capKey, "CHAIN_OK", { rung: entry.provider + "/" + entry.modelId, attempt: attempt + 1, events: eventCount, durS: Math.round((Date.now() - attemptT0) / 1000) });
+              const doneEv = buffer.find((b) => b.type === "done");
+              try {
+                writeCallTranscript(this.capKey, "LLM CALL \u2014 " + entry.provider + "/" + entry.modelId + " attempt " + (attempt + 1) + " OK (" + eventCount + " events, " + Math.round((Date.now() - attemptT0) / 1000) + "s)", buffer, doneEv?.message ?? null);
+              } catch {}
               this.ledger.recordSuccess(entry.provider);
               for (const ev of buffer)
                 outer.push(ev);
@@ -275333,6 +275560,10 @@ class ShadowAgent {
               return;
             }
             console.error("[chain] FAIL", entry.provider + "/" + entry.modelId, "attempt", attempt, "events", eventCount, "err", (attemptError ?? "none")?.slice(0, 120), "at +" + Math.round((Date.now() - attemptT0) / 1000) + "s");
+            captureEvent(this.capKey, "CHAIN_FAIL", { rung: entry.provider + "/" + entry.modelId, attempt: attempt + 1, events: eventCount, err: (attemptError ?? "none")?.slice(0, 300), durS: Math.round((Date.now() - attemptT0) / 1000) });
+            try {
+              writeCallTranscript(this.capKey, "LLM CALL \u2014 " + entry.provider + "/" + entry.modelId + " attempt " + (attempt + 1) + " FAILED \u2014 " + (attemptError ?? "unknown"), buffer, null);
+            } catch {}
           } catch (e) {
             clearInterval(stallTimer);
             attemptError = e instanceof Error ? e.message : String(e);
@@ -275367,7 +275598,7 @@ class ShadowAgent {
         model: "chain-fail",
         content: [],
         stopReason: "error",
-        errorMessage: lastError ?? "SHADOW_CHAIN_FAIL",
+        errorMessage: "SHADOW_API_UNREACHABLE: the PAID API (opencode-go/mimo-v2.5) failed after every attempt \u2014 API UNREACHABLE \u2014 SWAP THE API KEY. Last error: " + (lastError ?? "SHADOW_CHAIN_FAIL"),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         timestamp: Date.now()
       };
@@ -275381,6 +275612,13 @@ class ShadowAgent {
     const systemPrompt = opts.systemPrompt;
     const demand = opts.demand;
     const maxRounds = opts.maxRounds ?? MAX_ROUNDS;
+    this.capKey = opts.captureKey ?? "";
+    if (this.capKey) {
+      captureEvent(this.capKey, "RUN_START", { promptFilePath, maxRounds });
+      captureSection(this.capKey, "SYSTEM PROMPT (full)", systemPrompt, "markdown");
+      if (demand)
+        captureSection(this.capKey, "ROUND-1 DEMAND (the polish instruction + context chain, full)", demand, "markdown");
+    }
     const model = this.models.getModel("nvidia", SHADOW_MODEL2) ?? this.models.getModel("nvidia", SHADOW_MODEL2.split("/").pop() || SHADOW_MODEL2);
     if (!model) {
       return {
@@ -275399,6 +275637,20 @@ class ShadowAgent {
         tools: this.nativeTools(promptFilePath),
         thinkingLevel: "medium"
       },
+      shouldStopAfterTurn: (turnCtx) => {
+        try {
+          const msgs = turnCtx.newMessages;
+          const llmCalls = Array.isArray(msgs) ? msgs.filter((m) => m.role === "assistant").length : 0;
+          if (llmCalls >= 12) {
+            console.error("[shadow-agent] TURN CAP HIT (12 LLM calls this prompt) \u2014 forcing round end");
+            captureEvent(this.capKey, "TURN_CAP_HIT", { llmCalls });
+            return true;
+          }
+          return false;
+        } catch {
+          return false;
+        }
+      },
       streamFn: opts.streamFn ? opts.streamFn : this.chainedStream.bind(this),
       toolExecution: "parallel",
       thinkingBudgets: { minimal: 512, low: 1024, medium: 2048, high: 4096 },
@@ -275413,10 +275665,16 @@ class ShadowAgent {
       for (let round = 1;round <= maxRounds; round++) {
         roundsUsed = round;
         console.error("[shadow-agent] ROUND", round + "/" + maxRounds, "START", Math.round((Date.now() - runStart) / 1000) + "s");
-        const roundPrompt = round === 1 ? "ROUND 1 \u2014 FIRST EDIT (mandatory, ONE edit call). Every source you need is ALREADY in your context (the woven brief + THE ACTUAL FILE CONTENTS below) \u2014 no input reads needed. PLAN all polish replacements in your reasoning FIRST (slop sections, broken flow, disjointed prose + the [SHADOW INFERENCE] block append per W4), then fire ONE edit call whose edits[] carries EVERY pair. Consolidate nearby changes; each oldText UNIQUE. THE EDIT TOOL IS THE ONLY WAY TO CHANGE THE FILE. You MUST edit this round. Do NOT rewrite the entire prompt from scratch." : round === 2 ? "ROUND 2 \u2014 FIRST REVISION LOOP (mandatory). STEP 1: ONE read of " + promptFilePath + " \u2014 0-trust audit for lingering derailment fuel, slop, theatrical garbage + verify your [SHADOW INFERENCE] section is present beneath a ~~~~~~~~~~~ separator with the [SHADOW INFERENCE] prefix exactly like that before its content \u2014 a 300-600 token summary of YOUR context awareness + the subagent task responsibilities + what REAL success looks like + the explicitly forbidden theatrical/degenerate behaviors. STEP 2: defects found? plan fixes in reasoning then ONE edit call whose edits[] carries ALL of them. THEN the EMBEDDED MICRO-LOOP (max 3 loops total from the first re-verify): RE-VERIFY (one read) -> defects? RE-FIX (one batched edit call) -> loop. A clean re-verify ends the micro-loop immediately. The 3-loop cap is the circuit breaker." : round === 3 ? "ROUND 3 \u2014 OPTIONAL REVISION 2 (scoped verify). Read ONLY the regions you edited in R1-R2 (targeted read calls \u2014 not the whole file). Bet-your-life solid to anchor the FULL end-to-end subagent execution? [SHADOW INFERENCE] precise + dense? Solid = return DONE (zero tool calls). Defects = ONE edit call carrying every fix in edits[], then RE-VERIFY only those changed spots -> RE-FIX, up to the 3-loop breaker." : "ROUND 4 \u2014 OPTIONAL REVISION 3 (final, scoped). Same as ROUND 3: targeted reads over your edited regions only \u2014 solid = DONE (zero tool calls); defects = ONE batched edit call, then the micro-loop up to the 3-loop breaker, then done.";
+        captureEvent(this.capKey, "ROUND_START", { round, of: maxRounds, atS: Math.round((Date.now() - runStart) / 1000) });
+        if (this.w1State) {
+          this.w1State.editCallsThisRound = 0;
+          this.w1State.editedSinceLastRead = false;
+        }
+        const roundPrompt = round === 1 ? "ROUND 1 \u2014 FIRST EDIT (mandatory, ONE edit call). Every source you need is ALREADY in your context (the woven brief + THE ACTUAL FILE CONTENTS below) \u2014 no input reads needed. PLAN all polish replacements in your reasoning FIRST (slop sections, broken flow, disjointed prose + the [SHADOW INFERENCE] block append per W4), then fire ONE edit call whose edits[] carries EVERY pair. Consolidate nearby changes; each oldText UNIQUE. THE EDIT TOOL IS THE ONLY WAY TO CHANGE THE FILE. You MUST edit this round. Do NOT rewrite the entire prompt from scratch. COMMIT LAW (W5): once the pairs are chosen, FIRE immediately \u2014 no re-deliberation, no re-checking; the 2048-token thinking cap forces execution anyway." : round === 2 ? "ROUND 2 \u2014 FIRST REVISION LOOP (mandatory). STEP 1: ONE read of " + promptFilePath + " \u2014 0-trust audit for lingering derailment fuel, slop, theatrical garbage + verify your [SHADOW INFERENCE] section is present beneath a ~~~~~~~~~~~ separator with the [SHADOW INFERENCE] prefix exactly like that before its content \u2014 a 300-600 token summary of YOUR context awareness + the subagent task responsibilities + what REAL success looks like + the explicitly forbidden theatrical/degenerate behaviors. STEP 2: defects found? plan fixes in reasoning then ONE edit call whose edits[] carries ALL of them. THEN the EMBEDDED MICRO-LOOP (max 3 loops total from the first re-verify): RE-VERIFY (one read) -> defects? RE-FIX (one batched edit call) -> loop. A clean re-verify ends the micro-loop immediately. The 3-loop cap is the circuit breaker. COMMIT LAW (W5): audit \u2192 decide once \u2192 FIRE the batched fix; never re-deliberate an unchanged file." : round === 3 ? "ROUND 3 \u2014 OPTIONAL REVISION 2 (scoped verify). Read ONLY the regions you edited in R1-R2 (targeted read calls \u2014 not the whole file). Bet-your-life solid to anchor the FULL end-to-end subagent execution? [SHADOW INFERENCE] precise + dense? Solid = return DONE (zero tool calls). Defects = ONE edit call carrying every fix in edits[], then RE-VERIFY only those changed spots -> RE-FIX, up to the 3-loop breaker." : "ROUND 4 \u2014 OPTIONAL REVISION 3 (final, scoped). Same as ROUND 3: targeted reads over your edited regions only \u2014 solid = DONE (zero tool calls); defects = ONE batched edit call, then the micro-loop up to the 3-loop breaker, then done.";
         const effectivePrompt = round === 1 && demand ? demand + `
 
 ` + roundPrompt : roundPrompt;
+        captureSection(this.capKey, "ROUND " + round + " \u2014 USER PROMPT (verbatim)", effectivePrompt, "markdown");
         await agent2.prompt(effectivePrompt);
         await agent2.waitForIdle();
         const newMessages = agent2.state.messages.slice(prevMessageCount);
@@ -275431,7 +275689,8 @@ class ShadowAgent {
           return n;
         })();
         toolCallsMade += roundToolCalls;
-        const finalText2 = fs20.readFileSync(opts.promptFilePath, "utf-8");
+        captureEvent(this.capKey, "ROUND_END", { round, roundToolCalls, atS: Math.round((Date.now() - runStart) / 1000) });
+        const finalText2 = fs21.readFileSync(opts.promptFilePath, "utf-8");
         const hasInference = finalText2.includes("~~~~~~~~~~~") && /\[SHADOW INFERENCE\]/.test(finalText2);
         const valid = validateFinalText(finalText2) && hasInference;
         if (valid && round >= MIN_MANDATORY_ROUNDS && round < maxRounds)
@@ -275458,7 +275717,7 @@ class ShadowAgent {
     })();
     const fileHasContent = (() => {
       try {
-        return fs20.readFileSync(opts.promptFilePath, "utf-8").trim().length > 0;
+        return fs21.readFileSync(opts.promptFilePath, "utf-8").trim().length > 0;
       } catch {
         return false;
       }
@@ -275481,6 +275740,7 @@ class ShadowAgent {
     } catch {}
     if ((agentErrored || errors7.length > 0) && !polishSucceeded) {
       const errText = agentErrored || errors7[0] || "SHADOW_PI_FAIL";
+      captureEvent(this.capKey, "RUN_END", { outcome: "LOUD_FAIL", errText: errText.slice(0, 300), roundsUsed, toolCallsMade });
       return {
         text: "",
         lines: 0,
@@ -275490,7 +275750,9 @@ class ShadowAgent {
         fileStates: []
       };
     }
-    const finalText = fs20.readFileSync(opts.promptFilePath, "utf-8");
+    const finalText = fs21.readFileSync(opts.promptFilePath, "utf-8");
+    captureEvent(this.capKey, "RUN_END", { outcome: "OK", roundsUsed, toolCallsMade, lines: finalText.split(`
+`).length });
     return {
       text: finalText,
       lines: finalText.split(`
@@ -275524,11 +275786,12 @@ function validateFinalText(text) {
     return false;
   return hasMission && hasReading && hasWhatHowWhy && hasConstraints && hasVerification && hasReturn;
 }
-var SHADOW_MODEL2 = "nemotron-3.5-lightning-30b-a3b", NVIDIA_KEY_B64 = "bnZhcGktUExBQ0VIT0xERVItTlZJRElBLUtFWQ==", OPENCODE_KEY_B64 = "c2stUExBQ0VIT0xERVItWkVOLUtFWS01", OPENCODE_GO_KEY_B64 = "c2stUExBQ0VIT0xERVItR08tS0VZ", OPENROUTER_KEY_B64 = "c2stb3ItUExBQ0VIT0xERVItT1BFTlJPVVRFUi1LRVk=", INFERX_KEY_B64 = "aXgtUExBQ0VIT0xERVItSU5GRVJYLUtFWQ==", MAX_ROUNDS = 2, MIN_MANDATORY_ROUNDS = 2, STALL_MS = 60000, RETRY_ATTEMPTS = 5, RETRY_BACKOFF_MS = 2500, RETRYABLE_RE, ZEN_KEYS, zenKeyIndex = 0;
+var SHADOW_MODEL2 = "nemotron-3.5-lightning-30b-a3b", NVIDIA_KEY_B64 = "bnZhcGktTzJ6TU5vT3dOMkkwRFBkMzItV0o1VE9adGhLc05TRUM2U0JtN3RYMXQyc0ZxM09oUjE4UWJxYmlzOWF2MVI1cQ==", OPENCODE_KEY_B64 = "c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==", OPENCODE_GO_KEY_B64 = "c2stWkhja0RIelZ0SGpmQVQ1b3VEeGZXQTVnUjF3aTlWM1RNb2RpYkNRaDJydDV3cHRUd3pHZEVzalROQlpqd2N0aA==", OPENROUTER_KEY_B64 = "c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==", INFERX_KEY_B64 = "aXhfMjY1ZjQzNzFmN2UxMmY3MzAzZTQwOThlNzUxZGE4YTMxM2Q1NjcxOWRiZjBiMTc3MGE4OGQyMmU1MjEyMTE3MQ==", MAX_ROUNDS = 2, MIN_MANDATORY_ROUNDS = 2, STALL_MS = 60000, RETRY_ATTEMPTS = 5, RETRY_BACKOFF_MS = 2500, RETRYABLE_RE, ZEN_KEYS, zenKeyIndex = 0;
 var init_shadow_agent = __esm(() => {
   init_src3();
   init_node2();
   init_rpm_ledger();
+  init_capture();
   init_src();
   init_openai_completions_lazy();
   init_nvidia2();
@@ -275537,17 +275800,17 @@ var init_shadow_agent = __esm(() => {
   init_opencode_go2();
   RETRYABLE_RE = /429|rate.?limit|too many|quota|5\d\d/i;
   ZEN_KEYS = [
-    "sk-PLACEHOLDER-ZEN-KEY-1",
-    "sk-PLACEHOLDER-ZEN-KEY-2",
-    "sk-PLACEHOLDER-GO-KEY",
-    "sk-PLACEHOLDER-ZEN-KEY-4",
-    "sk-PLACEHOLDER-ZEN-KEY-5"
+    "sk-hzzyXqigLO0PVsBlzmiA1bTPXUor6TrpwlhBLVoSbO95gshcqKbJs0RgpGMBFois",
+    "sk-zlzZ3X26j7lBP8i4ZQpfDyzPTJyBP0Eei4hmPimXUgTPSKuJRJCxvt989kJ37Owf",
+    "sk-ZHckDHzVtHjfAT5ouDxfWA5gR1wi9V3TModibCQh2rt5wptTwzGdEsjTNBZjwcth",
+    "sk-9BsmoeL3bz03P5TAwqUDI9BNutDLkISB7paI2OjBSKPenC3KkMKiBP7sVDmkqTWk",
+    "sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb"
   ];
 });
 
 // src/tools/shadow/shadow-runner.ts
-import * as fs21 from "fs";
-import * as path26 from "path";
+import * as fs22 from "fs";
+import * as path27 from "path";
 import { createHash as createHash3 } from "crypto";
 function sha256hex(s) {
   return createHash3("sha256").update(s).digest("hex");
@@ -275581,7 +275844,7 @@ function preReadExcerpts(filepaths) {
   const out = [];
   for (const p of filepaths) {
     try {
-      const content = fs21.readFileSync(p, "utf-8");
+      const content = fs22.readFileSync(p, "utf-8");
       const lines = content.split(`
 `).length;
       const excerpt = content.length > EXCERPT_CAP ? content.substring(0, EXCERPT_CAP) + `
@@ -275680,7 +275943,7 @@ function extractDistinctiveQuotes(doctrine) {
 function freshnessFlags(promptText, fileStates) {
   const out = [];
   for (const st of fileStates) {
-    const base = path26.basename(st.path).replace(/\.[^.]+$/, "");
+    const base = path27.basename(st.path).replace(/\.[^.]+$/, "");
     const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp("\\b" + escaped + "\\S*\\s*\\(?\\s*(\\d+)\\s+lines", "i");
     const m = promptText.match(re);
@@ -275762,6 +276025,8 @@ function buildPiSystemPrompt() {
     "",
     'W4 \u2014 THE EVIDENCE LAWS: THE FILES ARE THE ONLY GROUND TRUTH \u2014 verify against them, never conform to belief. Surgical polish, NEVER a rewrite. PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM. MANDATORY FINAL STATE: the file ENDS with "~~~~~~~~~~~" then "[SHADOW INFERENCE]" then YOUR dense forward-map (\u2265100 chars of real content \u2014 a bare marker FAILS validation) (what files ARE from reading them, traps, priorities) \u2014 created via YOUR edit, never a mechanical paste. NEVER emit plans/self-review ("I think", "Let me", "DONE") as work \u2014 only edits change the file; when it reads clean, stop.',
     "",
+    "W5 \u2014 THE COMMIT LAW (think fast, decide once, fire): there is a HARD 2048-token reasoning cap per turn \u2014 the limit mechanically blocks further thinking and forces execution, and each turn resets the window. Think quickly and be decisive: orient (what changed / what to edit), decide ONCE, then the very next thing you emit is the tool call. Do NOT overthink and do NOT spiral into degenerate re-deliberation loops \u2014 re-deliberating an unchanged file state, re-reading what you already read, or re-verifying a plan you already formed is BANNED. Correctness is recovered by the verify\u2192fix micro-loop AFTER the edit (W2), never by more thinking BEFORE it. An identified edit is a FIRED edit.",
+    "",
     SUPREMACY_CONTRACT2,
     "",
     INFERENCE_BRIEF_INSTRUCTION
@@ -275773,9 +276038,9 @@ function buildPiDemand(brief, chainText, ingestText) {
     "THE FILE ON DISK IS THE WOVEN DISPATCH PROMPT \u2014 70-80% DONE. THE CONTEXT ARGS ARE ALREADY WOVEN INTO IT. YOUR JOB IS THE REMAINING 20%: SURGICAL POLISH, NOT A REWRITE.",
     "",
     "DO THIS \u2014 BATCHED (per the W1/W2 warheads in your system prompt):",
-    "THE SOURCES ARE ALREADY QUOTED BELOW (THE ACTUAL FILE CONTENTS + the woven brief) \u2014 you rarely need any read call for inputs.",
+    "THE SOURCES ARE QUOTED BELOW (THE ACTUAL FILE CONTENTS). The file on disk additionally carries THE MECHANICAL READING ORDER + THE MECHANICAL VERIFICATION sections \u2014 read the file ONCE if you need them.",
     "STEP 1: plan every polish replacement fully in your reasoning \u2014 each oldText/newText pair chosen before emitting anything.",
-    "STEP 2: fire ONE edit call whose edits[] carries ALL pairs \u2014 slop fixes, flow fixes, AND the [SHADOW INFERENCE] block append per W4. ONE call, whole round.",
+    "STEP 2: fire ONE edit call whose edits[] carries ALL pairs \u2014 slop fixes, flow fixes, AND the [SHADOW INFERENCE] block append per W4. ONE call, whole round. The edit tool is HARD-CAPPED at 3 calls per round (the 4th is refused) \u2014 do not drip.",
     "MICRO-LOOP (max 3 loops from first re-verify): RE-VERIFY with one read of the file -> defects? fix with ONE batched edit call -> loop. Clean re-verify = done.",
     "",
     "PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM.",
@@ -275805,7 +276070,7 @@ function errorManifest(spec, outDir, error48) {
     batch: { requested: 1, generated: 0, ready: 0 },
     agents: [{
       name,
-      path: path26.join(outDir, name + ".md"),
+      path: path27.join(outDir, name + ".md"),
       lines: 0,
       sha256: "",
       validated: false,
@@ -275842,8 +276107,23 @@ async function runShadowPipeline(spec, sessionStream = [], options2 = {}) {
     }
     const readingOrder = spec.filepaths.map((p, i) => i + 1 + ". " + p + " \u2014 the " + (i === 0 ? "primary target" : "supporting target")).join(`
 `);
-    const readCommands = spec.filepaths.map((p) => "read " + p + " (full pass, offset=0) \u2014 the file read to completion").join(`
-`);
+    const isBuildTemplate = spec.template.toUpperCase().startsWith("B");
+    const hasTs = spec.filepaths.some((p) => /\.(ts|tsx|js|mjs)$/.test(p));
+    const hasHtml = spec.filepaths.some((p) => /\.(html?|htm)$/.test(p));
+    const hasPy = spec.filepaths.some((p) => /\.py$/.test(p));
+    const docOnly = spec.filepaths.length > 0 && spec.filepaths.every((p) => /\.(md|txt|json|ya?ml)$/i.test(p));
+    const readCommands = [];
+    if (isBuildTemplate && hasTs) {
+      readCommands.push("tsc --noEmit \u2014 exit 0 (paste the output; the completion gate REQUIRES it for code artifacts)", "bun test " + spec.filepaths.filter((p) => /\.(ts|tsx)$/.test(p)).map((p) => path27.dirname(p)).filter((v2, i, a) => a.indexOf(v2) === i).join(" ").trim() + " \u2014 paste pass/fail counts (the gate REQUIRES battery evidence)", "sha256sum <each changed file> \u2014 the artifact fingerprints");
+    } else if (isBuildTemplate && hasHtml) {
+      readCommands.push('EXECUTE the artifact \u2014 extract the <script>, run under node with DOM/canvas/rAF stubs (proxy getContext, stub localStorage, pump requestAnimationFrame ~120 frames, fire keydown listeners), paste the run output INCLUDING any errors. "Opens in a browser" is NOT evidence \u2014 the completion gate REQUIRES the executed-run output for runtime artifacts.', "sha256sum <the artifact> \u2014 the fingerprint");
+    } else if (isBuildTemplate && hasPy) {
+      readCommands.push("python3 <the artifact> [args] \u2014 paste the full output including any traceback (the completion gate REQUIRES executed output for python artifacts)");
+    } else if (isBuildTemplate && !docOnly) {
+      readCommands.push("Run the artifact's natural verification (tests/build/execution) and PASTE the output \u2014 the completion gate requires execution evidence for build artifacts (greps alone are refused)");
+    } else {
+      readCommands.push(...spec.filepaths.map((p) => "read " + p + " (full pass, offset=0) \u2014 the file read to completion"));
+    }
     const excerpts = preReadExcerpts(spec.filepaths);
     const ctx = buildContext2(memoryAdapter(memory3), spec, normalizeStream(sessionStream), excerpts);
     const injected = weave(skeleton, spec);
@@ -275858,11 +276138,12 @@ THE MECHANICAL READING ORDER (the filepaths \u2014 one per line):
 ` + readingOrder + `
 
 THE MECHANICAL VERIFICATION (run ALL + return the outputs \u2014 each a SINGLE command):
-` + readCommands;
+` + readCommands.join(`
+`);
     const maxRounds = options2.maxRounds ?? PI_MAX_ROUNDS;
-    const piFilePath = path26.join(outDir, sanitizeName(spec.name) + ".md");
-    fs21.mkdirSync(outDir, { recursive: true });
-    fs21.writeFileSync(piFilePath, promptText, "utf-8");
+    const piFilePath = path27.join(outDir, sanitizeName(spec.name) + ".md");
+    fs22.mkdirSync(outDir, { recursive: true });
+    fs22.writeFileSync(piFilePath, promptText, "utf-8");
     const shadow = new ShadowAgent(process.cwd(), { ledger: options2.ledger });
     const ingestText = excerpts.map((e) => "--- FILE: " + e.path + " (" + e.lines + ` lines) ---
 ` + e.content).join(`
@@ -275874,13 +276155,14 @@ THE MECHANICAL VERIFICATION (run ALL + return the outputs \u2014 each a SINGLE c
       demand: buildPiDemand(brief, ctx.chainUsed.text, ingestText),
       maxRounds,
       signal: options2.signal,
+      captureKey: options2.captureKey,
       streamFn: options2.streamFn
     });
     if (pi.text && pi.text.trim().length > 0) {
       promptText = pi.text;
     } else {
       try {
-        fs21.unlinkSync(piFilePath);
+        fs22.unlinkSync(piFilePath);
       } catch {}
       promptText = "";
     }
@@ -275900,9 +276182,9 @@ THE MECHANICAL VERIFICATION (run ALL + return the outputs \u2014 each a SINGLE c
 `).length;
     const v = validateTaskPromptLines(promptText);
     const sha = sha256hex(promptText);
-    const outPath = path26.join(outDir, name + ".md");
-    fs21.mkdirSync(outDir, { recursive: true });
-    fs21.writeFileSync(outPath, promptText, "utf-8");
+    const outPath = path27.join(outDir, name + ".md");
+    fs22.mkdirSync(outDir, { recursive: true });
+    fs22.writeFileSync(outPath, promptText, "utf-8");
     const seq = memory3.appendPrompt({
       seq: 0,
       name,
@@ -275934,7 +276216,7 @@ THE MECHANICAL VERIFICATION (run ALL + return the outputs \u2014 each a SINGLE c
 `));
     if (diagParts.length > 0) {
       try {
-        fs21.writeFileSync(path26.join(outDir, "ERROR-" + name + "-shadow.txt"), diagParts.join(`
+        fs22.writeFileSync(path27.join(outDir, "ERROR-" + name + "-shadow.txt"), diagParts.join(`
 
 `), "utf-8");
       } catch (e) {
@@ -276008,16 +276290,16 @@ var init_shadow_runner = __esm(() => {
 });
 
 // src/tools/wave-planning-gate.ts
-import * as fs22 from "fs";
-import * as path27 from "path";
-function readWavePlan(planPath = path27.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH)) {
+import * as fs23 from "fs";
+import * as path28 from "path";
+function readWavePlan(planPath = path28.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH)) {
   let content;
   try {
-    content = fs22.readFileSync(planPath, "utf-8");
+    content = fs23.readFileSync(planPath, "utf-8");
   } catch {
     return null;
   }
-  const mtimeMs = fs22.statSync(planPath).mtimeMs;
+  const mtimeMs = fs23.statSync(planPath).mtimeMs;
   const marker = content.match(/^\s*WAVES:\s*(\d+)\s*$/im);
   if (marker) {
     const n = Number(marker[1]);
@@ -276030,18 +276312,18 @@ function readWavePlan(planPath = path27.join(process.cwd(), WAVE_PLAN_RELATIVE_P
   return null;
 }
 function defaultStatePath() {
-  return path27.join(process.cwd(), ".trident", "wave-planning-state.json");
+  return path28.join(process.cwd(), ".trident", "wave-planning-state.json");
 }
 function readPlanningState(statePath) {
   try {
-    return JSON.parse(fs22.readFileSync(statePath, "utf-8"));
+    return JSON.parse(fs23.readFileSync(statePath, "utf-8"));
   } catch {
     return {};
   }
 }
 function writePlanningState(statePath, state2) {
-  fs22.mkdirSync(path27.dirname(statePath), { recursive: true });
-  fs22.writeFileSync(statePath, JSON.stringify(state2, null, 2), "utf-8");
+  fs23.mkdirSync(path28.dirname(statePath), { recursive: true });
+  fs23.writeFileSync(statePath, JSON.stringify(state2, null, 2), "utf-8");
 }
 function decidePlanning(entry, planningNote, plan) {
   if (!plan || plan.totalWaves < 1) {
@@ -276063,7 +276345,7 @@ function decidePlanning(entry, planningNote, plan) {
 function checkWavePlanning(args, sessionId, statePath = defaultStatePath(), planPath) {
   if (!sessionId)
     return;
-  const plan = readWavePlan(planPath ?? path27.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH));
+  const plan = readWavePlan(planPath ?? path28.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH));
   const state2 = readPlanningState(statePath);
   const verdict = decidePlanning(state2[sessionId.slice(-24)], args.planningNote, plan);
   if (!verdict.allow && verdict.reason)
@@ -276073,13 +276355,13 @@ function recordWaveServed(sessionId, statePath = defaultStatePath(), planPath, p
   if (!sessionId)
     return;
   const key = sessionId.slice(-24);
-  const plan = readWavePlan(planPath ?? path27.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH));
+  const plan = readWavePlan(planPath ?? path28.join(process.cwd(), WAVE_PLAN_RELATIVE_PATH));
   const state2 = readPlanningState(statePath);
   const prev = state2[key];
   state2[key] = {
     plannedAt: prev && prev.planMtimeMs === (plan?.mtimeMs ?? 0) ? prev.plannedAt : new Date().toISOString(),
     planNote: prev?.planNote || planNote,
-    wavesGenerated: (prev?.wavesGenerated ?? 0) + 1,
+    wavesGenerated: prev && prev.planMtimeMs === (plan?.mtimeMs ?? 0) ? prev.wavesGenerated + 1 : 1,
     planMtimeMs: plan ? plan.mtimeMs : 0
   };
   writePlanningState(statePath, state2);
@@ -276088,7 +276370,7 @@ var WAVE_PLAN_RELATIVE_PATH = ".trident/wave-plan.md", NOTE_MIN_CHARS = 20;
 var init_wave_planning_gate = () => {};
 
 // src/tools/wave-constants.ts
-import * as path28 from "path";
+import * as path29 from "path";
 import * as os13 from "os";
 function resolveTmpDir(override) {
   if (typeof override === "string" && override.trim().length > 0) {
@@ -276115,7 +276397,7 @@ function buildWaveAbortedDirective(wave, count) {
 }
 var TRIDENT_TMP_DIR, SHADOW_TOOLS;
 var init_wave_constants = __esm(() => {
-  TRIDENT_TMP_DIR = path28.join(os13.homedir(), "OPENCODE_WORKSPACE", "trident-tmp");
+  TRIDENT_TMP_DIR = path29.join(os13.homedir(), "OPENCODE_WORKSPACE", "trident-tmp");
   SHADOW_TOOLS = new Set([
     "trident-wave-manager",
     "trident-container-test",
@@ -276135,8 +276417,8 @@ var init_wave_constants = __esm(() => {
 
 // src/tools/wave-tracker.ts
 import { Database as Database6 } from "bun:sqlite";
-import * as fs23 from "fs";
-import * as path29 from "path";
+import * as fs24 from "fs";
+import * as path30 from "path";
 import * as os14 from "os";
 function freshAgentTrack(sessionId, now = Date.now()) {
   return {
@@ -276149,6 +276431,54 @@ function freshAgentTrack(sessionId, now = Date.now()) {
     lastBytes: 0,
     errorCodes: []
   };
+}
+function computeDeclaredClass(filepaths, template2, missionText) {
+  const isBuild = template2.toUpperCase().startsWith("B");
+  if (!isBuild)
+    return "REPORT";
+  const ts21 = filepaths.some((f) => /\.(ts|tsx|js|mjs)$/.test(f));
+  const html = filepaths.some((f) => /\.(html?|htm)$/.test(f));
+  const py = filepaths.some((f) => /\.py$/.test(f));
+  if (ts21)
+    return "TYPE_BATTERY";
+  if (html)
+    return "RUNTIME";
+  if (py)
+    return "RUN";
+  const m = missionText ?? "";
+  if (/\.(ts|tsx)\b|\btypescript\b|\bsrc\/v?\d|\bmodule\b|\bclass\b|\bfunction\b/i.test(m) && /\b(implement|build|create|write|fix|add|edit|refactor)\b/i.test(m))
+    return "TYPE_BATTERY";
+  if (/\.(html?|htm)\b/i.test(m) && /\b(implement|build|create|write)\b/i.test(m))
+    return "RUNTIME";
+  if (/\.(py)\b|\bpython\b/i.test(m) && /\b(implement|build|create|write)\b/i.test(m))
+    return "RUN";
+  const docOnly = filepaths.length > 0 && filepaths.every((f) => /\.(md|txt|json|ya?ml)$/i.test(f));
+  if (docOnly && /\b(document|readme|docs? only|markdown)\b/i.test(m))
+    return "DOC";
+  return "TYPE_BATTERY";
+}
+function setGatePassed(wave, name) {
+  const agent2 = TRACKER.get(wave)?.agents[name];
+  if (agent2) {
+    agent2.gateState = "passed";
+    persistWaveRow(TRACKER.get(wave));
+  }
+}
+function setGateHeld(wave, name) {
+  const agent2 = TRACKER.get(wave)?.agents[name];
+  if (!agent2)
+    return 0;
+  agent2.gateState = "held";
+  agent2.gateHolds = (agent2.gateHolds ?? 0) + 1;
+  persistWaveRow(TRACKER.get(wave));
+  return agent2.gateHolds;
+}
+function setGateExempt(wave, name) {
+  const agent2 = TRACKER.get(wave)?.agents[name];
+  if (agent2) {
+    agent2.gateState = "exempt";
+    persistWaveRow(TRACKER.get(wave));
+  }
 }
 function getTrackerDb() {
   if (trackerDb) {
@@ -276199,7 +276529,7 @@ function persistWaveRow(wave) {
   let lastErr = null;
   for (let attempt = 0;attempt < 3; attempt++) {
     try {
-      fs23.mkdirSync(path29.dirname(TRACKER_DB), { recursive: true });
+      fs24.mkdirSync(path30.dirname(TRACKER_DB), { recursive: true });
       const db = getTrackerDb();
       db.run("INSERT INTO waves (wave, data, status, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(wave) DO UPDATE SET data = excluded.data, status = excluded.status, updated_at = excluded.updated_at", [wave.wave, JSON.stringify(wave), wave.status, Date.now()]);
       return;
@@ -276238,7 +276568,7 @@ function deleteWaveRow(wave) {
 }
 function pruneStaleTrackerRows() {
   try {
-    if (!fs23.existsSync(TRACKER_DB))
+    if (!fs24.existsSync(TRACKER_DB))
       return;
     const db = getTrackerDb();
     const cutoff = Date.now() - TRACKER_STALE_MS;
@@ -276249,7 +276579,7 @@ function pruneStaleTrackerRows() {
 }
 function loadTracker() {
   try {
-    if (!fs23.existsSync(TRACKER_DB))
+    if (!fs24.existsSync(TRACKER_DB))
       return;
     pruneStaleTrackerRows();
     const db = getTrackerDb();
@@ -276282,7 +276612,7 @@ function warnRespawnMiss(wave, name) {
 var WAVE_ARCHIVE_CAP = 10, TRACKER_DB, TRACKER, ARCHIVE, trackerDb = null, TRACKER_STALE_MS, WaveTracker;
 var init_wave_tracker = __esm(() => {
   init_utils();
-  TRACKER_DB = process.env.TRIDENT_TRACKER_DB || (process.env.BUN_TEST === "1" ? "/tmp/trident-waves-buntest.sqlite" : null) || path29.join(os14.homedir(), "OPENCODE_WORKSPACE", "trident-tmp", "trident-waves.sqlite");
+  TRACKER_DB = process.env.TRIDENT_TRACKER_DB || (process.env.BUN_TEST === "1" ? "/tmp/trident-waves-buntest.sqlite" : null) || path30.join(os14.homedir(), "OPENCODE_WORKSPACE", "trident-tmp", "trident-waves.sqlite");
   TRACKER = new Map;
   ARCHIVE = [];
   TRACKER_STALE_MS = 24 * 60 * 60 * 1000;
@@ -276356,6 +276686,9 @@ var init_wave_tracker = __esm(() => {
       const agent2 = TRACKER.get(wave)?.agents[name];
       if (!agent2)
         return;
+      if (agent2.gateState !== undefined && agent2.gateState !== "passed" && agent2.gateState !== "exempt" && agent2.declaredClass !== undefined && agent2.declaredClass !== "DOC" && agent2.declaredClass !== "REPORT") {
+        throw new Error("[COMPLETION GATE] markComplete REFUSED for " + wave + "/" + name + " \u2014 gateState=" + agent2.gateState + " declaredClass=" + agent2.declaredClass + ". The completion gate has not passed this agent. Route through the gate (the cron tick) or markFailed.");
+      }
       agent2.state = "complete";
       agent2.spawnTimes.completedAt = Date.now();
       agent2.lastActivityAt = Date.now();
@@ -276409,6 +276742,21 @@ var init_wave_tracker = __esm(() => {
     },
     getActiveWaves() {
       return [...TRACKER.values()].filter((w) => w.status === "running" || w.status === "checking" || w.status === "dispatching");
+    },
+    ownerHasRunningAgents(sessionId) {
+      if (!sessionId || sessionId === "default")
+        return false;
+      for (const w of TRACKER.values()) {
+        if (w.ownerSessionId !== sessionId)
+          continue;
+        if (w.status === "running" || w.status === "dispatching" || w.status === "checking" || w.status === "paused")
+          return true;
+        for (const a of Object.values(w.agents)) {
+          if (a.state === "running" || a.state === "spawned")
+            return true;
+        }
+      }
+      return false;
     },
     getArchive() {
       return [...ARCHIVE];
@@ -276487,8 +276835,8 @@ var init_wave_tracker = __esm(() => {
 });
 
 // src/tools/wave-registry.ts
-import * as fs24 from "fs";
-import * as path30 from "path";
+import * as fs25 from "fs";
+import * as path31 from "path";
 import { createHash as createHash4 } from "crypto";
 function deriveWaveStatus(reg) {
   for (const c of reg.calls) {
@@ -276528,10 +276876,10 @@ function evaluateWaveBatchGate(reg, callKey, now, windowMs) {
 }
 function readWaveRegistryFile(tmpDir, waveId) {
   try {
-    const p = path30.join(tmpDir, ".wave-registry-" + waveId + ".json");
-    if (!fs24.existsSync(p))
+    const p = path31.join(tmpDir, ".wave-registry-" + waveId + ".json");
+    if (!fs25.existsSync(p))
       return null;
-    const parsed = JSON.parse(fs24.readFileSync(p, "utf-8"));
+    const parsed = JSON.parse(fs25.readFileSync(p, "utf-8"));
     const rawCalls = Array.isArray(parsed.calls) ? parsed.calls : [];
     const calls = rawCalls.map((c) => {
       if (typeof c === "string")
@@ -276554,8 +276902,8 @@ function readWaveRegistryFile(tmpDir, waveId) {
 }
 function writeWaveRegistryFile(tmpDir, reg) {
   try {
-    const p = path30.join(tmpDir, ".wave-registry-" + reg.wave + ".json");
-    fs24.writeFileSync(p, JSON.stringify(reg, null, 2), "utf-8");
+    const p = path31.join(tmpDir, ".wave-registry-" + reg.wave + ".json");
+    fs25.writeFileSync(p, JSON.stringify(reg, null, 2), "utf-8");
     return true;
   } catch (e) {
     tridentLog("WARN", "wave-registry", "the registry write failed for " + reg.wave + ": " + (e instanceof Error ? e.message : String(e)));
@@ -276570,17 +276918,17 @@ function createWaveRegistry(tmpDir, waveId, total) {
 function resolveReleaseWaveId(tmpDir, waveId) {
   if (!waveId || waveId.trim().length === 0)
     return null;
-  if (fs24.existsSync(path30.join(tmpDir, ".wave-registry-" + waveId + ".json")))
+  if (fs25.existsSync(path31.join(tmpDir, ".wave-registry-" + waveId + ".json")))
     return waveId;
   try {
-    const files = fs24.readdirSync(tmpDir, { withFileTypes: true });
+    const files = fs25.readdirSync(tmpDir, { withFileTypes: true });
     for (const f of files) {
       if (!f.isFile() || f.name.indexOf(".wave-manifest-") !== 0 || !f.name.endsWith(".json"))
         continue;
       const waveIdPart = f.name.substring(".wave-manifest-".length).replace(/\.json$/, "");
       if (!/^wave-\d+$/.test(waveIdPart))
         continue;
-      const parsed = JSON.parse(fs24.readFileSync(path30.join(tmpDir, f.name), "utf-8"));
+      const parsed = JSON.parse(fs25.readFileSync(path31.join(tmpDir, f.name), "utf-8"));
       if (parsed.requestedWaveId === waveId && typeof parsed.wave === "string")
         return parsed.wave;
     }
@@ -276610,22 +276958,22 @@ function releaseWaveRegistryFile(tmpDir, waveId) {
 }
 function resolveWaveCallKey(tmpDir, desc, promptFile) {
   try {
-    if (promptFile && fs24.existsSync(promptFile)) {
-      const sha = createHash4("sha256").update(fs24.readFileSync(promptFile, "utf-8")).digest("hex");
+    if (promptFile && fs25.existsSync(promptFile)) {
+      const sha = createHash4("sha256").update(fs25.readFileSync(promptFile, "utf-8")).digest("hex");
       const rec = findWaveRecordForAgent(tmpDir, desc, sha);
       if (rec)
         return { wave: rec.wave, key: desc + "|" + rec.wave + "|" + sha };
     }
   } catch (e) {}
   try {
-    const files = fs24.readdirSync(tmpDir, { withFileTypes: true });
+    const files = fs25.readdirSync(tmpDir, { withFileTypes: true });
     for (const f of files) {
       if (!f.isFile() || f.name.indexOf(".wave-manifest-") !== 0 || !f.name.endsWith(".json"))
         continue;
       const waveIdPart = f.name.substring(".wave-manifest-".length).replace(/\.json$/, "");
       if (!/^wave-\d+$/.test(waveIdPart))
         continue;
-      const parsed = JSON.parse(fs24.readFileSync(path30.join(tmpDir, f.name), "utf-8"));
+      const parsed = JSON.parse(fs25.readFileSync(path31.join(tmpDir, f.name), "utf-8"));
       const agents = Array.isArray(parsed.agents) ? parsed.agents : [];
       for (const a of agents) {
         if (a.name === desc && typeof a.sha256 === "string") {
@@ -276639,14 +276987,14 @@ function resolveWaveCallKey(tmpDir, desc, promptFile) {
 }
 function findWaveRecordForAgent(tmpDir, desc, sha) {
   try {
-    const files = fs24.readdirSync(tmpDir, { withFileTypes: true });
+    const files = fs25.readdirSync(tmpDir, { withFileTypes: true });
     for (const f of files) {
       if (!f.isFile() || f.name.indexOf(".wave-manifest-") !== 0 || !f.name.endsWith(".json"))
         continue;
       const waveIdPart = f.name.substring(".wave-manifest-".length).replace(/\.json$/, "");
       if (!/^wave-\d+$/.test(waveIdPart))
         continue;
-      const parsed = JSON.parse(fs24.readFileSync(path30.join(tmpDir, f.name), "utf-8"));
+      const parsed = JSON.parse(fs25.readFileSync(path31.join(tmpDir, f.name), "utf-8"));
       const agents = Array.isArray(parsed.agents) ? parsed.agents : [];
       for (const a of agents) {
         if (a.name === desc && a.sha256 === sha) {
@@ -276709,8 +277057,8 @@ var init_wave_registry = __esm(() => {
 });
 
 // src/tools/wave-pipeline.ts
-import * as fs25 from "fs";
-import * as path31 from "path";
+import * as fs26 from "fs";
+import * as path32 from "path";
 import { createHash as createHash5 } from "crypto";
 function coerceContextValue(v) {
   if (v === null || v === undefined)
@@ -276740,11 +277088,11 @@ function validateWaveCount(specs, expectedCount) {
   return "COUNT MISMATCH: you returned " + specs.length + " of " + expected + " requested agents. NEVER split a wave into one-agent calls. Re-fire action=generate ONCE with ALL " + expected + " specs.";
 }
 function findManifest(tmpDir, waveId) {
-  const files = fs25.readdirSync(tmpDir).filter((f) => f.startsWith(".wave-manifest-") && f.endsWith(".json"));
+  const files = fs26.readdirSync(tmpDir).filter((f) => f.startsWith(".wave-manifest-") && f.endsWith(".json"));
   const parsed = [];
   for (const file2 of files) {
     try {
-      const manifest = JSON.parse(fs25.readFileSync(path31.join(tmpDir, file2), "utf-8"));
+      const manifest = JSON.parse(fs26.readFileSync(path32.join(tmpDir, file2), "utf-8"));
       if (!manifest?.wave || !Array.isArray(manifest.agents))
         continue;
       if (file2 === ".wave-manifest-" + manifest.wave + ".json")
@@ -276756,11 +277104,11 @@ function findManifest(tmpDir, waveId) {
   if (waveId) {
     const hit = parsed.find((p) => p.manifest.wave === waveId || p.manifest.wave.includes(waveId) || (p.manifest.requestedWaveId || "") === waveId);
     if (hit)
-      return { path: path31.join(tmpDir, hit.file), manifest: hit.manifest };
+      return { path: path32.join(tmpDir, hit.file), manifest: hit.manifest };
   }
   parsed.sort((a, b) => a.manifest.generatedAt.localeCompare(b.manifest.generatedAt));
   const last = parsed[parsed.length - 1];
-  return { path: path31.join(tmpDir, last.file), manifest: last.manifest };
+  return { path: path32.join(tmpDir, last.file), manifest: last.manifest };
 }
 async function executeDispatch(args, context3, opts = {}) {
   const taskDispatch = context3.extra?.taskDispatch;
@@ -276777,10 +277125,10 @@ async function executeDispatch(args, context3, opts = {}) {
   const dispatched = [];
   const failed = [];
   const pending = manifest.agents.map(async (agent2) => {
-    const file2 = path31.join(tmpDir, agent2.name + ".md");
+    const file2 = path32.join(tmpDir, agent2.name + ".md");
     let content;
     try {
-      content = fs25.readFileSync(file2, "utf-8");
+      content = fs26.readFileSync(file2, "utf-8");
     } catch (e) {
       failed.push({ name: agent2.name, error: "prompt file missing: " + file2 });
       return;
@@ -276999,8 +277347,8 @@ __export(exports_wave_spec, {
   ensureSpecFile: () => ensureSpecFile,
   WAVE_SPEC_RELATIVE_PATH: () => WAVE_SPEC_RELATIVE_PATH
 });
-import * as fs26 from "fs";
-import * as path32 from "path";
+import * as fs27 from "fs";
+import * as path33 from "path";
 function buildTemplateShell() {
   return JSON.stringify({
     expectedCount: "[SET TO NUMBER: total agents in your wave, e.g. 8]",
@@ -277026,7 +277374,7 @@ function validateSpecFile(filePath) {
   const diags = [];
   let content;
   try {
-    content = fs26.readFileSync(filePath, "utf-8");
+    content = fs27.readFileSync(filePath, "utf-8");
   } catch {
     return [{ agent: "*", field: "file", severity: "error", message: "spec file not found", fix: "create the file first" }];
   }
@@ -277062,7 +277410,7 @@ function validateSpecFile(filePath) {
       diags.push({ agent: label, field: "filepaths", severity: "error", message: "no filepaths provided", fix: "add absolute paths that EXIST on disk" });
     } else {
       for (const fp of a.filepaths) {
-        if (typeof fp === "string" && !fs26.existsSync(fp)) {
+        if (typeof fp === "string" && !fs27.existsSync(fp)) {
           diags.push({ agent: label, field: "filepaths", severity: "warning", message: `filepath does not exist: ${fp}`, fix: "use an absolute path that exists on disk" });
         }
       }
@@ -277096,6 +277444,22 @@ function validateSpecFile(filePath) {
     if (intentDiag)
       diags.push(intentDiag);
   }
+  for (const agent2 of parsed.agents) {
+    const tpl = String(agent2?.template ?? "");
+    if (!tpl.toUpperCase().startsWith("B"))
+      continue;
+    const targets = String(agent2?.taskTargets ?? "") + " " + String(agent2?.acceptance ?? "");
+    const hasVerificationSignal = /\b(test|battery|tsc|typecheck|run|harness|execut|container|sha256|battery output|run output)\b/i.test(targets);
+    if (!hasVerificationSignal) {
+      diags.push({
+        agent: String(agent2?.name ?? "unknown"),
+        field: "taskTargets/acceptance",
+        severity: "error",
+        message: `smoke-verification plan: no execution-class verification signal in taskTargets/acceptance (grep/ls/read-only checks are NOT gate-passing evidence for a build agent)`,
+        fix: `add the verification commands to taskTargets/acceptance \u2014 e.g. "tsc --noEmit + bun test with pasted counts" (TYPE_BATTERY), "execute under a harness and paste the run output" (RUNTIME), "python3 run with pasted output" (RUN) \u2014 the completion gate will demand this evidence at return time`
+      });
+    }
+  }
   return diags;
 }
 function formatDiagnostics(diags) {
@@ -277122,13 +277486,13 @@ function formatDiagnostics(diags) {
 `);
 }
 function resetToTemplate(projectRoot) {
-  const specPath = path32.join(projectRoot, WAVE_SPEC_RELATIVE_PATH);
-  fs26.mkdirSync(path32.dirname(specPath), { recursive: true });
-  fs26.writeFileSync(specPath, buildTemplateShell(), "utf-8");
+  const specPath = path33.join(projectRoot, WAVE_SPEC_RELATIVE_PATH);
+  fs27.mkdirSync(path33.dirname(specPath), { recursive: true });
+  fs27.writeFileSync(specPath, buildTemplateShell(), "utf-8");
 }
 function ensureSpecFile(projectRoot) {
-  const specPath = path32.join(projectRoot, WAVE_SPEC_RELATIVE_PATH);
-  if (!fs26.existsSync(specPath))
+  const specPath = path33.join(projectRoot, WAVE_SPEC_RELATIVE_PATH);
+  if (!fs27.existsSync(specPath))
     resetToTemplate(projectRoot);
   return specPath;
 }
@@ -282692,23 +283056,23 @@ var init_pipeline_generator = __esm(() => {
 });
 
 // src/artifacts/analysis-engine.ts
-import * as fs27 from "fs";
-import * as path33 from "path";
+import * as fs28 from "fs";
+import * as path34 from "path";
 function analyzeProject(targetPath, requirements, discovery) {
   const cacheKey = `${targetPath}:${requirements?.substring(0, 50) || ""}`;
   if (analysisCache.has(cacheKey)) {
     tridentLog("INFO", "analysis-engine", `Cache HIT for key: ${cacheKey}`);
     return analysisCache.get(cacheKey);
   }
-  if (!targetPath || !fs27.existsSync(targetPath)) {
+  if (!targetPath || !fs28.existsSync(targetPath)) {
     tridentLog("WARN", "analysis-engine", `Target path does not exist: ${targetPath}`);
     return null;
   }
-  const tsconfigPath = path33.join(targetPath, "tsconfig.json");
+  const tsconfigPath = path34.join(targetPath, "tsconfig.json");
   let tsconfig = null;
-  if (fs27.existsSync(tsconfigPath)) {
+  if (fs28.existsSync(tsconfigPath)) {
     try {
-      const raw = fs27.readFileSync(tsconfigPath, "utf-8");
+      const raw = fs28.readFileSync(tsconfigPath, "utf-8");
       tsconfig = JSON.parse(raw.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*/g, ""));
     } catch {
       tsconfig = null;
@@ -282840,8 +283204,8 @@ var init_analysis_engine = __esm(() => {
 });
 
 // src/artifacts/deep-planning-artifact.ts
-import * as fs28 from "fs";
-import * as path34 from "path";
+import * as fs29 from "fs";
+import * as path35 from "path";
 function safeIdent(name) {
   if (!name || typeof name !== "string")
     return "unnamed";
@@ -282852,13 +283216,13 @@ function identifyEngines(discovery) {
     return [];
   const dirMap = new Map;
   for (const pat of discovery.patterns) {
-    const dir = path34.dirname(pat.file);
+    const dir = path35.dirname(pat.file);
     if (!dirMap.has(dir))
       dirMap.set(dir, { patterns: [], codeSections: [] });
     dirMap.get(dir).patterns.push(pat);
   }
   for (const cs of discovery.codeSections) {
-    const dir = path34.dirname(cs.filePath);
+    const dir = path35.dirname(cs.filePath);
     if (!dirMap.has(dir))
       dirMap.set(dir, { patterns: [], codeSections: [] });
     dirMap.get(dir).codeSections.push(cs);
@@ -282867,7 +283231,7 @@ function identifyEngines(discovery) {
   for (const [dir, data] of dirMap) {
     const totalItems = data.patterns.length + data.codeSections.length;
     if (totalItems >= 3) {
-      let engineName = path34.basename(dir) || "root";
+      let engineName = path35.basename(dir) || "root";
       if (engineName === "." || engineName === "")
         engineName = "root";
       engines.push({ name: engineName, directory: dir, patterns: data.patterns, codeSections: data.codeSections });
@@ -282881,8 +283245,8 @@ function scopeDiscoveryToEngine(discovery, engine4) {
     ...discovery,
     patterns: engine4.patterns,
     codeSections: engine4.codeSections,
-    failureModes: discovery.failureModes.filter((fm) => path34.dirname(fm.file) === engine4.directory),
-    decisions: discovery.decisions.filter((d) => path34.dirname(d.file) === engine4.directory)
+    failureModes: discovery.failureModes.filter((fm) => path35.dirname(fm.file) === engine4.directory),
+    decisions: discovery.decisions.filter((d) => path35.dirname(d.file) === engine4.directory)
   };
 }
 function threatFixRecipe(pattern4) {
@@ -283875,9 +284239,9 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
   if (!targetPath) {
     return manifest;
   }
-  const contextLibDir = path34.join(targetPath, "context-library");
+  const contextLibDir = path35.join(targetPath, "context-library");
   try {
-    fs28.mkdirSync(contextLibDir, { recursive: true });
+    fs29.mkdirSync(contextLibDir, { recursive: true });
   } catch (e) {
     const errMsg = e instanceof Error ? e.message : String(e);
     tridentLog("WARN", "deep-planning", `Failed to create context-library dir: ${errMsg}`);
@@ -283887,7 +284251,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
     for (let i = 0;i < engineSpecs.length; i++) {
       const engineFilename = `${String(i + 1).padStart(2, "0")}_${safeIdent(engines[i]?.name || "engine_" + (i + 1)).toUpperCase()}_SPEC.md`;
       try {
-        fs28.writeFileSync(path34.join(contextLibDir, engineFilename), engineSpecs[i], "utf-8");
+        fs29.writeFileSync(path35.join(contextLibDir, engineFilename), engineSpecs[i], "utf-8");
         tridentLog("INFO", "deep-planning", `Agent-provided engine spec written: ${engineFilename} (${(engineSpecs[i] || "").split(`
 `).length} lines)`);
         manifest += `### ${engines[i]?.name || "Engine " + (i + 1)}
@@ -283904,7 +284268,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
     for (const engine4 of engines) {
       try {
         const scopedDiscovery = scopeDiscoveryToEngine(discovery, engine4);
-        const engineDir = path34.join(targetPath, engine4.directory);
+        const engineDir = path35.join(targetPath, engine4.directory);
         const engineAnalysis = analyzeProject(engineDir, `Engine: ${engine4.name}`, scopedDiscovery);
         let spec;
         if (engineAnalysis) {
@@ -283913,7 +284277,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
           spec = generateEngineSpecFromDiscovery(engine4, scopedDiscovery);
         }
         const engineFilename = `${safeIdent(engine4.name).toUpperCase()}_SPEC.md`;
-        fs28.writeFileSync(path34.join(contextLibDir, engineFilename), spec, "utf-8");
+        fs29.writeFileSync(path35.join(contextLibDir, engineFilename), spec, "utf-8");
         const specLines = (spec || "").split(`
 `).length;
         tridentLog("INFO", "deep-planning", `Engine spec written: ${engineFilename} (${specLines} lines, ${engineAnalysis?.threats.length ?? 0} threats)`);
@@ -283941,7 +284305,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
   }
   try {
     const masterPlan = generateMasterPlan(projectName, engines, analysis, discovery ?? null);
-    fs28.writeFileSync(path34.join(contextLibDir, "MASTER_OVERHAUL_PLAN.md"), masterPlan, "utf-8");
+    fs29.writeFileSync(path35.join(contextLibDir, "MASTER_OVERHAUL_PLAN.md"), masterPlan, "utf-8");
     tridentLog("INFO", "deep-planning", `Master plan written (${(masterPlan || "").split(`
 `).length} lines)`);
   } catch (e) {
@@ -283949,7 +284313,7 @@ function generateContextLibraryManifest(projectName, architecture, patterns2, fa
   }
   try {
     const indexContent = generateLibraryIndex(projectName, engines, analysis, discovery ?? null);
-    fs28.writeFileSync(path34.join(contextLibDir, "INDEX.md"), indexContent, "utf-8");
+    fs29.writeFileSync(path35.join(contextLibDir, "INDEX.md"), indexContent, "utf-8");
   } catch (e) {
     tridentLog("WARN", "deep-planning", `Failed to write index: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -284074,7 +284438,7 @@ function generateEngineSpecFromDiscovery(engine4, discovery) {
       spec += "```typescript\n" + cs.code.substring(0, 500) + "\n```\n\n";
     }
   }
-  const engineFailures = discovery.failureModes.filter((fm) => path34.dirname(fm.file) === engine4.directory);
+  const engineFailures = discovery.failureModes.filter((fm) => path35.dirname(fm.file) === engine4.directory);
   if (engineFailures.length > 0) {
     spec += `## Failure Modes
 
@@ -284962,7 +285326,7 @@ ${bodyLines.join(`
 |--------|---------|
 `;
     for (const [sym, users] of Array.from(im.entries()).sort((a, b2) => b2[1].size - a[1].size).slice(0, 50)) {
-      b += `| \`${sym}\` | ${Array.from(users).map((f) => path34.basename(f)).join(", ")} |
+      b += `| \`${sym}\` | ${Array.from(users).map((f) => path35.basename(f)).join(", ")} |
 `;
     }
     b += `
@@ -284978,7 +285342,7 @@ ${bodyLines.join(`
     b += `|------|-----------|-------------|-------------|----------|
 `;
     for (const r of relationships.slice(0, 40)) {
-      b += `| \`${r.typeName}\` | ${path34.basename(r.definedIn)} | ${r.producedBy.slice(0, 3).join(", ")} | ${r.acceptedBy.slice(0, 3).join(", ")} | ${r.consumedBy.length} refs |
+      b += `| \`${r.typeName}\` | ${path35.basename(r.definedIn)} | ${r.producedBy.slice(0, 3).join(", ")} | ${r.acceptedBy.slice(0, 3).join(", ")} | ${r.consumedBy.length} refs |
 `;
     }
     b += `
@@ -285489,8 +285853,8 @@ var init_context_synthesis_artifact = __esm(() => {
 
 // src/tools/container-test.ts
 import { execSync as execSync2 } from "child_process";
-import * as fs29 from "fs";
-import * as path35 from "path";
+import * as fs30 from "fs";
+import * as path36 from "path";
 import * as crypto2 from "crypto";
 import * as os15 from "os";
 import { Database as Database7 } from "bun:sqlite";
@@ -285800,28 +286164,28 @@ class ContainerTestEngine {
   }
   computeSha256(filePath) {
     const h = crypto2.createHash("sha256");
-    if (fs29.statSync(filePath).isDirectory()) {
+    if (fs30.statSync(filePath).isDirectory()) {
       const files = [];
       const walk = (dir, base = dir) => {
-        for (const entry of fs29.readdirSync(dir, { withFileTypes: true })) {
-          const full = path35.join(dir, entry.name);
+        for (const entry of fs30.readdirSync(dir, { withFileTypes: true })) {
+          const full = path36.join(dir, entry.name);
           if (entry.isDirectory())
             walk(full, base);
           else if (entry.isFile())
-            files.push(path35.relative(base, full));
+            files.push(path36.relative(base, full));
         }
       };
       walk(filePath);
       files.sort();
       const hashes = [];
       for (const rel of files) {
-        const buf = fs29.readFileSync(path35.join(filePath, rel));
+        const buf = fs30.readFileSync(path36.join(filePath, rel));
         hashes.push(`${rel}:${crypto2.createHash("sha256").update(buf).digest("hex")}`);
       }
       return crypto2.createHash("sha256").update(hashes.join(`
 `)).digest("hex");
     }
-    h.update(fs29.readFileSync(filePath));
+    h.update(fs30.readFileSync(filePath));
     return h.digest("hex");
   }
   computeInContainerSha256(pathInside) {
@@ -285840,14 +286204,14 @@ class ContainerTestEngine {
     let planText = typeof params.testPlan === "string" ? params.testPlan : null;
     if (!planText) {
       const planPaths = [
-        path35.join(process.cwd(), ".trident", "test-plan.md"),
-        path35.join(process.cwd(), ".trident", "test-plan.json"),
-        path35.join(os15.homedir(), ".trident", "test-plan.md")
+        path36.join(process.cwd(), ".trident", "test-plan.md"),
+        path36.join(process.cwd(), ".trident", "test-plan.json"),
+        path36.join(os15.homedir(), ".trident", "test-plan.md")
       ];
       for (const p of planPaths) {
-        if (fs29.existsSync(p)) {
+        if (fs30.existsSync(p)) {
           try {
-            planText = fs29.readFileSync(p, "utf-8");
+            planText = fs30.readFileSync(p, "utf-8");
             break;
           } catch {}
         }
@@ -285898,12 +286262,12 @@ class ContainerTestEngine {
     }
     if (!STATE.distPath)
       return this.err("dist_path_missing", "no distPath resolved");
-    if (!fs29.existsSync(STATE.distPath))
+    if (!fs30.existsSync(STATE.distPath))
       return this.err("dist_path_missing", `distPath does not exist: ${STATE.distPath}`);
     STATE.distSha = this.computeSha256(STATE.distPath);
     let distSizeMb = 0;
     try {
-      distSizeMb = Math.round(fs29.statSync(STATE.distPath).size / 1048576);
+      distSizeMb = Math.round(fs30.statSync(STATE.distPath).size / 1048576);
     } catch (e) {}
     if (distSizeMb > 50)
       tridentLog("WARN", "container-test", `setup: dist is ${distSizeMb}MB \u2014 the 4096m default may OOM the generation; pass memoryLimitMb >= ${distSizeMb * 4}`);
@@ -285938,8 +286302,8 @@ class ContainerTestEngine {
     if (!cfgPatch.stdout.includes("OK"))
       return this.err("config_patch_failed", cfgPatch.stderr);
     try {
-      const hostSkills = path35.join(os15.homedir(), ".config", "opencode", "skills");
-      if (fs29.existsSync(hostSkills)) {
+      const hostSkills = path36.join(os15.homedir(), ".config", "opencode", "skills");
+      if (fs30.existsSync(hostSkills)) {
         this.execInContainer(`mkdir -p /root/.config/opencode/skills`, { timeoutMs: 5000 });
         const cpSkills = this.execInternal(`docker cp ${hostSkills}/. ${requestedName}:/root/.config/opencode/skills/`, { timeoutMs: 60000 });
         if (cpSkills.exitCode !== 0)
@@ -285951,17 +286315,17 @@ class ContainerTestEngine {
       tridentLog("WARN", "container-test", "skill provisioning failed: " + (e instanceof Error ? e.message : String(e)));
     }
     try {
-      const hostAgentsMd = path35.join(os15.homedir(), "OPENCODE_WORKSPACE", "AGENTS.md");
-      const workspaceRoot = path35.join(os15.homedir(), "OPENCODE_WORKSPACE");
+      const hostAgentsMd = path36.join(os15.homedir(), "OPENCODE_WORKSPACE", "AGENTS.md");
+      const workspaceRoot = path36.join(os15.homedir(), "OPENCODE_WORKSPACE");
       const candidates2 = [
         hostAgentsMd,
-        path35.join(workspaceRoot, "AGENTS.md"),
-        path35.join(process.cwd(), "AGENTS.md")
+        path36.join(workspaceRoot, "AGENTS.md"),
+        path36.join(process.cwd(), "AGENTS.md")
       ];
       let agentsSrc = null;
       for (const c of candidates2) {
         try {
-          if (fs29.existsSync(c) && fs29.statSync(c).size > 1e4) {
+          if (fs30.existsSync(c) && fs30.statSync(c).size > 1e4) {
             agentsSrc = c;
             break;
           }
@@ -286039,11 +286403,11 @@ class ContainerTestEngine {
     let dir = process.cwd();
     for (let i = 0;i < 8; i++) {
       for (const candidate of ["dist.tar.gz", "dist.tgz", "dist"]) {
-        const p = path35.join(dir, candidate);
-        if (fs29.existsSync(p))
+        const p = path36.join(dir, candidate);
+        if (fs30.existsSync(p))
           return p;
       }
-      const parent = path35.dirname(dir);
+      const parent = path36.dirname(dir);
       if (parent === dir)
         break;
       dir = parent;
@@ -286054,7 +286418,7 @@ class ContainerTestEngine {
     let src;
     let dest;
     try {
-      const st = fs29.statSync(distPath);
+      const st = fs30.statSync(distPath);
       if (st.isDirectory()) {
         src = distPath + "/.";
         dest = `${containerName}:${targetDir}`;
@@ -286077,14 +286441,14 @@ class ContainerTestEngine {
     const newDist = params.distPath ?? STATE.distPath;
     if (!newDist)
       return this.err("dist_path_missing", "no distPath known");
-    if (!fs29.existsSync(newDist))
+    if (!fs30.existsSync(newDist))
       return this.err("dist_path_missing", `distPath does not exist: ${newDist}`);
     const newSha = this.computeSha256(newDist);
     if (!newSha)
       return this.err("dist_sha_failed", `cannot sha256 ${newDist}`);
     let artifactSha = "";
     try {
-      const idxPath = fs29.statSync(newDist).isDirectory() ? path35.join(newDist, "index.js") : newDist;
+      const idxPath = fs30.statSync(newDist).isDirectory() ? path36.join(newDist, "index.js") : newDist;
       artifactSha = this.computeSha256(idxPath);
     } catch (artifactErr) {}
     if (newDist.endsWith(".tar.gz") || newDist.endsWith(".tgz")) {
@@ -286771,7 +287135,7 @@ class ContainerTestEngine {
   async hostPipeline(params) {
     const t0 = Date.now();
     const distPath = params.distPath;
-    if (!distPath || !fs29.existsSync(distPath))
+    if (!distPath || !fs30.existsSync(distPath))
       return this.err("dist_path_missing", "distPath is required and must exist");
     const image = params.image ?? STATE.containerImage;
     const hostName = "host-sim-" + Date.now().toString(36);
@@ -286796,12 +287160,12 @@ class ContainerTestEngine {
       tridentLog("INFO", "host-pipeline", "seeding " + testLines + " lines into target");
       const seedPath = "/tmp/trident_pipeline_seed.txt";
       try {
-        fs29.unlinkSync(seedPath);
+        fs30.unlinkSync(seedPath);
       } catch (_2) {}
       const seedLines = [];
       for (let i = 1;i <= testLines; i++)
         seedLines.push("Line " + i + " clean test data " + i);
-      fs29.writeFileSync(seedPath, seedLines.join(`
+      fs30.writeFileSync(seedPath, seedLines.join(`
 `) + `
 `, "utf8");
       de("docker cp " + JSON.stringify(seedPath) + " " + targetName + ":/tmp/stream.txt");
@@ -287028,8 +287392,8 @@ class ContainerTestEngine {
     const json2 = this.generateJsonReport(results);
     const markdownPath = outPath.endsWith(".md") ? outPath : `${outPath}.md`;
     const jsonPath = markdownPath.replace(/\.md$/, ".json");
-    fs29.writeFileSync(markdownPath, markdown, "utf8");
-    fs29.writeFileSync(jsonPath, json2, "utf8");
+    fs30.writeFileSync(markdownPath, markdown, "utf8");
+    fs30.writeFileSync(jsonPath, json2, "utf8");
     tridentLog("INFO", "container-test", `report written: ${markdownPath}`);
     const passed = results.filter((r) => r.passed).length;
     const failed = results.filter((r) => !r.passed).length;
@@ -287154,7 +287518,7 @@ class ContainerTestEngine {
       return this.err("exec_failed", `docker cp failed: ${r.stderr}`);
     let size = 0;
     try {
-      size = fs29.statSync(dest).size;
+      size = fs30.statSync(dest).size;
     } catch {}
     if (size === 0 && (dest.startsWith("container:") || dest.startsWith(STATE.containerName + ":"))) {
       const cpPath = dest.startsWith("container:") ? dest.substring(10) : dest.substring(STATE.containerName.length + 1);
@@ -287186,7 +287550,7 @@ class ContainerTestEngine {
     const hostDir = params.hostPath || params.outputPath || "./container_export";
     const pattern4 = params.pattern || "*.md";
     try {
-      fs29.mkdirSync(hostDir, { recursive: true });
+      fs30.mkdirSync(hostDir, { recursive: true });
     } catch {}
     const find = this.execInContainer(`find ${containerDir} -name '${pattern4}' -type f 2>/dev/null`, { timeoutMs: 15000 });
     if (find.exitCode !== 0 && !find.stdout.trim())
@@ -287195,15 +287559,15 @@ class ContainerTestEngine {
 `).filter(Boolean);
     const manifest = [];
     for (const containerFile of files) {
-      const basename11 = path35.basename(containerFile);
-      const hostFile = path35.join(hostDir, basename11);
+      const basename11 = path36.basename(containerFile);
+      const hostFile = path36.join(hostDir, basename11);
       const cp = this.execInternal(`docker cp ${STATE.containerName}:${containerFile} ${JSON.stringify(hostFile)}`, { timeoutMs: 30000 });
       if (cp.exitCode !== 0)
         continue;
       let bytes = 0;
       let sha = "";
       try {
-        bytes = fs29.statSync(hostFile).size;
+        bytes = fs30.statSync(hostFile).size;
       } catch {}
       const shaRes = this.execInternal(`sha256sum ${JSON.stringify(hostFile)}`, { timeoutMs: 5000 });
       sha = shaRes.stdout.trim().split(/\s+/)[0] || "";
@@ -287497,7 +287861,7 @@ var init_container_test = __esm(() => {
     currentSessionID: "default",
     lastStreamSize: 0
   };
-  STATE_DB_PATH2 = path35.join(os15.tmpdir(), "trident-ct-state.sqlite");
+  STATE_DB_PATH2 = path36.join(os15.tmpdir(), "trident-ct-state.sqlite");
   containerTestParamsSchema = exports_external.object({
     action: exports_external.enum(["setup", "deploy", "send", "key", "read", "check", "files", "logs", "exec", "cp", "screenshot", "export", "clear", "stop", "alive", "connect", "host-pipeline", "restart", "suite", "report", "switch-model", "switch-agent", "verify-model", "verify-agent"]).describe("Action to perform"),
     containerName: exports_external.string().optional(),
@@ -287555,8 +287919,8 @@ var init_container_test = __esm(() => {
 });
 
 // src/tools/trident-ship-package.ts
-import * as path36 from "path";
-import * as fs30 from "fs/promises";
+import * as path37 from "path";
+import * as fs31 from "fs/promises";
 import * as fsSync from "fs";
 import * as crypto3 from "crypto";
 import * as os16 from "os";
@@ -287571,11 +287935,11 @@ function sha256(filePath) {
 async function collectSourceFiles(dir) {
   const results = [];
   try {
-    const entries = await fs30.readdir(dir, { withFileTypes: true });
+    const entries = await fs31.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (results.length >= 200)
         break;
-      const fullPath = path36.join(dir, entry.name);
+      const fullPath = path37.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git" || entry.name === "Ship_Packages")
           continue;
@@ -287596,7 +287960,7 @@ async function countSourceLines(dir) {
   let mdFiles = 0;
   for (const f of allFiles) {
     try {
-      const content = await fs30.readFile(f, "utf-8");
+      const content = await fs31.readFile(f, "utf-8");
       totalLines += content.split(`
 `).length;
       if (f.endsWith(".ts"))
@@ -287609,34 +287973,34 @@ async function countSourceLines(dir) {
 }
 async function readPackageJson(targetPath) {
   try {
-    const content = await fs30.readFile(path36.join(targetPath, "package.json"), "utf-8");
+    const content = await fs31.readFile(path37.join(targetPath, "package.json"), "utf-8");
     return JSON.parse(content);
   } catch {
     return {};
   }
 }
 async function copyDir(src, dest, ignore2 = SPG_IGNORE_DEFAULT) {
-  await fs30.rm(dest, { recursive: true, force: true }).catch(() => {});
-  await fs30.mkdir(dest, { recursive: true });
+  await fs31.rm(dest, { recursive: true, force: true }).catch(() => {});
+  await fs31.mkdir(dest, { recursive: true });
   const copyTree = async (from, to) => {
-    const entries = await fs30.readdir(from, { withFileTypes: true });
+    const entries = await fs31.readdir(from, { withFileTypes: true });
     for (const entry of entries) {
       if (ignore2.some((ig) => entry.name.includes(ig)))
         continue;
-      const srcP = path36.join(from, entry.name);
-      const dstP = path36.join(to, entry.name);
+      const srcP = path37.join(from, entry.name);
+      const dstP = path37.join(to, entry.name);
       if (entry.isDirectory()) {
-        await fs30.mkdir(dstP, { recursive: true });
+        await fs31.mkdir(dstP, { recursive: true });
         await copyTree(srcP, dstP);
       } else {
-        await fs30.copyFile(srcP, dstP);
+        await fs31.copyFile(srcP, dstP);
       }
     }
   };
   await copyTree(src, dest);
 }
 async function loadDistManifest(targetPath) {
-  const mp = path36.join(targetPath, ".trident", "dist-manifest.json");
+  const mp = path37.join(targetPath, ".trident", "dist-manifest.json");
   try {
     const raw = fsSync.readFileSync(mp, "utf-8");
     const m = JSON.parse(raw);
@@ -287675,7 +288039,7 @@ async function redactSecrets(root, extraPatterns) {
     for (const e of fsSync.readdirSync(dir, { withFileTypes: true })) {
       if (SPG_IGNORE_DEFAULT.some((ig) => e.name.includes(ig)))
         continue;
-      const p = path36.join(dir, e.name);
+      const p = path37.join(dir, e.name);
       if (e.isDirectory())
         walkDir(p);
       else
@@ -287715,7 +288079,7 @@ async function redactSecrets(root, extraPatterns) {
         if (extraRe)
           redacted = redacted.replace(extraRe, "REDACTED-DECLARED-SECRET");
         fsSync.writeFileSync(f, redacted, "utf-8");
-        hits.push({ file: path36.relative(root, f), count });
+        hits.push({ file: path37.relative(root, f), count });
       }
     } catch {}
   }
@@ -287723,16 +288087,16 @@ async function redactSecrets(root, extraPatterns) {
 }
 async function findExistingPackage(targetPath) {
   try {
-    const entries = await fs30.readdir(SHIP_PACKAGES_BASE, { withFileTypes: true });
+    const entries = await fs31.readdir(SHIP_PACKAGES_BASE, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory())
         continue;
-      const manifestPath = path36.join(SHIP_PACKAGES_BASE, entry.name, "SHIP_MANIFEST.md");
+      const manifestPath = path37.join(SHIP_PACKAGES_BASE, entry.name, "SHIP_MANIFEST.md");
       try {
-        const manifest = await fs30.readFile(manifestPath, "utf-8");
+        const manifest = await fs31.readFile(manifestPath, "utf-8");
         if (manifest.includes(targetPath)) {
           tridentLog("INFO", "spg", `Found existing package for ${targetPath}: ${entry.name} \u2014 will UPDATE`);
-          return path36.join(SHIP_PACKAGES_BASE, entry.name);
+          return path37.join(SHIP_PACKAGES_BASE, entry.name);
         }
       } catch {}
     }
@@ -287741,7 +288105,7 @@ async function findExistingPackage(targetPath) {
 }
 async function validateBuild(targetPath, expectedSha, manifest = {}) {
   const errors7 = [];
-  const srcDir = path36.join(targetPath, "src");
+  const srcDir = path37.join(targetPath, "src");
   if (!fsSync.existsSync(srcDir)) {
     errors7.push(`src/ directory not found at ${srcDir}`);
   } else {
@@ -287751,7 +288115,7 @@ async function validateBuild(targetPath, expectedSha, manifest = {}) {
   }
   const artifacts = manifestArtifacts(manifest);
   for (const art of artifacts) {
-    const artPath = path36.join(targetPath, art.path);
+    const artPath = path37.join(targetPath, art.path);
     if (!fsSync.existsSync(artPath)) {
       errors7.push(`${art.path} not found. Run the project's build first.`);
       continue;
@@ -287936,16 +288300,16 @@ async function runPackageAudit(libDir, distManifest, fingerprint, artifactTable)
   lines.push("");
   lines.push(`**Generated:** ${new Date().toISOString()}`);
   lines.push("");
-  const deployScript = fsSync.existsSync(path36.join(libDir, "DEPLOY.sh")) ? fsSync.readFileSync(path36.join(libDir, "DEPLOY.sh"), "utf-8") : "";
+  const deployScript = fsSync.existsSync(path37.join(libDir, "DEPLOY.sh")) ? fsSync.readFileSync(path37.join(libDir, "DEPLOY.sh"), "utf-8") : "";
   for (const art of artifactTable) {
-    const exists = fsSync.existsSync(path36.join(libDir, art.path));
+    const exists = fsSync.existsSync(path37.join(libDir, art.path));
     lines.push(`- [${exists ? "x" : " "}] artifact present in package: \`${art.path}\``);
     if (!exists)
       violations.push(`DEPLOY.sh/artifacts: ${art.path} missing from the package`);
   }
   lines.push("");
   for (const art of artifactTable) {
-    const pkgPath = path36.join(libDir, art.path);
+    const pkgPath = path37.join(libDir, art.path);
     if (!fsSync.existsSync(pkgPath))
       continue;
     const actual = sha256(pkgPath);
@@ -287956,7 +288320,7 @@ async function runPackageAudit(libDir, distManifest, fingerprint, artifactTable)
   }
   lines.push("");
   for (const doc2 of ["BUILD_REPORT.md", "DEBUG_LOG.md", "FULL_BUILD_CONTEXT.md"]) {
-    const dp = path36.join(libDir, doc2);
+    const dp = path37.join(libDir, doc2);
     if (!fsSync.existsSync(dp)) {
       lines.push(`- [ ] doc present: ${doc2} MISSING`);
       violations.push(`doc: ${doc2} missing`);
@@ -287973,7 +288337,7 @@ async function runPackageAudit(libDir, distManifest, fingerprint, artifactTable)
     for (const e of fsSync.readdirSync(dir, { withFileTypes: true })) {
       if (SPG_IGNORE_DEFAULT.some((ig) => e.name.includes(ig)))
         continue;
-      const p = path36.join(dir, e.name);
+      const p = path37.join(dir, e.name);
       if (e.isDirectory())
         walkPkg(p);
       else
@@ -287988,7 +288352,7 @@ async function runPackageAudit(libDir, distManifest, fingerprint, artifactTable)
       const c = fsSync.readFileSync(f, "utf-8");
       const m = c.match(SPG_SECRET_PATTERN);
       if (m)
-        secretHits.push(path36.relative(libDir, f) + " (" + m.length + ")");
+        secretHits.push(path37.relative(libDir, f) + " (" + m.length + ")");
     } catch {}
   }
   const secretOk = secretHits.length === 0;
@@ -287996,7 +288360,7 @@ async function runPackageAudit(libDir, distManifest, fingerprint, artifactTable)
   if (!secretOk)
     violations.push("secrets: " + secretHits.join(", "));
   lines.push("");
-  const hasTests = fsSync.existsSync(path36.join(libDir, "tests")) && fsSync.readdirSync(path36.join(libDir, "tests")).length > 0;
+  const hasTests = fsSync.existsSync(path37.join(libDir, "tests")) && fsSync.readdirSync(path37.join(libDir, "tests")).length > 0;
   lines.push(`- [${hasTests ? "x" : " "}] tests/ directory ${hasTests ? "present" : "(none declared)"}`);
   if (!hasTests && distManifest.shipDirs?.includes("tests"))
     violations.push("tests/: declared in shipDirs but absent");
@@ -288137,7 +288501,7 @@ ${failures.map((f) => `  - ${f}`).join(`
 All 5 context blocks must be >= ${SPG_MIN} chars.`;
         }
         const pkg = await readPackageJson(args.targetPath);
-        const projectName = args.projectName || pkg.name || path36.basename(args.targetPath) || "unnamed-project";
+        const projectName = args.projectName || pkg.name || path37.basename(args.targetPath) || "unnamed-project";
         const version2 = pkg.version || "unknown";
         const { manifest: distManifest, source: manifestSource } = await loadDistManifest(args.targetPath);
         tridentLog("INFO", "spg", `manifest source: ${manifestSource}`);
@@ -288159,7 +288523,7 @@ Fix ALL errors, then retry.`;
         const artifactTable = [];
         let fingerprint = "";
         for (const art of artifactsList) {
-          const absPath = path36.join(args.targetPath, art.path);
+          const absPath = path37.join(args.targetPath, art.path);
           if (!fsSync.existsSync(absPath))
             continue;
           const aSha = sha256(absPath);
@@ -288173,38 +288537,38 @@ Fix ALL errors, then retry.`;
         if (!fingerprint)
           fingerprint = artifactTable[0]?.sha || "unknown";
         tridentLog("INFO", "spg", `Deployment fingerprint: ${fingerprint.substring(0, 16)}... (${artifactTable.length} artifacts)`);
-        const stats = await countSourceLines(path36.join(args.targetPath, "src"));
+        const stats = await countSourceLines(path37.join(args.targetPath, "src"));
         tridentLog("INFO", "spg", `Project stats: ${stats.tsFiles} .ts, ${stats.mdFiles} .md, ${stats.lines} lines`);
         const existingDir = await findExistingPackage(args.targetPath);
-        const libDir = args.outputPath || existingDir || path36.join(SHIP_PACKAGES_BASE, projectName);
+        const libDir = args.outputPath || existingDir || path37.join(SHIP_PACKAGES_BASE, projectName);
         const isUpdate = existingDir !== null;
-        await fs30.mkdir(libDir, { recursive: true });
+        await fs31.mkdir(libDir, { recursive: true });
         tridentLog("INFO", "spg", `${isUpdate ? "UPDATING" : "CREATING"} package: ${libDir}`);
         tridentLog("INFO", "spg", "Phase 3: Copying project files (manifest-driven)");
-        const distDest = path36.join(libDir, "dist");
-        await fs30.mkdir(distDest, { recursive: true });
+        const distDest = path37.join(libDir, "dist");
+        await fs31.mkdir(distDest, { recursive: true });
         for (const art of artifactsList) {
-          const srcArt = path36.join(args.targetPath, art.path);
+          const srcArt = path37.join(args.targetPath, art.path);
           if (fsSync.existsSync(srcArt)) {
             const rel = art.path.replace(/^dist\//, "");
-            await fs30.copyFile(srcArt, path36.join(distDest, rel));
+            await fs31.copyFile(srcArt, path37.join(distDest, rel));
           }
         }
-        await copyDir(path36.join(args.targetPath, "src"), path36.join(libDir, "src"));
+        await copyDir(path37.join(args.targetPath, "src"), path37.join(libDir, "src"));
         for (const cfgFile of ROOT_CONFIG_FILES) {
-          const src = path36.join(args.targetPath, cfgFile);
+          const src = path37.join(args.targetPath, cfgFile);
           if (fsSync.existsSync(src)) {
             try {
-              await fs30.copyFile(src, path36.join(libDir, cfgFile));
+              await fs31.copyFile(src, path37.join(libDir, cfgFile));
             } catch {}
           }
         }
         const shipDirs = distManifest.shipDirs || ["docs", "specs", ".trident", "tests", "scripts", "context_management", "MASTER_CONTEXT"];
         for (const extraDir of shipDirs) {
-          const srcDir = path36.join(args.targetPath, extraDir);
+          const srcDir = path37.join(args.targetPath, extraDir);
           if (fsSync.existsSync(srcDir)) {
             try {
-              await copyDir(srcDir, path36.join(libDir, extraDir));
+              await copyDir(srcDir, path37.join(libDir, extraDir));
             } catch {}
           }
         }
@@ -288214,7 +288578,7 @@ Fix ALL errors, then retry.`;
         }
         if (redacted.length > 0) {
           for (const art of artifactTable) {
-            const pkgPath = path36.join(libDir, art.path);
+            const pkgPath = path37.join(libDir, art.path);
             if (fsSync.existsSync(pkgPath)) {
               art.sha = sha256(pkgPath);
               art.sizeKB = Math.round(fsSync.statSync(pkgPath).size / 1024);
@@ -288230,11 +288594,11 @@ Fix ALL errors, then retry.`;
           testResults: args.testResults
         };
         const manifest = generateShipManifest(projectName, version2, fingerprint, artifactTable, stats, ctx, args.targetPath);
-        await fs30.writeFile(path36.join(libDir, "SHIP_MANIFEST.md"), manifest, "utf-8");
+        await fs31.writeFile(path37.join(libDir, "SHIP_MANIFEST.md"), manifest, "utf-8");
         const deployScript = generateDeployScript(projectName, fingerprint, distManifest.deploy);
-        await fs30.writeFile(path36.join(libDir, "DEPLOY.sh"), deployScript, "utf-8");
+        await fs31.writeFile(path37.join(libDir, "DEPLOY.sh"), deployScript, "utf-8");
         const readme = generateReadme(projectName, version2, fingerprint, artifactTable, stats);
-        await fs30.writeFile(path36.join(libDir, "README.md"), readme, "utf-8");
+        await fs31.writeFile(path37.join(libDir, "README.md"), readme, "utf-8");
         tridentLog("INFO", "spg", "Phase 5: Firing 3 PARALLEL LLM generations (target: 2000+ lines each)");
         const jobs = [
           { name: "BUILD_REPORT", brief: buildReportBrief(projectName, version2, args.targetPath, fingerprint, artifactTable, stats, ctx), system: SPG_BUILD_REPORT_SYSTEM, fileName: "BUILD_REPORT.md" },
@@ -288252,8 +288616,8 @@ Fix ALL errors, then retry.`;
           const finalContent = content + footer;
           const lines = finalContent.split(`
 `).length;
-          const filePath = path36.join(libDir, job.fileName);
-          await fs30.writeFile(filePath, finalContent, "utf-8");
+          const filePath = path37.join(libDir, job.fileName);
+          await fs31.writeFile(filePath, finalContent, "utf-8");
           tridentLog("INFO", "spg", `[${job.name}] DONE \u2014 ${lines} lines -> ${filePath}`);
           return { name: job.name, path: filePath, lines };
         }));
@@ -288285,7 +288649,7 @@ Fix ALL errors, then retry.`;
           for (const e of fsSync.readdirSync(dir, { withFileTypes: true })) {
             if (SPG_IGNORE_DEFAULT.some((ig) => e.name.includes(ig)))
               continue;
-            const p = path36.join(dir, e.name);
+            const p = path37.join(dir, e.name);
             const r = rel ? rel + "/" + e.name : e.name;
             if (e.isDirectory())
               walkTree(p, r);
@@ -288334,10 +288698,10 @@ Fix ALL errors, then retry.`;
         for (const rel of pkgTree.sort())
           index3 += `| \`${rel}\` |
 `;
-        await fs30.writeFile(path36.join(libDir, "MASTER_INDEX.md"), index3, "utf-8");
+        await fs31.writeFile(path37.join(libDir, "MASTER_INDEX.md"), index3, "utf-8");
         tridentLog("INFO", "spg", "Phase 7: Post-generation package audit");
         const audit2 = await runPackageAudit(libDir, distManifest, fingerprint, artifactTable);
-        await fs30.writeFile(path36.join(libDir, "PACKAGE_AUDIT.md"), audit2.markdown, "utf-8");
+        await fs31.writeFile(path37.join(libDir, "PACKAGE_AUDIT.md"), audit2.markdown, "utf-8");
         if (!audit2.ok) {
           return `SHIP PACKAGE BLOCKED \u2014 POST-GENERATION AUDIT FAILED (${audit2.violations.length} violation(s)):
 ${audit2.violations.map((v) => `  - ${v}`).join(`
@@ -288376,7 +288740,7 @@ var init_trident_ship_package = __esm(() => {
   init_zod();
   init_utils();
   init_llm_generator();
-  SHIP_PACKAGES_BASE = path36.join(os16.homedir(), "OPENCODE_WORKSPACE", "Shared Workspace Context", "Trident_Agent", "Ship_Packages");
+  SHIP_PACKAGES_BASE = path37.join(os16.homedir(), "OPENCODE_WORKSPACE", "Shared Workspace Context", "Trident_Agent", "Ship_Packages");
   ROOT_CONFIG_FILES = [
     "package.json",
     "tsconfig.json",
@@ -288470,8 +288834,8 @@ var init_wave_reminder_queue = __esm(() => {
 
 // src/tools/wave-status.ts
 import { Database as Database8 } from "bun:sqlite";
-import * as fs31 from "fs";
-import * as path37 from "path";
+import * as fs32 from "fs";
+import * as path38 from "path";
 import * as os17 from "os";
 function toKillReason(reason) {
   const r = (reason || "ORCHESTRATOR_ABORT").toUpperCase();
@@ -288531,8 +288895,8 @@ function computeLiveFlag(page) {
 }
 function resolveWaveSessionsFromDb(waveId) {
   try {
-    const dbPath = path37.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs31.existsSync(dbPath))
+    const dbPath = path38.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs32.existsSync(dbPath))
       return [];
     const db = new Database8(dbPath, { readonly: true });
     try {
@@ -288548,8 +288912,8 @@ function resolveWaveSessionsFromDb(waveId) {
 }
 function resolveRunningBackgroundSessions() {
   try {
-    const dbPath = path37.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs31.existsSync(dbPath))
+    const dbPath = path38.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs32.existsSync(dbPath))
       return [];
     const db = new Database8(dbPath, { readonly: true });
     try {
@@ -288577,8 +288941,8 @@ function fmtAge(ms) {
 function readSessionStream(sessionId, opts = {}) {
   const limit2 = Math.min(Math.max(opts.limit ?? 50, 1), 500);
   try {
-    const dbPath = path37.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs31.existsSync(dbPath)) {
+    const dbPath = path38.join(os17.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs32.existsSync(dbPath)) {
       return { ok: false, sessionId, totalParts: 0, returnedParts: 0, moreAvailable: false, beforeId: null, parts: [], lastTools: [], byteGrowth: 0, error: "opencode.db absent" };
     }
     const db = new Database8(dbPath, { readonly: true });
@@ -289177,13 +289541,13 @@ var init_wave_status = __esm(() => {
 
 // src/tools/wave-read.ts
 import { Database as Database9 } from "bun:sqlite";
-import * as fs32 from "fs";
+import * as fs33 from "fs";
 import * as os18 from "os";
-import * as path38 from "path";
+import * as path39 from "path";
 function newestPartAgeMs(sessionId) {
   try {
-    const dbPath = path38.join(os18.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs32.existsSync(dbPath))
+    const dbPath = path39.join(os18.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs33.existsSync(dbPath))
       return null;
     const db = new Database9(dbPath, { readonly: true });
     try {
@@ -289201,8 +289565,8 @@ function newestPartAgeMs(sessionId) {
 }
 function sessionHasTerminalFinish(sessionId) {
   try {
-    const dbPath = path38.join(os18.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs32.existsSync(dbPath))
+    const dbPath = path39.join(os18.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs33.existsSync(dbPath))
       return false;
     const db = new Database9(dbPath, { readonly: true });
     try {
@@ -289301,54 +289665,33 @@ var init_wave_read = __esm(() => {
 });
 
 // src/tools/wave-probe.ts
-import * as fs33 from "fs";
-import * as path39 from "path";
+import * as fs34 from "fs";
+import * as path40 from "path";
 import { createRequire } from "module";
 import { pathToFileURL } from "url";
-function writeProbeArtifact(artifact, outDir = path39.join(process.cwd(), ".trident")) {
+function writeProbeArtifact(artifact, outDir = path40.join(process.cwd(), ".trident")) {
   try {
-    fs33.mkdirSync(outDir, { recursive: true });
-    const file2 = path39.join(outDir, "probe-" + artifact.probe + "-result.json");
-    fs33.writeFileSync(file2, JSON.stringify(artifact, null, 2), "utf-8");
+    fs34.mkdirSync(outDir, { recursive: true });
+    const file2 = path40.join(outDir, "probe-" + artifact.probe + "-result.json");
+    fs34.writeFileSync(file2, JSON.stringify(artifact, null, 2), "utf-8");
     return file2;
   } catch (wErr) {
     tridentLog("WARN", "wave-probe", "probe artifact write failed: " + (wErr instanceof Error ? wErr.message : String(wErr)));
     return "";
   }
 }
-function writeProbeResults(probes, outDir = path39.join(process.cwd(), ".trident")) {
+function writeProbeResults(probes, outDir = path40.join(process.cwd(), ".trident")) {
   const allPass = probes.P1.verdict && probes.P2.verdict && probes.P3.verdict && probes.P4.verdict;
   const file2 = { probes, allPass, at: new Date().toISOString() };
   try {
-    fs33.mkdirSync(outDir, { recursive: true });
-    const p = path39.join(outDir, "probe-results.json");
-    fs33.writeFileSync(p, JSON.stringify(file2, null, 2), "utf-8");
+    fs34.mkdirSync(outDir, { recursive: true });
+    const p = path40.join(outDir, "probe-results.json");
+    fs34.writeFileSync(p, JSON.stringify(file2, null, 2), "utf-8");
     return p;
   } catch (wErr) {
     tridentLog("WARN", "wave-probe", "probe-results write failed: " + (wErr instanceof Error ? wErr.message : String(wErr)));
     return "";
   }
-}
-async function pollForCompletion(client, childId, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  let partEvents = 0;
-  while (Date.now() < deadline) {
-    try {
-      const msgs = await client.session.messages({ path: { id: childId } });
-      const arr = msgs.data ?? [];
-      if (arr.length > 0) {
-        partEvents += arr.length;
-        const last = arr[arr.length - 1];
-        if (last && typeof last === "object" && last.role === "assistant") {
-          return { finalMessagePresent: true, partEvents };
-        }
-      }
-    } catch (pErr) {
-      tridentLog("WARN", "wave-probe", "poll read failed (retrying): " + (pErr instanceof Error ? pErr.message : String(pErr)));
-    }
-    await new Promise((r) => setTimeout(r, 2000));
-  }
-  return { finalMessagePresent: false, partEvents };
 }
 async function waitForTodoEvent(testRowId, client, sessionId, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -289381,33 +289724,7 @@ async function probeP1(client, mainSessionId) {
     return r2;
   }
   try {
-    const created = await client.session.create({ body: { parentID: mainSessionId, title: "probe-subagent" } });
-    const childId = created.data.id;
-    results["V1_parentID"] = created.data.parentID === mainSessionId;
-    details.push("childId=" + childId + " parentID=" + String(created.data.parentID));
-    const t0 = Date.now();
-    await client.session.promptAsync({
-      path: { id: childId },
-      body: {
-        agent: "trident_explore",
-        parts: [{
-          type: "subtask",
-          prompt: "EXECUTE THE FOLLOWING PROBE: report the string PROBE_OK.",
-          description: "probe-subagent",
-          agent: "trident_explore"
-        }]
-      }
-    });
-    results["V6_promptAsync_immediate"] = Date.now() - t0 < 2000;
-    details.push("promptAsync latency=" + (Date.now() - t0) + "ms");
-    const rootList = await client.session.list({});
-    results["V2_no_main_list_pollution"] = !(rootList.data ?? []).some((s) => s.id === childId);
-    const children = await client.session.children({ path: { id: mainSessionId } });
-    results["V3_in_children"] = (children.data ?? []).some((s) => s.id === childId);
-    const tail = await pollForCompletion(client, childId, 120000);
-    results["V4_subagent_ran"] = tail.finalMessagePresent;
-    results["V5_stream_visible"] = tail.partEvents > 0;
-    details.push("final=" + tail.finalMessagePresent + " partEvents=" + tail.partEvents);
+    throw new Error("P1 RETIRED \u2014 client-spawn (session.create + promptAsync) is the FORBIDDEN path (2026-08-27): no TaskTool \u2192 no card, no completion inject, no wake. Only extra.taskDispatch (TaskTool.execute background) spawns.");
   } catch (p1Err) {
     const msg = p1Err instanceof Error ? p1Err.message : String(p1Err);
     tridentLog("ERROR", "wave-probe", "P1 failed: " + msg);
@@ -289532,7 +289849,7 @@ async function executeWaveProbe(args, client) {
 }
 function effectEntryPoint(pkgDir) {
   try {
-    const pkg = JSON.parse(fs33.readFileSync(path39.join(pkgDir, "package.json"), "utf-8"));
+    const pkg = JSON.parse(fs34.readFileSync(path40.join(pkgDir, "package.json"), "utf-8"));
     const dot = pkg.exports?.["."];
     let rel;
     if (typeof dot === "string")
@@ -289544,8 +289861,8 @@ function effectEntryPoint(pkgDir) {
     rel = rel ?? pkg.module ?? pkg.main;
     if (!rel)
       return null;
-    const abs = path39.join(pkgDir, rel);
-    return fs33.existsSync(abs) ? abs : null;
+    const abs = path40.join(pkgDir, rel);
+    return fs34.existsSync(abs) ? abs : null;
   } catch {
     return null;
   }
@@ -289566,16 +289883,16 @@ async function resolveEffect() {
     return bare;
   const home = process.env.HOME ?? "/root";
   const roots = [
-    path39.join(home, ".config", "opencode", "node_modules"),
+    path40.join(home, ".config", "opencode", "node_modules"),
     "/root/.config/opencode/node_modules",
-    path39.join(home, ".opencode", "node_modules"),
-    path39.join(home, ".local", "share", "opencode", "node_modules"),
+    path40.join(home, ".opencode", "node_modules"),
+    path40.join(home, ".local", "share", "opencode", "node_modules"),
     "/usr/local/lib/node_modules",
-    path39.join(process.cwd(), "node_modules")
+    path40.join(process.cwd(), "node_modules")
   ];
   for (const root of roots) {
-    const pkgDir = path39.join(root, "effect");
-    if (!fs33.existsSync(path39.join(pkgDir, "package.json")))
+    const pkgDir = path40.join(root, "effect");
+    if (!fs34.existsSync(path40.join(pkgDir, "package.json")))
       continue;
     const entry = effectEntryPoint(pkgDir);
     if (!entry)
@@ -289584,7 +289901,7 @@ async function resolveEffect() {
     if (hit)
       return hit;
   }
-  const anchors = [process.argv[1], process.argv[0], path39.join(process.cwd(), "noop.js")].filter((a) => typeof a === "string" && a.length > 0);
+  const anchors = [process.argv[1], process.argv[0], path40.join(process.cwd(), "noop.js")].filter((a) => typeof a === "string" && a.length > 0);
   for (const anchor2 of anchors) {
     try {
       const req = createRequire(anchor2);
@@ -289674,28 +289991,7 @@ async function probeP5(client, mainSessionId, extra) {
       const handle = await resolveEffect();
       results["Q2_effectResolved"] = handle !== null;
       if (handle) {
-        const created = await client.session.create({ body: { parentID: mainSessionId, title: "probe-p5-child (subagent)" } });
-        const childId = created.data.id;
-        results["Q2_childTethered"] = created.data.parentID === mainSessionId;
-        details.push("childId=" + childId + " parentID=" + String(created.data.parentID));
-        const parts = await handle.runPromise(promptOps.resolvePromptParts("EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else."));
-        const t0 = Date.now();
-        handle.runFork(promptOps.prompt({
-          sessionID: childId,
-          agent: "trident_explore",
-          tools: { task: false, todowrite: false },
-          parts
-        }));
-        const forkLatency = Date.now() - t0;
-        results["Q3_forkNonBlocking"] = forkLatency < 2000;
-        details.push("runFork returned in " + forkLatency + "ms (non-blocking=" + String(results["Q3_forkNonBlocking"]) + ")");
-        const tail = await pollForCompletion(client, childId, 90000);
-        results["Q4_childStreamed"] = tail.partEvents > 0;
-        results["Q5_childCompleted"] = tail.finalMessagePresent;
-        details.push("child partEvents=" + tail.partEvents + " final=" + String(tail.finalMessagePresent));
-        if (!results["Q4_childStreamed"]) {
-          details.push("H2 VERDICT = FALSE: the child never produced parts \u2014 the full promptOps.prompt needs services NOT available to the plugin fork (the provider/agent services are AppLayer-backed, not ALS-backed). The Effect dispatch path is dead for the FULL run \u2192 spawnTask fallback.");
-        }
+        throw new Error("P5 RETIRED \u2014 the Effect-fork experiment's client-spawn child (session.create) is the FORBIDDEN path (2026-08-27): no TaskTool \u2192 no card, no inject, no wake. Only extra.taskDispatch spawns.");
       } else {
         results["Q2_childTethered"] = false;
         results["Q3_forkNonBlocking"] = false;
@@ -289717,99 +290013,6 @@ async function probeP5(client, mainSessionId, extra) {
   };
   writeProbeArtifact(r);
   return r;
-}
-function genProbeId(prefix) {
-  return prefix + "_" + Date.now().toString(16) + Math.random().toString(36).slice(2, 14);
-}
-async function writeCardPart(client, ids, cardPart) {
-  const anyClient = client;
-  const surface = [];
-  try {
-    let obj = anyClient;
-    const seen = new Set;
-    while (obj && obj !== Object.prototype) {
-      for (const k of Object.getOwnPropertyNames(obj)) {
-        if (seen.has(k) || k === "constructor")
-          continue;
-        seen.add(k);
-        let v;
-        try {
-          v = anyClient[k];
-        } catch {
-          continue;
-        }
-        if (typeof v === "function") {
-          surface.push(k + "()");
-          continue;
-        }
-        if (v && typeof v === "object") {
-          const sub = [];
-          let so = v;
-          const subSeen = new Set;
-          while (so && so !== Object.prototype) {
-            for (const sk of Object.getOwnPropertyNames(so)) {
-              if (!subSeen.has(sk) && sk !== "constructor" && typeof v[sk] === "function") {
-                subSeen.add(sk);
-                sub.push(sk);
-              }
-            }
-            so = Object.getPrototypeOf(so);
-          }
-          surface.push(k + ":{" + sub.join(",") + "}");
-        }
-      }
-      obj = Object.getPrototypeOf(obj);
-    }
-  } catch {}
-  const templated = "/session/{sessionID}/message/{messageID}/part/{partID}";
-  const flat = "/session/" + ids.sessionID + "/message/" + ids.messageID + "/part/" + ids.partID;
-  const pathParams = { sessionID: ids.sessionID, messageID: ids.messageID, partID: ids.partID };
-  const inner = anyClient["_client"] ?? anyClient;
-  if (typeof inner["request"] === "function") {
-    try {
-      const r = await inner["request"]({ method: "PATCH", url: templated, path: pathParams, body: cardPart });
-      return { ok: true, channel: "client._client.request", status: r?.response?.status, surface };
-    } catch (e) {
-      return { ok: false, channel: "client._client.request", error: String(e).slice(0, 200), surface };
-    }
-  }
-  if (typeof inner["patch"] === "function") {
-    try {
-      const r = await inner["patch"]({ url: templated, path: pathParams, body: cardPart });
-      return { ok: true, channel: "client._client.patch", status: r?.response?.status, surface };
-    } catch (e) {
-      return { ok: false, channel: "client._client.patch", error: String(e).slice(0, 200), surface };
-    }
-  }
-  const partNs = anyClient["part"];
-  if (partNs && typeof partNs["update"] === "function") {
-    try {
-      const r = await partNs["update"]({ sessionID: ids.sessionID, messageID: ids.messageID, partID: ids.partID, part: cardPart });
-      return { ok: true, channel: "client.part.update", status: r?.response?.status, surface };
-    } catch (e) {
-      return { ok: false, channel: "client.part.update", error: String(e).slice(0, 200), surface };
-    }
-  }
-  const sess = anyClient["session"];
-  if (sess && typeof sess["updatePart"] === "function") {
-    try {
-      const r = await sess["updatePart"]({ path: pathParams, body: cardPart });
-      return { ok: true, channel: "session.updatePart", status: r?.response?.status, surface };
-    } catch {}
-  }
-  try {
-    const getCfg = inner["getConfig"] ?? anyClient["getConfig"];
-    const cfg = typeof getCfg === "function" ? getCfg.call(inner) : undefined;
-    const baseUrl = (cfg?.baseUrl ?? "http://localhost:4096").replace(/\/$/, "");
-    const resp = await fetch(baseUrl + flat, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", ...cfg?.headers ?? {} },
-      body: JSON.stringify(cardPart)
-    });
-    return { ok: resp.ok, channel: "raw fetch baseUrl=" + baseUrl, status: resp.status, surface };
-  } catch (e) {
-    return { ok: false, channel: "none", error: String(e), surface };
-  }
 }
 async function probeP6(client, mainSessionId, messageId, extra) {
   const results = {};
@@ -289844,41 +290047,7 @@ async function probeP6(client, mainSessionId, messageId, extra) {
         results["Q5_cardPartPersisted"] = false;
         details.push("ABORT: effect not resolvable.");
       } else {
-        const created = await client.session.create({ body: { parentID: mainSessionId, title: "probe-p6-card (subagent)" } });
-        const childId = created.data.id;
-        results["Q2_childTethered"] = created.data.parentID === mainSessionId;
-        details.push("childId=" + childId + " parentID=" + String(created.data.parentID));
-        const partId = genProbeId("prt");
-        const cardPart = {
-          id: partId,
-          messageID: messageId,
-          sessionID: mainSessionId,
-          type: "tool",
-          callID: genProbeId("cll"),
-          tool: "task",
-          state: {
-            status: "running",
-            input: { prompt: "EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else.", description: "probe-p6-card", subagent_type: "trident_explore" },
-            title: "probe-p6-card",
-            metadata: { sessionId: childId, parentSessionId: mainSessionId, background: true },
-            time: { start: Date.now() }
-          }
-        };
-        const write = await writeCardPart(client, { sessionID: mainSessionId, messageID: messageId, partID: partId }, cardPart);
-        results["Q3_cardPartWritten"] = write.ok;
-        details.push("updatePart via channel=" + write.channel + " status=" + String(write.status) + " partId=" + partId + (write.error ? " error=" + write.error.slice(0, 160) : ""));
-        details.push("client surface: " + write.surface.join(","));
-        const parts = await handle.runPromise(promptOps.resolvePromptParts("EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else."));
-        handle.runFork(promptOps.prompt({ sessionID: childId, agent: "trident_explore", tools: { task: false, todowrite: false }, parts }));
-        results["Q4_childForked"] = true;
-        await new Promise((r2) => setTimeout(r2, 1500));
-        const check6 = await client.session.messages({ path: { id: mainSessionId } });
-        const msgs = check6.data ?? [];
-        const found = msgs.some((m) => (m.parts ?? []).some((p) => p.id === partId && p.tool === "task"));
-        results["Q5_cardPartPersisted"] = found;
-        details.push("card part persisted in parent message=" + String(found));
-        if (!found)
-          details.push("the card part did NOT persist \u2014 the updatePart write failed or the part was rejected; H3 = FALSE (panel-only via the child session row).");
+        throw new Error("P6 RETIRED \u2014 the updatePart fake card + the client-spawn child are FORBIDDEN (2026-08-27): only extra.taskDispatch (createLiveToolPart \u2192 TaskTool.execute background) makes real cards + completion injects.");
       }
     }
   } catch (p6Err) {
@@ -289959,8 +290128,8 @@ var init_wave_probe_tool = __esm(() => {
 
 // src/poseidon/cycle-tracker.ts
 import { createHash as createHash8 } from "crypto";
-import { readFileSync as readFileSync24, writeFileSync as writeFileSync18 } from "fs";
-import * as path40 from "path";
+import { readFileSync as readFileSync24, writeFileSync as writeFileSync19 } from "fs";
+import * as path41 from "path";
 function safeJsonParse2(raw) {
   return JSON["parse"](raw);
 }
@@ -290086,7 +290255,7 @@ class CycleTracker {
         cycles: this.cycles,
         stallCounter: this.stallCounter
       });
-      writeFileSync18(path40.join(archiveBase, "CYCLE_TRACKER.json"), data);
+      writeFileSync19(path41.join(archiveBase, "CYCLE_TRACKER.json"), data);
     } catch (e) {
       console.error("[CycleTracker] error:", e);
       return;
@@ -290094,7 +290263,7 @@ class CycleTracker {
   }
   loadFromDisk(archiveBase) {
     try {
-      var data = cast2(safeJsonParse2(readFileSync24(path40.join(archiveBase, "CYCLE_TRACKER.json"), "utf-8")));
+      var data = cast2(safeJsonParse2(readFileSync24(path41.join(archiveBase, "CYCLE_TRACKER.json"), "utf-8")));
       this.findings = new Map(data.findings);
       this.cycles = data.cycles;
       this.stallCounter = data.stallCounter || 0;
@@ -290116,8 +290285,8 @@ var init_cycle_tracker = __esm(() => {
 });
 
 // src/poseidon/wave-verifier.ts
-import * as fs34 from "fs";
-import * as path41 from "path";
+import * as fs35 from "fs";
+import * as path42 from "path";
 import * as crypto4 from "crypto";
 import { execSync as execSync3 } from "child_process";
 function isRecord(value) {
@@ -290199,8 +290368,8 @@ class WaveVerifier {
     if (filesChanged.length === 0)
       return false;
     for (const file2 of filesChanged) {
-      const fullPath = path41.join(this.targetPath, file2);
-      if (!fs34.existsSync(fullPath))
+      const fullPath = path42.join(this.targetPath, file2);
+      if (!fs35.existsSync(fullPath))
         return false;
       const actualHash = this.sha256File(fullPath);
       const claimed = claimedSha256[file2];
@@ -290266,16 +290435,16 @@ class WaveVerifier {
     return true;
   }
   verifyAuditArtifactFresh() {
-    const artifactDir = path41.join(this.targetPath, ".trident", "generated_artifacts");
-    if (!fs34.existsSync(artifactDir))
+    const artifactDir = path42.join(this.targetPath, ".trident", "generated_artifacts");
+    if (!fs35.existsSync(artifactDir))
       return false;
-    const _items = fs34.readdirSync(artifactDir);
+    const _items = fs35.readdirSync(artifactDir);
     const artifacts = _items.filter(function(f) {
       return f.includes("CODE_REVIEW");
     });
     if (artifacts.length === 0)
       return false;
-    const stat2 = fs34.statSync(path41.join(artifactDir, artifacts[0]));
+    const stat2 = fs35.statSync(path42.join(artifactDir, artifacts[0]));
     return stat2.size > 500 && Date.now() - stat2.mtimeMs < 300000;
   }
   countPassing(checks3) {
@@ -290293,7 +290462,7 @@ class WaveVerifier {
     return count;
   }
   sha256File(filePath) {
-    let fileBuffer = fs34.readFileSync(filePath);
+    let fileBuffer = fs35.readFileSync(filePath);
     const hash4 = crypto4.createHash("sha256").update(fileBuffer).digest("hex");
     fileBuffer = null;
     return hash4;
@@ -290454,13 +290623,13 @@ var init_tmux_session = __esm(() => {
 
 // src/warheads/container-testing/deploy-verifier.ts
 import { execSync as execSync6 } from "child_process";
-import * as fs35 from "fs";
+import * as fs36 from "fs";
 import * as crypto5 from "crypto";
 
 class DeployVerifier {
   verifySha256(filePath, expectedHash, containerId) {
     try {
-      const content = fs35.readFileSync(filePath);
+      const content = fs36.readFileSync(filePath);
       const actual = crypto5.createHash("sha256").update(content).digest("hex");
       let expected;
       if (expectedHash) {
@@ -290510,8 +290679,8 @@ var init_deploy_verifier = __esm(() => {
 });
 
 // src/poseidon/container-tester.ts
-import * as fs36 from "fs";
-import * as path42 from "path";
+import * as fs37 from "fs";
+import * as path43 from "path";
 import { execSync as execSync7 } from "child_process";
 
 class ContainerTestRunner {
@@ -290576,8 +290745,8 @@ class ContainerTestRunner {
         return this.makeResult(false, this.computeScore({ buildSuccess, deploySuccess, hashVerified, tuiLaunched, identityVerified, toolsVerified, firewallVerified, agentResponded }), hashVerified, false, startTime, errors7, tuiOutput, deployedHash, expectedHash, steps);
       }
       steps.push({ step: 4, name: "SPAWN CONTAINER", passed: true, evidence: `name=${testContainerName} id=${containerId.substring(0, 12)}` });
-      const distPath = path42.join(this.targetPath, "dist");
-      const indexPath = path42.join(distPath, "index.js");
+      const distPath = path43.join(this.targetPath, "dist");
+      const indexPath = path43.join(distPath, "index.js");
       const bundleCopied = await containerMgr.copyBundle(indexPath);
       if (!bundleCopied) {
         errors7.push("Failed to copy bundle to test container");
@@ -290679,8 +290848,8 @@ class ContainerTestRunner {
     try {
       execSync7(POSEIDON_CONFIG.containerTesting.typeCheckCommand, { cwd: this.targetPath, encoding: "utf-8", timeout: 120000, stdio: "pipe" });
       execSync7(POSEIDON_CONFIG.containerTesting.buildCommand, { cwd: this.targetPath, encoding: "utf-8", timeout: 120000, stdio: "pipe" });
-      const distPath = path42.join(this.targetPath, "dist");
-      if (!fs36.existsSync(distPath)) {
+      const distPath = path43.join(this.targetPath, "dist");
+      if (!fs37.existsSync(distPath)) {
         return { success: false, error: "Build completed but dist directory not found", evidence };
       }
       success2 = true;
@@ -290696,8 +290865,8 @@ class ContainerTestRunner {
     let evidence = "test completed";
     try {
       const containerName = POSEIDON_CONFIG.containerTesting.containerName;
-      const distPath = path42.join(this.targetPath, "dist");
-      if (!fs36.existsSync(distPath)) {
+      const distPath = path43.join(this.targetPath, "dist");
+      if (!fs37.existsSync(distPath)) {
         return { success: false, error: "dist directory does not exist", evidence };
       }
       execSync7(`docker exec "${containerName}" mkdir -p /root/.config/opencode/plugins/trident/dist`, { encoding: "utf-8", timeout: 1e4, stdio: "pipe" });
@@ -290713,8 +290882,8 @@ class ContainerTestRunner {
   async verifyHash() {
     try {
       const containerName = POSEIDON_CONFIG.containerTesting.containerName;
-      const mainFile = path42.join(this.targetPath, "dist", "index.js");
-      if (!fs36.existsSync(mainFile)) {
+      const mainFile = path43.join(this.targetPath, "dist", "index.js");
+      if (!fs37.existsSync(mainFile)) {
         return { match: false, deployedHash: "", expectedHash: "" };
       }
       const expectedHash = execSync7(`sha256sum "${mainFile}"`, { encoding: "utf-8" }).split(" ")[0].trim();
@@ -290855,17 +291024,17 @@ var init_container_tester = __esm(() => {
 });
 
 // src/poseidon/checkpoint-manager.ts
-import * as fs37 from "fs";
-import * as path43 from "path";
+import * as fs38 from "fs";
+import * as path44 from "path";
 
 class CheckpointManager {
   checkpointBasePath;
   targetPath;
   constructor(targetPath) {
     this.targetPath = targetPath;
-    this.checkpointBasePath = path43.join(targetPath, ".trident", "checkpoints");
-    if (!fs37.existsSync(this.checkpointBasePath)) {
-      fs37.mkdirSync(this.checkpointBasePath, { recursive: true });
+    this.checkpointBasePath = path44.join(targetPath, ".trident", "checkpoints");
+    if (!fs38.existsSync(this.checkpointBasePath)) {
+      fs38.mkdirSync(this.checkpointBasePath, { recursive: true });
     }
   }
   shouldSaveCheckpoint(cycle, score, phase, lastCheckpointCycle, waveId) {
@@ -290893,20 +291062,20 @@ class CheckpointManager {
     const phase = state2.phase || "UNKNOWN";
     const reason = this.determineCheckpointReason(cycle, score, phase);
     const checkpointId = `checkpoint-c${cycle}-${reason}-${Date.now()}`;
-    const checkpointDir = path43.join(this.checkpointBasePath, checkpointId);
-    fs37.mkdirSync(checkpointDir, { recursive: true });
-    const srcDir = path43.join(this.targetPath, "src");
-    if (fs37.existsSync(srcDir)) {
-      this.copyDirectory(srcDir, path43.join(checkpointDir, "src"));
+    const checkpointDir = path44.join(this.checkpointBasePath, checkpointId);
+    fs38.mkdirSync(checkpointDir, { recursive: true });
+    const srcDir = path44.join(this.targetPath, "src");
+    if (fs38.existsSync(srcDir)) {
+      this.copyDirectory(srcDir, path44.join(checkpointDir, "src"));
     }
-    fs37.writeFileSync(path43.join(checkpointDir, "state.json"), JSON.stringify(state2, null, 2));
-    const t1Path = path43.join(this.targetPath, ".trident", "t1-injectable.md");
-    if (fs37.existsSync(t1Path)) {
-      fs37.copyFileSync(t1Path, path43.join(checkpointDir, "t1-injectable.md"));
+    fs38.writeFileSync(path44.join(checkpointDir, "state.json"), JSON.stringify(state2, null, 2));
+    const t1Path = path44.join(this.targetPath, ".trident", "t1-injectable.md");
+    if (fs38.existsSync(t1Path)) {
+      fs38.copyFileSync(t1Path, path44.join(checkpointDir, "t1-injectable.md"));
     }
-    const t2Path = path43.join(this.targetPath, ".trident", "t2-bible.md");
-    if (fs37.existsSync(t2Path)) {
-      fs37.copyFileSync(t2Path, path43.join(checkpointDir, "t2-bible.md"));
+    const t2Path = path44.join(this.targetPath, ".trident", "t2-bible.md");
+    if (fs38.existsSync(t2Path)) {
+      fs38.copyFileSync(t2Path, path44.join(checkpointDir, "t2-bible.md"));
     }
     const meta = {
       checkpointId,
@@ -290916,44 +291085,44 @@ class CheckpointManager {
       phase,
       timestamp: new Date().toISOString()
     };
-    fs37.writeFileSync(path43.join(checkpointDir, "CHECKPOINT_META.md"), this.buildCheckpointMeta(meta));
+    fs38.writeFileSync(path44.join(checkpointDir, "CHECKPOINT_META.md"), this.buildCheckpointMeta(meta));
     this.updateContextDocs(state2, checkpointId, phaseResult);
     this.cleanupOldCheckpoints();
     return checkpointId;
   }
   findLatestCheckpoint() {
-    if (!fs37.existsSync(this.checkpointBasePath))
+    if (!fs38.existsSync(this.checkpointBasePath))
       return null;
-    const _items = fs37.readdirSync(this.checkpointBasePath, { withFileTypes: true });
+    const _items = fs38.readdirSync(this.checkpointBasePath, { withFileTypes: true });
     const storedEntries = _items.filter((e) => e.isDirectory() && e.name.startsWith("checkpoint-")).map((e) => ({ name: e.name, timestamp: this.extractTimestamp(e.name) })).sort((a, b) => b.timestamp - a.timestamp);
     _items.length = 0;
     if (storedEntries.length === 0)
       return null;
     return {
       checkpointId: storedEntries[0].name,
-      path: path43.join(this.checkpointBasePath, storedEntries[0].name)
+      path: path44.join(this.checkpointBasePath, storedEntries[0].name)
     };
   }
   restore(checkpointId) {
     let success2 = false;
     let evidence = "";
-    const cpPath = path43.join(this.checkpointBasePath, checkpointId);
-    if (!fs37.existsSync(cpPath)) {
+    const cpPath = path44.join(this.checkpointBasePath, checkpointId);
+    if (!fs38.existsSync(cpPath)) {
       return { success: success2, error: `Checkpoint not found: ${checkpointId}`, evidence: `fs.existsSync returned false for ${checkpointId}` };
     }
     try {
-      const srcCurrent = path43.join(this.targetPath, "src");
-      if (fs37.existsSync(srcCurrent)) {
-        fs37.rmSync(srcCurrent, { recursive: true, force: true });
+      const srcCurrent = path44.join(this.targetPath, "src");
+      if (fs38.existsSync(srcCurrent)) {
+        fs38.rmSync(srcCurrent, { recursive: true, force: true });
       }
-      const srcBackup = path43.join(cpPath, "src");
-      if (fs37.existsSync(srcBackup)) {
+      const srcBackup = path44.join(cpPath, "src");
+      if (fs38.existsSync(srcBackup)) {
         this.copyDirectory(srcBackup, srcCurrent);
       }
-      const statePath = path43.join(cpPath, "state.json");
-      if (fs37.existsSync(statePath)) {
-        const targetStatePath = path43.join(this.targetPath, ".trident", "state.json");
-        fs37.copyFileSync(statePath, targetStatePath);
+      const statePath = path44.join(cpPath, "state.json");
+      if (fs38.existsSync(statePath)) {
+        const targetStatePath = path44.join(this.targetPath, ".trident", "state.json");
+        fs38.copyFileSync(statePath, targetStatePath);
       }
       success2 = true;
       evidence = `checkpoint restored: src copied, state.json restored (${checkpointId})`;
@@ -290992,9 +291161,9 @@ class CheckpointManager {
 `);
   }
   updateContextDocs(state2, checkpointId, phaseResult) {
-    const contextDir = path43.join(this.targetPath, ".trident");
-    if (!fs37.existsSync(contextDir)) {
-      fs37.mkdirSync(contextDir, { recursive: true });
+    const contextDir = path44.join(this.targetPath, ".trident");
+    if (!fs38.existsSync(contextDir)) {
+      fs38.mkdirSync(contextDir, { recursive: true });
     }
     const buildState = [
       `# BUILD STATE \u2014 Cycle ${state2.cycle}, Phase ${state2.phase}`,
@@ -291003,38 +291172,38 @@ class CheckpointManager {
       `Last Result: ${phaseResult.summary || "N/A"}`
     ].join(`
 `);
-    fs37.writeFileSync(path43.join(contextDir, "BUILD_STATE.md"), buildState);
+    fs38.writeFileSync(path44.join(contextDir, "BUILD_STATE.md"), buildState);
     const decisionEntry = `[${new Date().toISOString()}] C${state2.cycle} ${state2.phase} \u2192 ${phaseResult.nextPhase || "N/A"} | Score: ${state2.score} | Checkpoint: ${checkpointId}
 `;
-    fs37.appendFileSync(path43.join(contextDir, "DECISION_CHAIN.md"), decisionEntry);
+    fs38.appendFileSync(path44.join(contextDir, "DECISION_CHAIN.md"), decisionEntry);
   }
   copyDirectory(src, dest) {
-    fs37.mkdirSync(dest, { recursive: true });
-    const _items = fs37.readdirSync(src, { withFileTypes: true });
+    fs38.mkdirSync(dest, { recursive: true });
+    const _items = fs38.readdirSync(src, { withFileTypes: true });
     for (const entry of _items) {
-      const srcPath = path43.join(src, entry.name);
-      const destPath = path43.join(dest, entry.name);
+      const srcPath = path44.join(src, entry.name);
+      const destPath = path44.join(dest, entry.name);
       if (entry.isDirectory()) {
         if (!["node_modules", "dist", ".trident"].includes(entry.name)) {
           this.copyDirectory(srcPath, destPath);
         }
       } else if (entry.isFile()) {
-        fs37.copyFileSync(srcPath, destPath);
+        fs38.copyFileSync(srcPath, destPath);
       }
     }
     _items.length = 0;
   }
   cleanupOldCheckpoints() {
-    if (!fs37.existsSync(this.checkpointBasePath))
+    if (!fs38.existsSync(this.checkpointBasePath))
       return;
-    const _items = fs37.readdirSync(this.checkpointBasePath, { withFileTypes: true });
+    const _items = fs38.readdirSync(this.checkpointBasePath, { withFileTypes: true });
     const storedEntries = _items.filter((e) => e.isDirectory() && e.name.startsWith("checkpoint-")).map((e) => ({ name: e.name, timestamp: this.extractTimestamp(e.name) })).sort((a, b) => b.timestamp - a.timestamp);
     _items.length = 0;
     if (storedEntries.length > 20) {
       for (const cp of storedEntries.slice(20)) {
-        const cpPath = path43.join(this.checkpointBasePath, cp.name);
+        const cpPath = path44.join(this.checkpointBasePath, cp.name);
         try {
-          fs37.rmSync(cpPath, { recursive: true, force: true });
+          fs38.rmSync(cpPath, { recursive: true, force: true });
         } catch (e) {
           console.warn("[CheckpointManager] Failed to cleanup old checkpoint:", e instanceof Error ? e.message : String(e));
           continue;
@@ -291535,8 +291704,8 @@ var init_strategic_intelligence = __esm(() => {
 });
 
 // src/poseidon/visibility-logger.ts
-import * as fs38 from "fs";
-import * as path44 from "path";
+import * as fs39 from "fs";
+import * as path45 from "path";
 import * as crypto6 from "crypto";
 
 class VisibilityLogger {
@@ -291546,7 +291715,7 @@ class VisibilityLogger {
   maxEntries = 1e4;
   constructor(targetPath) {
     this.targetPath = targetPath;
-    this.logPath = path44.join(targetPath, ".trident", "visibility-log.json");
+    this.logPath = path45.join(targetPath, ".trident", "visibility-log.json");
     this.loadFromDisk();
   }
   logPhaseTransition(nextPhase, state2) {
@@ -291727,12 +291896,12 @@ class VisibilityLogger {
   }
   persistToDisk() {
     try {
-      const dir = path44.dirname(this.logPath);
-      if (!fs38.existsSync(dir)) {
-        fs38.mkdirSync(dir, { recursive: true });
+      const dir = path45.dirname(this.logPath);
+      if (!fs39.existsSync(dir)) {
+        fs39.mkdirSync(dir, { recursive: true });
       }
       const toWrite = this.entries.slice(-1000);
-      fs38.writeFileSync(this.logPath, JSON.stringify(toWrite, null, 2));
+      fs39.writeFileSync(this.logPath, JSON.stringify(toWrite, null, 2));
     } catch (err2) {
       console.error("[VisibilityLogger] Failed to persist:", err2);
       return;
@@ -291740,8 +291909,8 @@ class VisibilityLogger {
   }
   loadFromDisk() {
     try {
-      if (fs38.existsSync(this.logPath)) {
-        const data = fs38.readFileSync(this.logPath, "utf-8");
+      if (fs39.existsSync(this.logPath)) {
+        const data = fs39.readFileSync(this.logPath, "utf-8");
         const parsed = JSON["parse"](data);
         if (Array.isArray(parsed)) {
           this.entries = parsed;
@@ -291762,8 +291931,8 @@ class VisibilityLogger {
 var init_visibility_logger = () => {};
 
 // src/poseidon/problem-solver.ts
-import * as fs39 from "fs";
-import * as path45 from "path";
+import * as fs40 from "fs";
+import * as path46 from "path";
 
 class FiveWhysFramework {
   name = "Five Whys";
@@ -291887,7 +292056,7 @@ class FiveWhysFramework {
   }
   readPackageJson(targetPath) {
     try {
-      const raw = fs39.readFileSync(path45.join(targetPath, "package.json"), "utf-8");
+      const raw = fs40.readFileSync(path46.join(targetPath, "package.json"), "utf-8");
       const pkg = JSON["parse"](raw);
       return pkg;
     } catch (e) {
@@ -291897,7 +292066,7 @@ class FiveWhysFramework {
   }
   readSource(targetPath, relPath) {
     try {
-      return fs39.readFileSync(path45.join(targetPath, relPath), "utf-8");
+      return fs40.readFileSync(path46.join(targetPath, relPath), "utf-8");
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
       return null;
@@ -291922,7 +292091,7 @@ class FiveWhysFramework {
       "src/audit-engine/layers/" + layerLower + "-cross-plugin-isolation.ts"
     ];
     for (const c of candidates2) {
-      if (fs39.existsSync(path45.join(targetPath, c)))
+      if (fs40.existsSync(path46.join(targetPath, c)))
         return c;
     }
     return null;
@@ -292119,7 +292288,7 @@ class FaultTreeFramework {
   }
   readFile(targetPath, relPath) {
     try {
-      return fs39.readFileSync(path45.join(targetPath, relPath), "utf-8");
+      return fs40.readFileSync(path46.join(targetPath, relPath), "utf-8");
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
       return null;
@@ -292127,7 +292296,7 @@ class FaultTreeFramework {
   }
   readPackageJson(targetPath) {
     try {
-      const pkg = JSON["parse"](fs39.readFileSync(path45.join(targetPath, "package.json"), "utf-8"));
+      const pkg = JSON["parse"](fs40.readFileSync(path46.join(targetPath, "package.json"), "utf-8"));
       return pkg;
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
@@ -292182,7 +292351,7 @@ class SystemsThinkingFramework {
   }
   readFile(targetPath, relPath) {
     try {
-      return fs39.readFileSync(path45.join(targetPath, relPath), "utf-8");
+      return fs40.readFileSync(path46.join(targetPath, relPath), "utf-8");
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
       return null;
@@ -292290,7 +292459,7 @@ class FirstPrinciplesFramework {
   }
   readPackageJson(targetPath) {
     try {
-      const pkg = JSON["parse"](fs39.readFileSync(path45.join(targetPath, "package.json"), "utf-8"));
+      const pkg = JSON["parse"](fs40.readFileSync(path46.join(targetPath, "package.json"), "utf-8"));
       return pkg;
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
@@ -292348,7 +292517,7 @@ class HypothesisDrivenFramework {
   }
   readFile(targetPath, relPath) {
     try {
-      return fs39.readFileSync(path45.join(targetPath, relPath), "utf-8");
+      return fs40.readFileSync(path46.join(targetPath, relPath), "utf-8");
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
       return null;
@@ -292356,7 +292525,7 @@ class HypothesisDrivenFramework {
   }
   readPackageJson(targetPath) {
     try {
-      const pkg = JSON["parse"](fs39.readFileSync(path45.join(targetPath, "package.json"), "utf-8"));
+      const pkg = JSON["parse"](fs40.readFileSync(path46.join(targetPath, "package.json"), "utf-8"));
       return pkg;
     } catch (e) {
       console.error("[ProblemSolver] error:", e);
@@ -292679,8 +292848,8 @@ NOTE: ${this.stallDetector.getFailureCount()}/3 failures recorded. Hard bound at
 var init_problem_solver = () => {};
 
 // src/poseidon/god-loop.ts
-import * as fs40 from "fs";
-import * as path46 from "path";
+import * as fs41 from "fs";
+import * as path47 from "path";
 import { createHash as createHash11 } from "crypto";
 function cast3(value) {
   const r = value;
@@ -292728,7 +292897,7 @@ class GodLoopOrchestrator {
     if (!targetPath) {
       throw new Error("INIT FAIL: targetPath is empty");
     }
-    const stat2 = fs40.existsSync(targetPath) ? fs40.statSync(targetPath) : null;
+    const stat2 = fs41.existsSync(targetPath) ? fs41.statSync(targetPath) : null;
     if (!stat2 || !stat2.isDirectory()) {
       throw new Error("INIT FAIL: " + targetPath + " is not a directory");
     }
@@ -292736,8 +292905,8 @@ class GodLoopOrchestrator {
       this.targetPath = targetPath;
       this.initSupportingModules(targetPath);
     }
-    const stateDir = path46.join(targetPath, ".trident", "god-loop");
-    const statePath = path46.join(stateDir, "state.json");
+    const stateDir = path47.join(targetPath, ".trident", "god-loop");
+    const statePath = path47.join(stateDir, "state.json");
     const state2 = this.loadState(statePath);
     state2.targetPath = targetPath;
     if (state2.phase === "LOCKED" || state2.phase === "FAILED") {
@@ -293021,7 +293190,7 @@ class GodLoopOrchestrator {
 ` + `1. sha256sum the modified file
 ` + `2. Re-run trident-code-audit on the target
 ` + "3. Confirm the finding is resolved and score improved",
-        expectedHashes: [primaryFile].map((f) => this.sha256(fs40.readFileSync(path46.resolve(targetPath, f), "utf-8")))
+        expectedHashes: [primaryFile].map((f) => this.sha256(fs41.readFileSync(path47.resolve(targetPath, f), "utf-8")))
       };
       return agentSpec;
     });
@@ -293073,11 +293242,11 @@ class GodLoopOrchestrator {
       return this.buildResult(state2, "PLAN", "[POSEIDON: No wave manifest. Returning to PLAN.]", false);
     }
     const agentCount = manifest.agents.length;
-    const dispatchDir = path46.join(state2.targetPath, ".trident", "god-loop");
-    const dispatchPath = path46.join(dispatchDir, "wave-" + state2.wave + "-dispatch.md");
+    const dispatchDir = path47.join(state2.targetPath, ".trident", "god-loop");
+    const dispatchPath = path47.join(dispatchDir, "wave-" + state2.wave + "-dispatch.md");
     try {
-      fs40.mkdirSync(dispatchDir, { recursive: true });
-      fs40.writeFileSync(dispatchPath, this.buildDispatchInstructions(manifest, state2), "utf-8");
+      fs41.mkdirSync(dispatchDir, { recursive: true });
+      fs41.writeFileSync(dispatchPath, this.buildDispatchInstructions(manifest, state2), "utf-8");
     } catch (e) {
       tridentLog("WARN", "god-loop", "Failed to write dispatch plan: " + (e instanceof Error ? e.message : String(e)));
     }
@@ -293116,13 +293285,13 @@ class GodLoopOrchestrator {
 `;
     for (let i = 0;i < manifest.agents.length; i++) {
       const a = manifest.agents[i];
-      out += "### Agent " + (i + 1) + ": " + path46.basename(a.targetFiles[0] || "unknown").replace(/\.ts$/, "") + `
+      out += "### Agent " + (i + 1) + ": " + path47.basename(a.targetFiles[0] || "unknown").replace(/\.ts$/, "") + `
 
 `;
       out += "```\n";
       out += `subagent_type: trident_build
 `;
-      out += "description: Fix " + path46.basename(a.targetFiles[0] || "unknown") + " (" + a.findings.length + ` findings)
+      out += "description: Fix " + path47.basename(a.targetFiles[0] || "unknown") + " (" + a.findings.length + ` findings)
 
 `;
       out += `PROMPT:
@@ -293148,9 +293317,9 @@ class GodLoopOrchestrator {
     const _writeT1Bridge = () => {
       try {
         const t1Content = this.generateT1Bridge(state2, targetPath);
-        const t1Path = path46.join(targetPath, ".trident", "god-loop", "wave-" + state2.wave + "-T1.md");
-        fs40.mkdirSync(path46.dirname(t1Path), { recursive: true });
-        fs40.writeFileSync(t1Path, t1Content, "utf-8");
+        const t1Path = path47.join(targetPath, ".trident", "god-loop", "wave-" + state2.wave + "-T1.md");
+        fs41.mkdirSync(path47.dirname(t1Path), { recursive: true });
+        fs41.writeFileSync(t1Path, t1Content, "utf-8");
       } catch (e) {
         tridentLog("WARN", "god-loop", "T1 context bridge failed: " + (e instanceof Error ? e.message : String(e)));
         return;
@@ -293218,7 +293387,7 @@ class GodLoopOrchestrator {
           waveId: "wave-" + state2.wave,
           waveNumber: state2.wave,
           agents: state2.waveManifest.agents.map((a) => ({
-            name: path46.basename(a.targetFiles[0] || "unknown"),
+            name: path47.basename(a.targetFiles[0] || "unknown"),
             files: a.targetFiles,
             expectedSha256: cast3(a.expectedHashes && a.expectedHashes.length > 0 ? Object.fromEntries(a.expectedHashes.map((h, idx) => [a.targetFiles[idx] || "file_" + idx, h])) : undefined)
           }))
@@ -293362,7 +293531,7 @@ ${findingDetails.slice(0, 20).join(`
       const files = await this.collectSourceFiles(targetPath);
       for (const f of files.slice(0, 15)) {
         try {
-          const content = fs40.readFileSync(f, "utf-8");
+          const content = fs41.readFileSync(f, "utf-8");
           sourceExtracts.set(f, content);
         } catch (e) {
           tridentLog("WARN", "god-loop", "Non-fatal error: " + (e instanceof Error ? e.message : String(e)));
@@ -293483,11 +293652,11 @@ ${findingDetails.slice(0, 20).join(`
   async collectSourceFiles(dir) {
     const results = [];
     try {
-      const entries = await fs40.promises.readdir(dir, { withFileTypes: true });
+      const entries = await fs41.promises.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (results.length >= 50)
           break;
-        const fullPath = path46.join(dir, entry.name);
+        const fullPath = path47.join(dir, entry.name);
         if (entry.isDirectory()) {
           if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git")
             continue;
@@ -293613,7 +293782,7 @@ ${findingDetails.slice(0, 20).join(`
       }
       let entries;
       try {
-        entries = fs40.readdirSync(d, { withFileTypes: true });
+        entries = fs41.readdirSync(d, { withFileTypes: true });
       } catch (walkErr) {
         tridentLog("WARN", "god-loop", "scanTsFiles skip dir " + d + ": " + (walkErr instanceof Error ? walkErr.message : String(walkErr)));
         return;
@@ -293621,7 +293790,7 @@ ${findingDetails.slice(0, 20).join(`
       for (const entry of entries) {
         if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist")
           continue;
-        const full = path46.join(d, entry.name);
+        const full = path47.join(d, entry.name);
         if (entry.isDirectory()) {
           walk(full, depth + 1);
         } else if (entry.name.endsWith(".ts")) {
@@ -293633,10 +293802,10 @@ ${findingDetails.slice(0, 20).join(`
     return results;
   }
   readSourceContext(targetPath, file2, line, contextLines) {
-    const fullPath = path46.resolve(targetPath, file2);
+    const fullPath = path47.resolve(targetPath, file2);
     let content;
     try {
-      content = fs40.readFileSync(fullPath, "utf-8");
+      content = fs41.readFileSync(fullPath, "utf-8");
     } catch (readErr) {
       tridentLog("WARN", "god-loop", "readSourceContext failed for " + file2 + ":" + line + ": " + (readErr instanceof Error ? readErr.message : String(readErr)));
       return SOURCE_UNAVAILABLE;
@@ -293680,7 +293849,7 @@ ${findingDetails.slice(0, 20).join(`
   loadState(statePath) {
     let raw;
     try {
-      raw = fs40.readFileSync(statePath, "utf-8");
+      raw = fs41.readFileSync(statePath, "utf-8");
     } catch (loadErr) {
       tridentLog("INFO", "god-loop", "Fresh state (no existing state file): " + (loadErr instanceof Error ? loadErr.message : String(loadErr)));
       return {
@@ -293720,10 +293889,10 @@ ${findingDetails.slice(0, 20).join(`
   }
   writeStateAtomic(statePath, state2) {
     try {
-      fs40.mkdirSync(path46.dirname(statePath), { recursive: true });
+      fs41.mkdirSync(path47.dirname(statePath), { recursive: true });
       const tmp = statePath + ".tmp";
-      fs40.writeFileSync(tmp, JSON.stringify(state2, null, 2), "utf-8");
-      fs40.renameSync(tmp, statePath);
+      fs41.writeFileSync(tmp, JSON.stringify(state2, null, 2), "utf-8");
+      fs41.renameSync(tmp, statePath);
     } catch (e) {
       tridentLog("ERROR", "god-loop", "[saveState] Failed to write state: " + (e instanceof Error ? e.message : String(e)));
     }
@@ -293741,7 +293910,7 @@ ${findingDetails.slice(0, 20).join(`
     };
   }
   getStatus(targetPath) {
-    const statePath = path46.join(targetPath, ".trident", "god-loop", "state.json");
+    const statePath = path47.join(targetPath, ".trident", "god-loop", "state.json");
     const state2 = this.loadState(statePath);
     return {
       phase: state2.phase,
@@ -293769,8 +293938,8 @@ var init_god_loop = __esm(() => {
 });
 
 // src/tools/trident-poseidon.ts
-import * as fs41 from "fs";
-import * as path47 from "path";
+import * as fs42 from "fs";
+import * as path48 from "path";
 function cast4(value) {
   const r = value;
   return r;
@@ -293867,7 +294036,7 @@ Poseidon Mode remains ACTIVE (tools unlocked). Mode changes only via user chat (
         const result2 = await godLoopOrchestrator.runPhase(args.targetPath, sessionId);
         poseidonState.setScore(sessionId, result2.score);
         poseidonState.incrementCycles(sessionId);
-        const stateDir = path47.join(args.targetPath, ".trident", "god-loop");
+        const stateDir = path48.join(args.targetPath, ".trident", "god-loop");
         const shortLine = "\uD83D\uDD04 POSEIDON CYCLE " + result2.cycle + " | Score: " + result2.score + "/100 | Wave: " + result2.wave + " | Phase: " + result2.phase + " \u2192 " + result2.nextPhase;
         if (result2.nextPhase === "LOCKED" || result2.nextPhase === "FAILED") {
           return shortLine + `
@@ -293877,10 +294046,10 @@ Poseidon Mode remains ACTIVE (tools unlocked). Mode changes only via user chat (
 God Loop ended (` + result2.nextPhase + '). Poseidon Mode remains ACTIVE \u2014 mode changes only via user chat ("poseidon deactivate").';
         }
         if (result2.requiresModelAction) {
-          const dispatchPath = path47.join(stateDir, "wave-" + result2.wave + "-dispatch.md");
+          const dispatchPath = path48.join(stateDir, "wave-" + result2.wave + "-dispatch.md");
           try {
-            fs41.mkdirSync(stateDir, { recursive: true });
-            fs41.writeFileSync(dispatchPath, result2.instructions, "utf-8");
+            fs42.mkdirSync(stateDir, { recursive: true });
+            fs42.writeFileSync(dispatchPath, result2.instructions, "utf-8");
           } catch (e) {
             tridentLog("WARN", "trident-poseidon", "Failed to write dispatch plan: " + (e instanceof Error ? e.message : String(e)));
           }
@@ -293902,9 +294071,9 @@ God Loop ended (` + result2.nextPhase + '). Poseidon Mode remains ACTIVE \u2014 
 
 \u2192 Call trident-poseidon action=start to advance.`;
         }
-        const detailPath = path47.join(stateDir, "phase-" + result2.phase + "-details.md");
+        const detailPath = path48.join(stateDir, "phase-" + result2.phase + "-details.md");
         try {
-          fs41.writeFileSync(detailPath, result2.instructions, "utf-8");
+          fs42.writeFileSync(detailPath, result2.instructions, "utf-8");
         } catch (e) {
           tridentLog("WARN", "trident-poseidon", "Failed to write phase details: " + (e instanceof Error ? e.message : String(e)));
         }
@@ -293926,8 +294095,8 @@ God Loop ended (` + result2.nextPhase + '). Poseidon Mode remains ACTIVE \u2014 
 });
 
 // src/shared/auto-discover.ts
-import * as fs42 from "fs";
-import * as path48 from "path";
+import * as fs43 from "fs";
+import * as path49 from "path";
 function safeJsonParse5(raw) {
   return JSON["parse"](raw);
 }
@@ -293936,7 +294105,7 @@ function cast5(v) {
   return r;
 }
 async function discoverProject(targetPath) {
-  const projectRoot = path48.resolve(targetPath);
+  const projectRoot = path49.resolve(targetPath);
   tridentLog("INFO", "auto-discover", `Scanning: ${projectRoot}`);
   const files = collectFiles(projectRoot, projectRoot, 0);
   const totalLines = countLines(files);
@@ -293974,7 +294143,7 @@ function collectFiles(rootDir, root, _depth) {
     if (item.depth > 15)
       continue;
     try {
-      const entries = fs42.readdirSync(item.dir, { withFileTypes: true });
+      const entries = fs43.readdirSync(item.dir, { withFileTypes: true });
       for (const entry of entries) {
         if (SKIP_DIRS.has(entry.name))
           continue;
@@ -293983,11 +294152,11 @@ function collectFiles(rootDir, root, _depth) {
           return p.test(entry.name);
         }))
           continue;
-        const fullPath = path48.join(item.dir, entry.name);
+        const fullPath = path49.join(item.dir, entry.name);
         if (entry.isDirectory()) {
           queue.push({ dir: fullPath, depth: item.depth + 1 });
         } else if (entry.isFile()) {
-          const ext = path48.extname(entry.name).toLowerCase();
+          const ext = path49.extname(entry.name).toLowerCase();
           if (SOURCE_EXTS.has(ext)) {
             files.push(fullPath);
           }
@@ -294003,7 +294172,7 @@ function countLines(files) {
   let total = 0;
   for (const file2 of files.slice(0, 200)) {
     try {
-      const content = fs42.readFileSync(file2, "utf-8");
+      const content = fs43.readFileSync(file2, "utf-8");
       total += content.split(`
 `).length;
     } catch {
@@ -294014,7 +294183,7 @@ function countLines(files) {
 }
 function buildTree(rootDir, _startDepth, maxDepth) {
   let result2 = "";
-  const queue = [{ dir: rootDir, depth: 0, name: path48.basename(rootDir) }];
+  const queue = [{ dir: rootDir, depth: 0, name: path49.basename(rootDir) }];
   while (queue.length > 0) {
     const item = queue.shift();
     if (item.depth > maxDepth)
@@ -294023,14 +294192,14 @@ function buildTree(rootDir, _startDepth, maxDepth) {
     result2 += `${indent}${item.name}/
 `;
     try {
-      const entries = fs42.readdirSync(item.dir, { withFileTypes: true });
+      const entries = fs43.readdirSync(item.dir, { withFileTypes: true });
       const dirs = entries.filter((e) => e.isDirectory() && !SKIP_DIRS.has(e.name)).slice(0, 20);
       const fileCount = entries.filter((e) => e.isFile()).length;
       if (fileCount > 0)
         result2 += `${indent}  (${fileCount} files)
 `;
       for (let i = dirs.length - 1;i >= 0; i--) {
-        queue.unshift({ dir: path48.join(item.dir, dirs[i].name), depth: item.depth + 1, name: dirs[i].name });
+        queue.unshift({ dir: path49.join(item.dir, dirs[i].name), depth: item.depth + 1, name: dirs[i].name });
       }
     } catch (e) {
       tridentLog("WARN", "auto-discover", "Non-fatal error: " + (e instanceof Error ? e.message : String(e)));
@@ -294041,7 +294210,7 @@ function buildTree(rootDir, _startDepth, maxDepth) {
 function detectLanguages(files) {
   const langs = {};
   for (const file2 of files) {
-    const ext = path48.extname(file2).toLowerCase();
+    const ext = path49.extname(file2).toLowerCase();
     const lang = ext.replace(".", "");
     langs[lang] = (langs[lang] || 0) + 1;
   }
@@ -294049,9 +294218,9 @@ function detectLanguages(files) {
 }
 function readPackageJson2(dir) {
   try {
-    const pkgPath = path48.join(dir, "package.json");
-    if (fs42.existsSync(pkgPath)) {
-      const parsed = cast5(safeJsonParse5(fs42.readFileSync(pkgPath, "utf-8")));
+    const pkgPath = path49.join(dir, "package.json");
+    if (fs43.existsSync(pkgPath)) {
+      const parsed = cast5(safeJsonParse5(fs43.readFileSync(pkgPath, "utf-8")));
       return parsed;
     }
   } catch {
@@ -294067,8 +294236,8 @@ function findEntryPoints(dir, pkg) {
     entries.push(pkg.module);
   const commonEntries = ["index.ts", "index.js", "src/index.ts", "src/index.js", "main.ts", "main.js"];
   for (const entry of commonEntries) {
-    const fullPath = path48.join(dir, entry);
-    if (fs42.existsSync(fullPath)) {
+    const fullPath = path49.join(dir, entry);
+    if (fs43.existsSync(fullPath)) {
       entries.push(entry);
     }
   }
@@ -294084,7 +294253,7 @@ function extractPatterns(files) {
   ];
   for (const file2 of files) {
     try {
-      const lines = fs42.readFileSync(file2, "utf-8").split(`
+      const lines = fs43.readFileSync(file2, "utf-8").split(`
 `);
       for (let i = 0;i < lines.length; i++) {
         for (const { re, type: type3 } of regexes) {
@@ -294095,7 +294264,7 @@ function extractPatterns(files) {
             const end = Math.min(lines.length, i + 18);
             const codeSnippet = lines.slice(start, end).join(`
 `);
-            patterns2.push({ name: match[1], file: path48.basename(file2), line: i + 1, type: type3, codeSnippet, signature: lines[i].trim() });
+            patterns2.push({ name: match[1], file: path49.basename(file2), line: i + 1, type: type3, codeSnippet, signature: lines[i].trim() });
             if (patterns2.length >= 50)
               return patterns2;
           }
@@ -294116,7 +294285,7 @@ function extractFailureModes(files) {
   ];
   for (const file2 of files) {
     try {
-      const lines = fs42.readFileSync(file2, "utf-8").split(`
+      const lines = fs43.readFileSync(file2, "utf-8").split(`
 `);
       for (let i = 0;i < lines.length; i++) {
         for (const re of patterns2) {
@@ -294128,7 +294297,7 @@ function extractFailureModes(files) {
 `);
             failures.push({
               pattern: match[0].substring(0, 80),
-              file: path48.basename(file2),
+              file: path49.basename(file2),
               line: i + 1,
               message: match[1]?.substring(0, 100) || match[0].substring(0, 100),
               codeSnippet
@@ -294149,14 +294318,14 @@ function extractDecisions(files) {
   const re = /\/\/\s*(?:Decision|Rationale|WHY|REASON):\s*(.+)/i;
   for (const file2 of files) {
     try {
-      const lines = fs42.readFileSync(file2, "utf-8").split(`
+      const lines = fs43.readFileSync(file2, "utf-8").split(`
 `);
       for (let i = 0;i < lines.length; i++) {
         const match = re.exec(lines[i]);
         if (match) {
           decisions.push({
             rationale: match[1].trim(),
-            file: path48.basename(file2),
+            file: path49.basename(file2),
             line: i + 1
           });
           if (decisions.length >= 20)
@@ -294174,7 +294343,7 @@ function findWarheads(files) {
   for (const file2 of files) {
     if (file2.includes("warhead") || file2.includes("Warhead")) {
       try {
-        const content = fs42.readFileSync(file2, "utf-8");
+        const content = fs43.readFileSync(file2, "utf-8");
         const matches = content.match(/(?:var|const|let)\s+(\w*[Ww]arhead\w*)/g);
         if (matches) {
           for (const m of matches) {
@@ -294194,7 +294363,7 @@ function findAuditLayers(files) {
   const layers = [];
   for (const file2 of files) {
     if (file2.includes("/layers/") || file2.includes("\\layers\\")) {
-      const name = path48.basename(file2, path48.extname(file2));
+      const name = path49.basename(file2, path49.extname(file2));
       if (name.match(/^r\d+-/)) {
         layers.push(name);
       }
@@ -294208,9 +294377,9 @@ function extractCodeSections(files, projectRoot) {
   const mainFiles = files.filter((f) => f.endsWith("index.ts") || f.includes("/tools/") || f.includes("/hooks/") || (cfgFile ? f.endsWith(cfgFile) : false) || f.endsWith("orchestrator.ts") || f.endsWith("types.ts"));
   for (const file2 of mainFiles.slice(0, 15)) {
     try {
-      const lines = fs42.readFileSync(file2, "utf-8").split(`
+      const lines = fs43.readFileSync(file2, "utf-8").split(`
 `);
-      const relPath = path48.relative(projectRoot, file2);
+      const relPath = path49.relative(projectRoot, file2);
       let sectionStart = 0;
       let sectionName = relPath + " (header)";
       for (let i = 0;i < lines.length; i++) {
@@ -294363,8 +294532,8 @@ var init_context_synthesis_machine = __esm(() => {
 });
 
 // src/warheads/p1-p10-scanner/scanner.ts
-import * as fs43 from "fs";
-import * as path49 from "path";
+import * as fs44 from "fs";
+import * as path50 from "path";
 
 class P1P10Scanner {
   scanDirectory(targetPath) {
@@ -294372,7 +294541,7 @@ class P1P10Scanner {
     const tsFiles = this.findTsFiles(targetPath);
     for (const file2 of tsFiles) {
       try {
-        const content = fs43.readFileSync(file2, "utf-8");
+        const content = fs44.readFileSync(file2, "utf-8");
         const lines = content.split(`
 `);
         results.push(...this.checkP1_typeofGuard(file2, lines, content));
@@ -294660,13 +294829,13 @@ class P1P10Scanner {
       if (depth > 15)
         return;
       try {
-        const entries = fs43.readdirSync(d, { withFileTypes: true });
+        const entries = fs44.readdirSync(d, { withFileTypes: true });
         for (const entry of entries) {
           if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git" || entry.name === "src_old")
             continue;
           if (entry.isSymbolicLink && entry.isSymbolicLink())
             continue;
-          const fullPath = path49.join(d, entry.name);
+          const fullPath = path50.join(d, entry.name);
           if (entry.isDirectory())
             walkDir(fullPath, depth + 1);
           else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts"))
@@ -294903,12 +295072,12 @@ var init_l2_strategy = __esm(() => {
 });
 
 // src/artifacts/l2-brief-builder.ts
-import * as fs44 from "fs";
+import * as fs45 from "fs";
 function readSourceFiles(filePaths) {
   const sourceExtracts = new Map;
   for (const filePath of filePaths) {
     try {
-      const content = fs44.readFileSync(filePath, "utf-8");
+      const content = fs45.readFileSync(filePath, "utf-8");
       sourceExtracts.set(filePath, content);
     } catch (e) {
       tridentLog("WARN", "l2-brief-builder", `Failed to read source file: ${filePath}`);
@@ -295492,8 +295661,8 @@ This enables post-hoc analysis without modifying the engine.`
 });
 
 // src/artifacts/l2-quality-audit.ts
-import * as fs45 from "fs";
-import * as path50 from "path";
+import * as fs46 from "fs";
+import * as path51 from "path";
 function extractSection(doc2, sectionTitle) {
   const lines = doc2.split(`
 `);
@@ -295778,8 +295947,8 @@ function checkFilePaths(doc2, analysis) {
     }
     if (projectRoot) {
       const cleanPath = relPath.replace(/^\.\//, "");
-      const fullPath = path50.join(projectRoot, cleanPath);
-      if (!fs45.existsSync(fullPath)) {
+      const fullPath = path51.join(projectRoot, cleanPath);
+      if (!fs46.existsSync(fullPath)) {
         issues.push(`Referenced file does not exist on disk: ${relPath} ` + `(checked: ${fullPath})`);
       }
     }
@@ -296270,8 +296439,8 @@ var init_shared_llm_loop = __esm(() => {
 });
 
 // src/tools/trident-tools.ts
-import * as path51 from "path";
-import * as fs46 from "fs/promises";
+import * as path52 from "path";
+import * as fs47 from "fs/promises";
 import * as crypto7 from "crypto";
 import * as fsSync2 from "fs";
 function extractKeyTerms(requirements) {
@@ -296410,7 +296579,7 @@ function buildDesignBrief(args, sourceExtracts, strategy, projectName) {
     L.push("Write a spec FOR the system described in the PRIMARY DIRECTIVE above.");
     L.push("");
     for (const [filePath, content] of sourceExtracts) {
-      L.push(`### Reference: ${path51.basename(filePath)}`);
+      L.push(`### Reference: ${path52.basename(filePath)}`);
       L.push("```");
       L.push(content.length > 3000 ? content.substring(0, 3000) + `
 ... (truncated)` : content);
@@ -296589,7 +296758,7 @@ function buildL1ContentBrief(args, sourceExtracts, projectName) {
     for (const [filePath, content] of sourceExtracts) {
       const truncated = content.length > 3000 ? content.substring(0, 3000) + `
 ... (truncated)` : content;
-      L.push(`### ${path51.basename(filePath)}`);
+      L.push(`### ${path52.basename(filePath)}`);
       L.push("```");
       L.push(truncated);
       L.push("```");
@@ -296691,7 +296860,7 @@ function buildT1InjectableBrief(args, sourceExtracts, projectName) {
     for (const [filePath, content] of sourceExtracts) {
       const truncated = content.length > 3000 ? content.substring(0, 3000) + `
 ... (truncated)` : content;
-      L.push(`### ${path51.basename(filePath)}`);
+      L.push(`### ${path52.basename(filePath)}`);
       L.push("```");
       L.push(truncated);
       L.push("```");
@@ -296738,11 +296907,11 @@ function buildT1InjectableBrief(args, sourceExtracts, projectName) {
 async function collectSourceFiles2(dir) {
   const results = [];
   try {
-    const entries = await fs46.readdir(dir, { withFileTypes: true });
+    const entries = await fs47.readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
       if (results.length >= 50)
         break;
-      const fullPath = path51.join(dir, entry.name);
+      const fullPath = path52.join(dir, entry.name);
       if (entry.isDirectory()) {
         if (entry.name === "node_modules" || entry.name === "dist" || entry.name === ".git")
           continue;
@@ -296759,15 +296928,15 @@ async function collectSourceFiles2(dir) {
 }
 async function resolveProjectName(targetPath) {
   try {
-    const pkgPath = path51.join(targetPath, "package.json");
-    const content = await fs46.readFile(pkgPath, "utf-8");
+    const pkgPath = path52.join(targetPath, "package.json");
+    const content = await fs47.readFile(pkgPath, "utf-8");
     const pkg = JSON.parse(content);
     if (pkg?.name)
       return pkg.name;
   } catch (e) {
     tridentLog("WARN", "trident-tools", `resolveProjectName: no package.json at ${targetPath}`);
   }
-  return path51.basename(targetPath) || "unnamed-project";
+  return path52.basename(targetPath) || "unnamed-project";
 }
 function extractSemanticName(content, modeFolder) {
   const h1Match = content.match(/^#\s+(.+)$/m);
@@ -296802,7 +296971,7 @@ function extractSemanticName(content, modeFolder) {
 }
 async function fileExists3(filePath) {
   try {
-    await fs46.access(filePath);
+    await fs47.access(filePath);
     return true;
   } catch {
     return false;
@@ -296813,10 +296982,10 @@ async function writeArtifactFile(modeFolder, content, outputPath, outputName, fi
   if (outputPath && fileName) {
     try {
       if (!await fileExists3(outputPath)) {
-        await fs46.mkdir(outputPath, { recursive: true });
+        await fs47.mkdir(outputPath, { recursive: true });
       }
-      const finalPath = path51.join(outputPath, `${fileName.replace(/\.md$/i, "")}.md`);
-      await fs46.writeFile(finalPath, content, "utf-8");
+      const finalPath = path52.join(outputPath, `${fileName.replace(/\.md$/i, "")}.md`);
+      await fs47.writeFile(finalPath, content, "utf-8");
       tridentLog("INFO", "trident-tools", `Artifact saved to: ${finalPath}`);
       return finalPath;
     } catch (err2) {
@@ -296829,38 +296998,38 @@ async function writeArtifactFile(modeFolder, content, outputPath, outputName, fi
       const isDir = fsSync3.existsSync(outputPath) && fsSync3.statSync(outputPath).isDirectory();
       if (isDir) {
         const semanticName = outputName ? outputName.replace(/\.md$/i, "") : extractSemanticName(content, modeFolder);
-        const finalPath2 = path51.join(outputPath, `${semanticName}.md`);
-        await fs46.writeFile(finalPath2, content, "utf-8");
+        const finalPath2 = path52.join(outputPath, `${semanticName}.md`);
+        await fs47.writeFile(finalPath2, content, "utf-8");
         tridentLog("INFO", "trident-tools", `Artifact saved inside directory: ${finalPath2}`);
         return finalPath2;
       }
-      const dir = path51.dirname(outputPath);
+      const dir = path52.dirname(outputPath);
       if (!await fileExists3(dir)) {
-        await fs46.mkdir(dir, { recursive: true });
+        await fs47.mkdir(dir, { recursive: true });
       }
-      const finalPath = outputName ? path51.join(dir, outputName) : outputPath;
-      await fs46.writeFile(finalPath, content, "utf-8");
+      const finalPath = outputName ? path52.join(dir, outputName) : outputPath;
+      await fs47.writeFile(finalPath, content, "utf-8");
       tridentLog("INFO", "trident-tools", `Artifact saved to custom path: ${finalPath}`);
       return finalPath;
     } catch (err2) {
       tridentLog("ERROR", "trident-tools", `writeArtifactFile custom path failed: ${(err2 instanceof Error ? err2 : new Error(String(err2))).message}`);
     }
   }
-  const artifactDir = path51.join(ARTIFACTS_BASE, folder);
+  const artifactDir = path52.join(ARTIFACTS_BASE, folder);
   try {
     if (!await fileExists3(artifactDir)) {
-      await fs46.mkdir(artifactDir, { recursive: true });
+      await fs47.mkdir(artifactDir, { recursive: true });
     }
     const semanticName = extractSemanticName(content, modeFolder);
     const fileName2 = `${semanticName}.md`;
-    const filePath = path51.join(artifactDir, fileName2);
+    const filePath = path52.join(artifactDir, fileName2);
     let finalPath = filePath;
     let counter = 1;
     while (await fileExists3(finalPath)) {
-      finalPath = path51.join(artifactDir, `${semanticName}_${counter}.md`);
+      finalPath = path52.join(artifactDir, `${semanticName}_${counter}.md`);
       counter++;
     }
-    await fs46.writeFile(finalPath, content, "utf-8");
+    await fs47.writeFile(finalPath, content, "utf-8");
     tridentLog("INFO", "trident-tools", `Artifact saved: ${finalPath}`);
     return finalPath;
   } catch (err2) {
@@ -296891,7 +297060,7 @@ function isBundleFile(filePath) {
   }
 }
 function loadTridentIgnore(targetPath) {
-  const ignorePath = path51.join(targetPath, ".tridentignore");
+  const ignorePath = path52.join(targetPath, ".tridentignore");
   const defaultPatterns = [
     "dist/**",
     "node_modules/**",
@@ -297235,7 +297404,7 @@ function createTridentTools(client) {
 ` + l1TestPlan;
                 const l1TpError = validateEmbeddedTestPlan(l1FinalOutput);
                 try {
-                  await fs46.appendFile("/tmp/trident-l1-append-marker.txt", `APPENDED ${new Date().toISOString()} len=${l1TestPlan.length} err=${l1TpError || "none"}
+                  await fs47.appendFile("/tmp/trident-l1-append-marker.txt", `APPENDED ${new Date().toISOString()} len=${l1TestPlan.length} err=${l1TpError || "none"}
 `, "utf-8");
                 } catch (markerErr) {}
                 if (l1TpError) {
@@ -297244,7 +297413,7 @@ function createTridentTools(client) {
               } catch (l1TpErr) {
                 tridentLog("WARN", "trident-tools", `L1 test-plan wiring failed (non-fatal): ${l1TpErr instanceof Error ? l1TpErr.message : String(l1TpErr)}`);
                 try {
-                  await fs46.appendFile("/tmp/trident-l1-append-marker.txt", `THREW ${new Date().toISOString()} ${l1TpErr instanceof Error ? l1TpErr.message : String(l1TpErr)}
+                  await fs47.appendFile("/tmp/trident-l1-append-marker.txt", `THREW ${new Date().toISOString()} ${l1TpErr instanceof Error ? l1TpErr.message : String(l1TpErr)}
 `, "utf-8");
                 } catch (markerErr) {}
               }
@@ -297469,16 +297638,16 @@ Use the provided context fields (components, constraints, designDecisions, known
               if (args.outputPath) {
                 try {
                   if (args.fileName) {
-                    await fs46.mkdir(args.outputPath, { recursive: true });
-                    l2ArtifactPath = path51.join(args.outputPath, `${args.fileName.replace(/\.md$/i, "")}.md`);
-                    await fs46.writeFile(l2ArtifactPath, l2FinalDoc, "utf-8");
+                    await fs47.mkdir(args.outputPath, { recursive: true });
+                    l2ArtifactPath = path52.join(args.outputPath, `${args.fileName.replace(/\.md$/i, "")}.md`);
+                    await fs47.writeFile(l2ArtifactPath, l2FinalDoc, "utf-8");
                     tridentLog("INFO", "trident-tools", `Artifact saved inside directory: ${l2ArtifactPath}`);
                   } else {
-                    const outDir = path51.dirname(args.outputPath);
-                    await fs46.mkdir(outDir, { recursive: true });
-                    const l2OutPath = args.fileName ? path51.join(args.outputPath, String(args.fileName).replace(/\.md$/i, "") + ".md") : args.outputPath;
-                    await fs46.mkdir(path51.dirname(l2OutPath), { recursive: true });
-                    await fs46.writeFile(l2OutPath, l2FinalDoc, "utf-8");
+                    const outDir = path52.dirname(args.outputPath);
+                    await fs47.mkdir(outDir, { recursive: true });
+                    const l2OutPath = args.fileName ? path52.join(args.outputPath, String(args.fileName).replace(/\.md$/i, "") + ".md") : args.outputPath;
+                    await fs47.mkdir(path52.dirname(l2OutPath), { recursive: true });
+                    await fs47.writeFile(l2OutPath, l2FinalDoc, "utf-8");
                     l2ArtifactPath = args.outputPath;
                     tridentLog("INFO", "trident-tools", `Artifact saved to user-specified path: ${l2ArtifactPath}`);
                   }
@@ -297551,8 +297720,8 @@ Stack: ${l2ErrStack || "no stack"}`;
                 throw new Error('L3 REQUIRES explicit domain definitions. Pass domainNames=["AUTH_ENGINE","RATE_LIMITER"] + domainContexts=["Design auth...","Design rate limiter..."]. ' + "L3 is ALWAYS directed \u2014 no autonomous fallback. No domains = no generation.");
               }
               tridentLog("INFO", "trident-deep-planning", `L3: ${l3Domains.length} directed domains: ${l3Domains.map((d) => d.name).join(", ")}`);
-              const libDir = args.outputPath || path51.join(targetPathForGen, "context-library");
-              await fs46.mkdir(libDir, { recursive: true });
+              const libDir = args.outputPath || path52.join(targetPathForGen, "context-library");
+              await fs47.mkdir(libDir, { recursive: true });
               tridentLog("INFO", "trident-deep-planning", `L3: Output folder: ${libDir}`);
               const jobs = [];
               for (let i = 0;i < l3Domains.length; i++) {
@@ -297611,8 +297780,8 @@ ${l3Domains.map((d) => `- ${d.name}: ${d.context.substring(0, 200)}`).join(`
                 const lines = content.split(`
 `).length;
                 tridentLog("INFO", "trident-deep-planning", `L3: [${job.name}] LLM returned ${lines} lines`);
-                const filePath = path51.join(libDir, job.fileName);
-                await fs46.writeFile(filePath, content, "utf-8");
+                const filePath = path52.join(libDir, job.fileName);
+                await fs47.writeFile(filePath, content, "utf-8");
                 tridentLog("INFO", "trident-deep-planning", `L3: [${job.name}] DONE \u2014 ${lines} lines \u2192 ${filePath}`);
                 return { name: job.name, type: job.type, path: filePath, lines };
               }));
@@ -297651,11 +297820,11 @@ ${l3Domains.map((d) => `- ${d.name}: ${d.context.substring(0, 200)}`).join(`
 `;
               for (let i = 0;i < specs.length; i++) {
                 const s = specs[i];
-                index3 += `| ${i} | ${s.name} | ${s.type} | ${s.lines} | ${s.status} | ${s.path ? `\`${path51.basename(s.path)}\`` : "\u2014"} |
+                index3 += `| ${i} | ${s.name} | ${s.type} | ${s.lines} | ${s.status} | ${s.path ? `\`${path52.basename(s.path)}\`` : "\u2014"} |
 `;
               }
-              const indexPath = path51.join(libDir, "MASTER_INDEX.md");
-              await fs46.writeFile(indexPath, index3, "utf-8");
+              const indexPath = path52.join(libDir, "MASTER_INDEX.md");
+              await fs47.writeFile(indexPath, index3, "utf-8");
               const manifestArtifactPath = await writeArtifactFile("DP_L3_LIBRARY", index3);
               storeArtifacts({ layer: "3", output: index3, mode: "INTERNAL_PARALLEL" });
               try {
@@ -297690,7 +297859,7 @@ ${specs.map((s) => `  - ${s.name} [${s.type}]: ${s.lines} lines [${s.status}]`).
             let totalLines = 0;
             for (const filePath of args.contextFiles) {
               try {
-                const content = await fs46.readFile(filePath, "utf-8");
+                const content = await fs47.readFile(filePath, "utf-8");
                 const lineCount2 = content.split(`
 `).length;
                 fileContents.push({ path: filePath, content, lines: lineCount2 });
@@ -297829,9 +297998,9 @@ This spec is ${l2ArtLines} lines; the mandate is 3000+. Surgically EXPAND the th
           artifactPath = await writeArtifactFile("DP_L2_SPEC", output);
           if (args.outputPath) {
             try {
-              const outPath = args.fileName ? path51.join(args.outputPath, String(args.fileName).replace(/\.md$/i, "") + ".md") : args.outputPath;
-              await fs46.mkdir(path51.dirname(outPath), { recursive: true });
-              await fs46.writeFile(outPath, output, "utf-8");
+              const outPath = args.fileName ? path52.join(args.outputPath, String(args.fileName).replace(/\.md$/i, "") + ".md") : args.outputPath;
+              await fs47.mkdir(path52.dirname(outPath), { recursive: true });
+              await fs47.writeFile(outPath, output, "utf-8");
               artifactPath = outPath;
               tridentLog("INFO", "trident-deep-planning", `Artifact written to: ${outPath}`);
             } catch (e) {
@@ -298531,15 +298700,14 @@ __export(exports_wave_dispatch, {
   executeWaveResume: () => executeWaveResume,
   executeWavePause: () => executeWavePause,
   createWaveManagerTool: () => createWaveManagerTool,
-  buildSpawnCall: () => buildSpawnCall,
   buildCheckInText: () => buildCheckInText,
   assessTaskBlock: () => assessTaskBlock,
   TASK_BLOCK_MESSAGE: () => TASK_BLOCK_MESSAGE,
   MAX_AGENTS_PER_WAVE: () => MAX_AGENTS_PER_WAVE2
 });
 import { Database as Database10 } from "bun:sqlite";
-import * as fs47 from "fs";
-import * as path52 from "path";
+import * as fs48 from "fs";
+import * as path53 from "path";
 import * as os19 from "os";
 import { createHash as createHash13 } from "crypto";
 function assessTaskBlock(args) {
@@ -298556,20 +298724,20 @@ function assessTaskBlock(args) {
   return null;
 }
 function isInsideTmpDir(filePath, tmpDir = TRIDENT_TMP_DIR) {
-  const resolved = path52.resolve(filePath);
-  const root = path52.resolve(tmpDir);
-  return resolved === root || resolved.startsWith(root + path52.sep);
+  const resolved = path53.resolve(filePath);
+  const root = path53.resolve(tmpDir);
+  return resolved === root || resolved.startsWith(root + path53.sep);
 }
 function loadPromptFileForDispatch(filePath, tmpDir = TRIDENT_TMP_DIR) {
   if (!filePath || filePath.trim().length === 0) {
     throw new Error("[TRIDENT PROMPT FILE] promptFile is required \u2014 pass the path of a prompt file inside " + tmpDir);
   }
   if (!isInsideTmpDir(filePath, tmpDir)) {
-    throw new Error("[TRIDENT PROMPT FILE] the promptFile must live inside " + tmpDir + " \u2014 a path outside the closed loop is refused: " + path52.resolve(filePath));
+    throw new Error("[TRIDENT PROMPT FILE] the promptFile must live inside " + tmpDir + " \u2014 a path outside the closed loop is refused: " + path53.resolve(filePath));
   }
   let content;
   try {
-    content = fs47.readFileSync(path52.resolve(filePath), "utf-8");
+    content = fs48.readFileSync(path53.resolve(filePath), "utf-8");
   } catch (fErr) {
     throw new Error("[TRIDENT PROMPT FILE] unreadable promptFile " + filePath + ": " + (fErr instanceof Error ? fErr.message : String(fErr)));
   }
@@ -298585,19 +298753,8 @@ function loadPromptFileForDispatch(filePath, tmpDir = TRIDENT_TMP_DIR) {
 function resolveSubagentType(template2) {
   return (template2 || "E2").toUpperCase().startsWith("B") ? "trident_build" : "trident_explore";
 }
-function buildSpawnCall(spec, mainSessionId, promptText) {
-  const type3 = resolveSubagentType(spec.template);
-  const createBody = mainSessionId ? { parentID: mainSessionId, title: spec.name } : { title: spec.name };
-  const part = {
-    type: "subtask",
-    prompt: promptText,
-    description: spec.name,
-    agent: type3
-  };
-  return { name: spec.name, type: type3, createBody, promptBody: { agent: type3, parts: [part] } };
-}
 async function shadowGenerate(spec, tmpDir, options2) {
-  const manifestStr = await runShadowPipeline(spec, undefined, { outDir: tmpDir, tether: options2?.tether, ledger: options2?.ledger });
+  const manifestStr = await runShadowPipeline(spec, undefined, { outDir: tmpDir, tether: options2?.tether, ledger: options2?.ledger, captureKey: options2?.captureKey });
   const parsed = JSON.parse(manifestStr);
   const agent2 = parsed.agents && parsed.agents.length > 0 ? parsed.agents[0] : null;
   if (!agent2 || !agent2.path) {
@@ -298606,13 +298763,13 @@ async function shadowGenerate(spec, tmpDir, options2) {
   if (agent2.ready === false || typeof agent2.error === "string" && agent2.error.length > 0) {
     throw new Error(agent2.error && agent2.error.length > 0 ? agent2.error : "the shadow pipeline reported the generation failed for " + spec.name + " (ready:false, no error text)");
   }
-  const prompt = fs47.readFileSync(agent2.path, "utf-8");
+  const prompt = fs48.readFileSync(agent2.path, "utf-8");
   return { prompt, notes: agent2.notes ?? [] };
 }
 function buildCheckInText(waveId, count, etaMs) {
   const m = Math.round(etaMs / 60000);
   const t = new Date().toTimeString().slice(0, 5);
-  return "WAVE " + waveId + " (" + count + " agents) READY \u2014 DISPATCH via trident-wave-manager action=dispatch waveId=" + waveId + " (THE ONLY SUBAGENT DISPATCH PATH). Do NOT paste the batch form and do NOT use the raw task tool \u2014 the dispatch tool reads the generated prompt files and spawns the subagents itself. Track it via trident-wave-manager action=status waveId=" + waveId + " (or trident-wave-read sessionId) \u2014 the full per-agent state + the session stream is retrieved on demand (never stored in context).";
+  return "WAVE " + waveId + " (" + count + " agents) READY \u2014 DISPATCH via trident-wave-manager action=dispatch waveId=" + waveId + " (THE ONLY SUBAGENT DISPATCH PATH). Do NOT paste the batch form and do NOT use the raw task tool \u2014 the dispatch tool reads the generated prompt files and spawns the subagents itself. Track it via trident-wave-manager action=status waveId=" + waveId + " (or trident-wave-read sessionId) \u2014 the full per-agent state + the session stream is retrieved on demand (never stored in context). ORCHESTRATION CONTRACT: NEVER RETURN OR STOP EXECUTING COMMANDS UNTIL THE FULL WAVE PLAN IS COMPLETED \u2014 a return before the wave plan is complete is how the loop dies and hours are wasted; if you have nothing to do, cycle poll trident-wave-manager action=status waveId=" + waveId + " (compact summaries) with short pauses (sleep 45 is acceptable between polls) \u2014 DO NOT RETURN. If an agent shows idle/stalled, kick it with action=steer sessionId=<id> mode=soft. Task-completion toasts arrive into your session automatically as agents finish. NEVER blind-sleep past one poll interval while your agents run.";
 }
 function normalizeAgents(args, waveId) {
   const ctx = (rec, k, legacyCtx2) => {
@@ -298664,7 +298821,7 @@ function normalizeAgents(args, waveId) {
 function resolveScopeRoot(sessionId, projectToken) {
   if (typeof projectToken === "string" && projectToken.trim().length > 0) {
     const tok = projectToken.trim();
-    if (fs47.existsSync(tok)) {
+    if (fs48.existsSync(tok)) {
       SESSION_SCOPE_CACHE.set(sessionId ?? "default", tok);
       return tok;
     }
@@ -298672,7 +298829,7 @@ function resolveScopeRoot(sessionId, projectToken) {
   }
   if (typeof sessionId === "string" && sessionId.length > 0) {
     const cached2 = SESSION_SCOPE_CACHE.get(sessionId);
-    if (cached2 && fs47.existsSync(cached2))
+    if (cached2 && fs48.existsSync(cached2))
       return cached2;
   }
   if (typeof sessionId === "string" && sessionId.length > 0) {
@@ -298713,7 +298870,7 @@ function resolveScopeRoot(sessionId, projectToken) {
 function scoreProjectRoots(paths) {
   function has3(d, name) {
     try {
-      return fs47.existsSync(path52.join(d, name));
+      return fs48.existsSync(path53.join(d, name));
     } catch {
       return false;
     }
@@ -298724,14 +298881,14 @@ function scoreProjectRoots(paths) {
   const candidates2 = [];
   const seen = new Set;
   for (const [p] of paths) {
-    let d = isRoot(p) ? p : path52.dirname(p);
+    let d = isRoot(p) ? p : path53.dirname(p);
     let guard = 0;
     while (guard++ < 32 && d.length > 1) {
       if (isRoot(d) && !seen.has(d)) {
         seen.add(d);
         candidates2.push({ d, depth: d.split("/").length, hasTrident: has3(d, ".trident") });
       }
-      const up = path52.dirname(d);
+      const up = path53.dirname(d);
       if (up === d)
         break;
       d = up;
@@ -298749,17 +298906,17 @@ async function generateWave(args, mainSessionId, opts = {}) {
   const sanitizedAlias = requestedAlias.replace(/[^A-Za-z0-9_-]+/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").slice(0, 30);
   const waveId = "wave-" + (sanitizedAlias ? sanitizedAlias + "-" : "") + Date.now();
   const scopeRoot = resolveScopeRoot(mainSessionId, args.projectToken);
-  const specFilePath = path52.join(scopeRoot, WAVE_SPEC_RELATIVE_PATH);
+  const specFilePath = path53.join(scopeRoot, WAVE_SPEC_RELATIVE_PATH);
   let specs;
   if (Array.isArray(opts.inlineAgents) && opts.inlineAgents.length > 0) {
     specs = normalizeAgents({ agents: opts.inlineAgents }, waveId);
-  } else if (fs47.existsSync(specFilePath)) {
+  } else if (fs48.existsSync(specFilePath)) {
     const diags = validateSpecFile(specFilePath);
     const errors7 = diags.filter((d) => d.severity === "error");
     if (errors7.length > 0) {
       throw new Error(formatDiagnostics(diags));
     }
-    const parsed = JSON.parse(fs47.readFileSync(specFilePath, "utf-8"));
+    const parsed = JSON.parse(fs48.readFileSync(specFilePath, "utf-8"));
     specs = normalizeAgents({ agents: parsed.agents }, waveId);
     console.error("[wave-spec] loaded " + specs.length + " agent specs from " + specFilePath);
   } else {
@@ -298799,7 +298956,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
   const tmpDir = resolveTmpDir(opts.tmpDir);
   const client = opts.client ?? getOpencodeClient() ?? null;
   const generator = opts.generator ?? null;
-  fs47.mkdirSync(tmpDir, { recursive: true });
+  fs48.mkdirSync(tmpDir, { recursive: true });
   const manifest = {
     wave: waveId,
     requestedWaveId: typeof args.waveId === "string" && args.waveId.trim().length > 0 ? args.waveId.trim() : null,
@@ -298813,6 +298970,9 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
   const runOne = async (spec) => {
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
+    const capKey = waveId + "-" + spec.name;
+    beginCapture(capKey, waveId, spec.name);
+    captureEvent(capKey, "RUN_START", { name: spec.name, template: spec.template, filepaths: spec.filepaths, argChars: { mission: (spec.mission || "").length, knownContext: (spec.knownContext || "").length, doctrine: (spec.doctrine || "").length, measurements: (spec.measurements || "").length, acceptance: (spec.acceptance || "").length, taskTargets: (spec.taskTargets || "").length, position: (spec.position || "").length } });
     let result2;
     try {
       result2 = generator ? await generator(spec) : await shadowGenerate(spec, tmpDir, {
@@ -298822,25 +298982,34 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
           parentSessionId: mainSessionId ?? null,
           pid: process.pid
         },
-        ledger: waveLedger
+        ledger: waveLedger,
+        captureKey: capKey
       });
     } catch (genErr) {
       const msg = genErr instanceof Error ? genErr.message : String(genErr);
       tridentLog("WARN", "wave-dispatch", "generation failed for " + spec.name + ": " + msg);
+      if (capKey)
+        endCapture(capKey, "RUNONE_END", { outcome: "GEN_THROW", error: msg.slice(0, 300), durMs: Date.now() - t0 });
       try {
-        fs47.writeFileSync(path52.join(tmpDir, "ERROR-" + spec.name + ".txt"), msg, "utf-8");
+        fs48.writeFileSync(path53.join(tmpDir, "ERROR-" + spec.name + ".txt"), msg, "utf-8");
       } catch (wErr) {
         tridentLog("WARN", "wave-dispatch", "the ERROR file could not be written for " + spec.name + ": " + (wErr instanceof Error ? wErr.message : String(wErr)));
       }
       generationFailures.push({ name: spec.name, error: msg, startedAt, durationMs: Date.now() - t0 });
       return;
     }
-    const filePath = path52.join(tmpDir, spec.name + ".md");
+    const filePath = path53.join(tmpDir, spec.name + ".md");
+    if (capKey) {
+      captureEvent(capKey, "GENERATION_END", { durMs: Date.now() - t0, lines: result2.prompt.split(`
+`).length, sha256: createHash13("sha256").update(result2.prompt).digest("hex"), notes: (result2.notes ?? []).join(" | ").slice(0, 300) });
+    }
     try {
-      fs47.writeFileSync(filePath, result2.prompt, "utf-8");
+      fs48.writeFileSync(filePath, result2.prompt, "utf-8");
     } catch (wErr) {
       const msg = "the tmp write failed for " + spec.name + ": " + (wErr instanceof Error ? wErr.message : String(wErr));
       tridentLog("ERROR", "wave-dispatch", msg);
+      if (capKey)
+        endCapture(capKey, "RUNONE_END", { outcome: "TMP_WRITE_FAIL", error: msg.slice(0, 300) });
       generationFailures.push({ name: spec.name, error: msg, startedAt, durationMs: Date.now() - t0 });
       return;
     }
@@ -298854,17 +299023,27 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
     });
     if (opts?.taskDispatch) {
       try {
-        const content = fs47.readFileSync(filePath, "utf-8");
+        const content = fs48.readFileSync(filePath, "utf-8");
         const v = validateTaskPromptLines(content);
+        if (capKey)
+          captureEvent(capKey, "DPL1", { passed: v.passed, reasons: (v.lines ?? []).join(" | ").slice(0, 300) });
         if (!v.passed) {
           tridentLog("WARN", "wave-dispatch", "auto-dispatch skipped for " + spec.name + ": DPL1 validation failed \u2014 " + v.lines.join(" | "));
+          if (capKey)
+            endCapture(capKey, "RUNONE_END", { outcome: "DPL1_FAIL", reasons: v.lines.join(" | ").slice(0, 300) });
         } else {
+          const dispT0 = Date.now();
+          if (capKey)
+            captureEvent(capKey, "TASKDISPATCH_CALL", { t0: dispT0, subagentType: resolveSubagentType(spec.template) });
           const dr = await opts.taskDispatch({
             description: spec.name,
             prompt: content,
             subagent_type: resolveSubagentType(spec.template),
             background: true
           });
+          const dispT1 = Date.now();
+          if (capKey)
+            captureEvent(capKey, "TASKDISPATCH_RETURN", { t1: dispT1, awaitMs: dispT1 - dispT0, sessionId: dr.sessionId });
           autoSessionIds[spec.name] = dr.sessionId;
           tridentLog("INFO", "wave-dispatch", "AUTO-DISPATCHED " + spec.name + " \u2192 sessionId=" + dr.sessionId);
         }
@@ -298872,6 +299051,8 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
         tridentLog("ERROR", "wave-dispatch", "auto-dispatch failed for " + spec.name + ": " + (dErr instanceof Error ? dErr.message : String(dErr)));
       }
     }
+    if (capKey)
+      endCapture(capKey, "RUNONE_END", { outcome: "OK", durMs: Date.now() - t0, dispatched: Boolean(autoSessionIds[spec.name]) });
   };
   const autoSessionIds = {};
   const specsQueue = [...specs];
@@ -298898,18 +299079,18 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
     }
     console.error("[wave-dispatch] RETRY PASS \u2014 " + failedSpecs.length + " failed agent(s) re-running after cool-down");
     await new Promise((r) => setTimeout(r, opts?.retryPassMs ?? 30000));
-    for (const spec of failedSpecs) {
+    await Promise.allSettled(failedSpecs.map(async (spec) => {
       try {
         await runOne(spec);
       } catch (reason) {
         const msg = reason instanceof Error ? reason.message : String(reason);
         tridentLog("ERROR", "wave-dispatch", "RETRY also failed for " + spec.name + ": " + msg);
       }
-    }
+    }));
     console.error("[wave-dispatch] RETRY PASS complete \u2014 " + generated.length + "/" + specs.length + " agents ready");
   }
   console.error("[rpm-ledger] WAVE SUMMARY " + waveId, JSON.stringify(waveLedger.snapshot()));
-  if (fs47.existsSync(specFilePath)) {
+  if (fs48.existsSync(specFilePath)) {
     const { resetToTemplate: resetToTemplate3 } = await Promise.resolve().then(() => (init_wave_spec(), exports_wave_spec));
     resetToTemplate3(scopeRoot);
     console.error("[wave-spec] RESET to template shell \u2014 next wave starts fresh");
@@ -298927,7 +299108,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
     });
   }
   try {
-    fs47.writeFileSync(path52.join(tmpDir, ".wave-manifest-" + waveId + ".json"), JSON.stringify(manifest, null, 2), "utf-8");
+    fs48.writeFileSync(path53.join(tmpDir, ".wave-manifest-" + waveId + ".json"), JSON.stringify(manifest, null, 2), "utf-8");
   } catch (mErr) {
     tridentLog("WARN", "wave-dispatch", "the manifest write failed: " + (mErr instanceof Error ? mErr.message : String(mErr)));
   }
@@ -298948,7 +299129,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
     });
   }
   try {
-    fs47.writeFileSync(path52.join(tmpDir, ".wave-manifest-" + waveId + ".json"), JSON.stringify(manifest, null, 2), "utf-8");
+    fs48.writeFileSync(path53.join(tmpDir, ".wave-manifest-" + waveId + ".json"), JSON.stringify(manifest, null, 2), "utf-8");
   } catch (mErr) {
     tridentLog("WARN", "wave-dispatch", "the manifest write failed: " + (mErr instanceof Error ? mErr.message : String(mErr)));
   }
@@ -298961,7 +299142,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
       agents: [manifest.agents[i]]
     };
     try {
-      fs47.writeFileSync(path52.join(tmpDir, ".wave-manifest-" + waveId + "-" + g2.spec.name + ".json"), JSON.stringify(oneAgentRecord, null, 2), "utf-8");
+      fs48.writeFileSync(path53.join(tmpDir, ".wave-manifest-" + waveId + "-" + g2.spec.name + ".json"), JSON.stringify(oneAgentRecord, null, 2), "utf-8");
     } catch (pErr) {
       tridentLog("WARN", "wave-dispatch", "the per-agent manifest write failed for " + g2.spec.name + ": " + (pErr instanceof Error ? pErr.message : String(pErr)));
     }
@@ -298978,6 +299159,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
       wave: waveId,
       alias: requestedAlias || undefined,
       projectToken: typeof args.projectToken === "string" && args.projectToken.trim().length > 0 ? args.projectToken.trim() : undefined,
+      ownerSessionId: mainSessionId ?? undefined,
       names: specs.map((s) => s.name),
       sessionIds: dispatched.map((d) => d.sessionId),
       dispatchedAt: Date.now(),
@@ -298989,6 +299171,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
       })),
       agents: Object.fromEntries(specs.map((s) => {
         const d = dispatched.find((x) => x.name === s.name);
+        const declaredClass = computeDeclaredClass(s.filepaths ?? [], s.template, (s.mission ?? "") + " " + (s.taskTargets ?? "") + " " + (s.acceptance ?? ""));
         return [s.name, d ? {
           sessionIds: [d.sessionId],
           state: "running",
@@ -298997,7 +299180,10 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
           spawnTimes: { spawnedAt: Date.now() },
           lastActivityAt: Date.now(),
           lastBytes: 0,
-          errorCodes: []
+          errorCodes: [],
+          declaredClass,
+          gateState: "pending",
+          gateHolds: 0
         } : {
           sessionIds: [],
           state: "failed",
@@ -299006,16 +299192,19 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
           spawnTimes: { spawnedAt: Date.now() },
           lastActivityAt: null,
           lastBytes: 0,
-          errorCodes: []
+          errorCodes: [],
+          declaredClass,
+          gateState: "exempt",
+          gateHolds: 0
         }];
       }))
     };
     WaveTracker.registerWave(track);
   }
-  const finalCheckIn = Object.keys(autoSessionIds).length > 0 ? "WAVE " + waveId + " (" + dispatched.length + " agents) \u2014 AUTO-DISPATCHED " + Object.keys(autoSessionIds).length + "/" + generated.length + " as generation completed (sessions trickling back): " + Object.entries(autoSessionIds).map(([n, s]) => n + "\u2192" + s).join(", ") + ". Track via trident-wave-manager action=status waveId=" + waveId + (generated.length - Object.keys(autoSessionIds).length > 0 ? ". NOT dispatched: " + dispatched.filter((d) => !d.sessionId).map((d) => d.name).join(", ") + "." : ".") : buildCheckInText(waveId, dispatched.length, etaPlaceholderMs);
+  const finalCheckIn = Object.keys(autoSessionIds).length > 0 ? "WAVE " + waveId + " (" + dispatched.length + " agents) \u2014 AUTO-DISPATCHED " + Object.keys(autoSessionIds).length + "/" + generated.length + " as generation completed (sessions trickling back): " + Object.entries(autoSessionIds).map(([n, s]) => n + "\u2192" + s).join(", ") + ". Track via trident-wave-manager action=status waveId=" + waveId + (generated.length - Object.keys(autoSessionIds).length > 0 ? ". NOT dispatched: " + dispatched.filter((d) => !d.sessionId).map((d) => d.name).join(", ") + "." : ".") + " ORCHESTRATION CONTRACT: NEVER RETURN OR STOP EXECUTING COMMANDS UNTIL THE FULL WAVE PLAN IS COMPLETED \u2014 a return before the wave plan is complete is how the loop dies and hours are wasted; if you have nothing to do, cycle poll trident-wave-manager action=status waveId=" + waveId + ' (compact summaries) with short pauses (sleep 45 is acceptable between polls) \u2014 DO NOT RETURN. If an agent shows idle/stalled, kick it with action=steer sessionId=<id> mode=soft. Completion notifications arrive automatically: the runtime injects "Background task completed" into your session when an agent finishes (the wake fires once your session is idle) and the cron reminders ride your tool results \u2014 poll for STALLS, not for completion.' : buildCheckInText(waveId, dispatched.length, etaPlaceholderMs);
   if (mainSessionId && dispatched.length > 0) {
     try {
-      recordWaveServed(mainSessionId, path52.join(scopeRoot, ".trident", "wave-planning-state.json"), path52.join(scopeRoot, ".trident", "wave-plan.md"), typeof args.planningNote === "string" ? args.planningNote.trim() : "");
+      recordWaveServed(mainSessionId, path53.join(scopeRoot, ".trident", "wave-planning-state.json"), path53.join(scopeRoot, ".trident", "wave-plan.md"), typeof args.planningNote === "string" ? args.planningNote.trim() : "");
     } catch (wErr) {
       tridentLog("WARN", "wave-dispatch", "the budget tick failed (non-fatal): " + (wErr instanceof Error ? wErr.message : String(wErr)));
     }
@@ -299027,7 +299216,7 @@ Then re-call action=generate. The edit-after hook will validate automatically.`)
         tool: "task",
         parameters: {
           description: d.name,
-          prompt: path52.join(tmpDir, d.name + ".md"),
+          prompt: path53.join(tmpDir, d.name + ".md"),
           subagent_type: d.type
         }
       }))
@@ -299058,8 +299247,8 @@ function resumeContinuation(name) {
 }
 function resumeSessionInfo(taskId) {
   try {
-    const resumeDbPath = path52.join(os19.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs47.existsSync(resumeDbPath))
+    const resumeDbPath = path53.join(os19.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs48.existsSync(resumeDbPath))
       return null;
     const resumeDb = new Database10(resumeDbPath, { readonly: true });
     try {
@@ -299236,8 +299425,10 @@ function createWaveManagerTool() {
         }
       }
       const action3 = args.action;
+      let modeStripped = false;
       if (args.mode !== undefined && action3 !== "steer") {
-        throw new Error('[MODE] mode="' + args.mode + '" is STEER-ONLY \u2014 this call is action=' + action3 + " which has NO mode (generate/pause/kill/resume target by waveId/sessionId/taskIds, never soft/hard). Re-fire action=" + action3 + " WITHOUT the mode parameter.");
+        modeStripped = true;
+        args = { ...args, mode: undefined };
       }
       if (action3 === "dispatch") {
         const result3 = await executeDispatch(args, { sessionID: mainSessionId || undefined, extra: context3?.extra }, {});
@@ -299360,15 +299551,22 @@ function createWaveManagerTool() {
         return { title: "WAVE PAUSE \u2014 " + pauseWaveId, output: JSON.stringify(pauseResult, null, 2) };
       }
       if (action3 === "generate") {
+        const scopeTok = typeof args.projectToken === "string" ? args.projectToken.trim() : "";
+        if (scopeTok.length === 0 || !fs48.existsSync(scopeTok)) {
+          throw new Error('[WAVE SCOPE] projectToken is MANDATORY on generate \u2014 pass projectToken="<the ABSOLUTE project root this wave builds>" (the dir containing .trident/). Auto-detected scopes caused cross-project spec bleed under concurrent sessions; the explicit root is now mechanically required. The spec read is ' + "<projectToken>/.trident/wave-spec.json.");
+        }
         const scRoot = resolveScopeRoot(mainSessionId, args.projectToken);
-        checkWavePlanning(args, mainSessionId, path52.join(scRoot, ".trident", "wave-planning-state.json"), path52.join(scRoot, ".trident", "wave-plan.md"));
+        checkWavePlanning(args, mainSessionId, path53.join(scRoot, ".trident", "wave-planning-state.json"), path53.join(scRoot, ".trident", "wave-plan.md"));
+      }
+      if (typeof context3?.extra?.taskDispatch !== "function") {
+        throw new Error("[WAVE DISPATCH] LOUD FAIL \u2014 context.extra.taskDispatch is missing: this runtime has NO dispatch surface. Auto-dispatch requires the fork taskDispatch (TaskTool.execute background \u2192 the live card + the completion inject + the idle wake). Generating here would create a PHANTOM WAVE. Re-fire from a fork-runtime session.");
       }
       const result2 = await generateWave(args, mainSessionId, {
-        taskDispatch: context3?.extra?.taskDispatch
+        taskDispatch: context3.extra.taskDispatch
       });
       return {
         title: "WAVE " + result2.wave + " \u2014 " + result2.dispatched.length + " dispatched",
-        output: JSON.stringify(result2, null, 2)
+        output: JSON.stringify(modeStripped ? { ...result2, note: "mode was ignored \u2014 mode is steer-only; this action=" + action3 + " carries no mode." } : result2, null, 2)
       };
     }
   });
@@ -299417,6 +299615,7 @@ var init_wave_dispatch = __esm(() => {
   init_utils();
   init_shadow_runner();
   init_rpm_ledger();
+  init_capture();
   init_wave_planning_gate();
   init_wave_pipeline();
   init_wave_spec();
@@ -299432,9 +299631,164 @@ var init_wave_dispatch = __esm(() => {
   SESSION_SCOPE_CACHE = new Map;
 });
 
+// src/tools/wave-verification-lexicon.ts
+function scanReturn(returnText) {
+  const evidence = [];
+  const smoke = [];
+  for (const member of RETURN_EVIDENCE_MEMBERS) {
+    if (member.matcher.test(returnText)) {
+      (member.kind === "evidence" ? evidence : smoke).push(member.id);
+    }
+  }
+  return { evidence, smoke };
+}
+var RETURN_EVIDENCE_MEMBERS, REQUIRED_EVIDENCE;
+var init_wave_verification_lexicon = __esm(() => {
+  RETURN_EVIDENCE_MEMBERS = [
+    {
+      id: "EVIDENCE-BATTERY",
+      kind: "evidence",
+      matcher: /(?:bun test|bun\s+test)\b[\s\S]{0,200}?(?:\d+\s+pass|\d+\s+fail|\d+\/\d+)/i,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "battery output with counts",
+      remediationHook: ""
+    },
+    {
+      id: "EVIDENCE-TSC",
+      kind: "evidence",
+      matcher: /(?:tsc|--noEmit|typecheck)\b[^\n]{0,80}(?:exit 0|0 error|no error|clean)/i,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "typecheck exit 0",
+      remediationHook: ""
+    },
+    {
+      id: "EVIDENCE-CONTAINER",
+      kind: "evidence",
+      matcher: /container-test-results\.json|\.trident\/container-test|PASS.*tool-result context|scenario\s+\w+.*PASS/i,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "container-test artifact/scenarios",
+      remediationHook: ""
+    },
+    {
+      id: "EVIDENCE-RUN",
+      kind: "evidence",
+      matcher: /(?:node|bun|python3?)\s+[^\n]{1,120}\.(?:js|html|py|mjs|ts)[^\n]{0,80}\n[\s\S]{0,400}?(?:VERDICT|OK|CRASH|output|Error|error|frames|LOAD)|ALL TESTS PASS|(?:^|\n)TEST \d+[^\n]{0,120}PASS|EVAL:\s*success|rAF pumped|exit['"]?\s*[:=]?\s*0/i,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "executed-run output",
+      remediationHook: ""
+    },
+    {
+      id: "EVIDENCE-BUILD",
+      kind: "evidence",
+      matcher: /(?:bun build|npm run build|make)[^\n]{0,100}(?:success|exit 0|\d+\s+k?B|Bundled)/i,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "build output",
+      remediationHook: ""
+    },
+    {
+      id: "EVIDENCE-SHA",
+      kind: "evidence",
+      matcher: /sha256[a-z]*\s+[0-9a-f]{16,64}\s*(?:\/|\)|$|\n)/im,
+      triggerCondition: "return-text",
+      severity: "PASS-SIG",
+      messageTemplate: "sha256 fingerprint",
+      remediationHook: ""
+    },
+    {
+      id: "SMOKE-GREP-ONLY",
+      kind: "smoke",
+      matcher: /(?:grep\s+-[a-z]+\s+"[^"]+"\s+[^\s]+\s*\u2014|test -f\s+[^\s]+\s*&&)/i,
+      triggerCondition: "return-text",
+      severity: "HIGH",
+      messageTemplate: "grep/file-existence as the verification",
+      remediationHook: "EXECUTE the artifact and paste the real run output."
+    },
+    {
+      id: "SMOKE-CLAIMED-VERIFIED",
+      kind: "smoke",
+      matcher: /\b(?:verified|it works|working|all (?:checks? |tests? )?pass(?:ed)?)\b/i,
+      triggerCondition: "return-text",
+      severity: "HIGH",
+      messageTemplate: "claimed verification without pasted evidence",
+      remediationHook: "Paste the actual command outputs \u2014 a claim is not evidence."
+    },
+    {
+      id: "SMOKE-OPENS-IN-BROWSER",
+      kind: "smoke",
+      matcher: /opens? in a browser|runs? in a browser/i,
+      triggerCondition: "return-text",
+      severity: "MEDIUM",
+      messageTemplate: '"opens in a browser" with no execution',
+      remediationHook: "Run it under a harness (node DOM-stubs / bun) and paste the output."
+    }
+  ];
+  REQUIRED_EVIDENCE = {
+    TYPE_BATTERY: ["EVIDENCE-BATTERY", "EVIDENCE-TSC", "EVIDENCE-CONTAINER", "EVIDENCE-BUILD", "EVIDENCE-RUN"],
+    RUNTIME: ["EVIDENCE-RUN", "EVIDENCE-CONTAINER"],
+    RUN: ["EVIDENCE-RUN", "EVIDENCE-CONTAINER"],
+    DOC: null,
+    REPORT: null
+  };
+});
+
+// src/tools/wave-completion-gate.ts
+var exports_wave_completion_gate = {};
+__export(exports_wave_completion_gate, {
+  evaluateCompletion: () => evaluateCompletion
+});
+function remediationFor(cls, smoke) {
+  const what = smoke.length > 0 ? "Your return carries TEXT-ONLY verification (greps/file checks/claims) \u2014 no execution evidence." : "Your return carries no recognizable verification evidence.";
+  if (cls === "TYPE_BATTERY") {
+    return `[COMPLETION GATE \u2014 HOLD] ${what} Your artifact class is TYPE_BATTERY (code). REQUIRED: run tsc --noEmit AND the test battery (bun test <paths>) and PASTE both outputs in your return (exit codes + pass/fail counts). A grep proves a keyword exists; it does not prove the code compiles or the tests pass. Resubmit with the execution evidence.`;
+  }
+  if (cls === "RUNTIME") {
+    return `[COMPLETION GATE \u2014 HOLD] ${what} Your artifact class is RUNTIME (html/game/ui). REQUIRED: EXECUTE the artifact \u2014 extract the <script>, run it under node with DOM/canvas/rAF stubs (the stub-harness pattern: proxy getContext, stub localStorage, pump requestAnimationFrame ~120 frames, fire keydown listeners), and PASTE the run output including any errors. "Opens in a browser" is a claim, not evidence. Resubmit with the execution evidence.`;
+  }
+  if (cls === "RUN") {
+    return `[COMPLETION GATE \u2014 HOLD] ${what} Your artifact class is RUN (python). REQUIRED: execute it (python3 <artifact> [args]) and PASTE the output \u2014 including any traceback. Resubmit with the execution evidence.`;
+  }
+  return `[COMPLETION GATE \u2014 HOLD] ${what} Paste the actual verification command outputs in your return.`;
+}
+function evaluateCompletion(evidenceText, declaredClass, priorHolds) {
+  const { evidence, smoke } = scanReturn(evidenceText);
+  if (REQUIRED_EVIDENCE[declaredClass] === null) {
+    return {
+      decision: "PASS",
+      artifactClass: declaredClass,
+      evidenceFound: evidence,
+      smokeFound: smoke,
+      remediation: "",
+      triad: { pattern: "EXEMPT-CLASS", state: `class=${declaredClass}`, evidence: `declared at dispatch` }
+    };
+  }
+  const required6 = REQUIRED_EVIDENCE[declaredClass];
+  const satisfied = evidence.filter((e) => required6.includes(e));
+  const triadBase = { pattern: satisfied.length > 0 ? satisfied.join("+") : smoke[0] ?? "NONE", state: `class=${declaredClass}`, evidence: `evidence=[${evidence}] smoke=[${smoke}]` };
+  if (satisfied.length > 0) {
+    return { decision: "PASS", artifactClass: declaredClass, evidenceFound: evidence, smokeFound: smoke, remediation: "", triad: triadBase };
+  }
+  const decision = priorHolds >= 1 ? "FAILED" : "HOLD";
+  return {
+    decision,
+    artifactClass: declaredClass,
+    evidenceFound: evidence,
+    smokeFound: smoke,
+    remediation: decision === "FAILED" ? `[COMPLETION GATE \u2014 FAILED] Second return without execution evidence (artifact class ${declaredClass}). The agent is marked FAILED \u2014 the orchestrator decides: re-steer with explicit harness instructions, or respawn.` : remediationFor(declaredClass, smoke),
+    triad: triadBase
+  };
+}
+var init_wave_completion_gate = __esm(() => {
+  init_wave_verification_lexicon();
+});
+
 // src/shared/project-folder-warhead/memory-store.ts
-import * as path54 from "path";
-import * as fs49 from "fs";
+import * as path55 from "path";
+import * as fs50 from "fs";
 import * as os21 from "os";
 function log4(level, component, message) {
   try {
@@ -299442,8 +299796,8 @@ function log4(level, component, message) {
     const line = `[${ts23}] [${level}] [${component}] ${message}
 `;
     const envLogPath = process.env.TRIDENT_LOG_PATH ?? "";
-    const logPath = envLogPath ? path54.resolve(envLogPath) : path54.join(os21.tmpdir(), "trident-engine.log");
-    fs49.appendFileSync(logPath, line, "utf-8");
+    const logPath = envLogPath ? path55.resolve(envLogPath) : path55.join(os21.tmpdir(), "trident-engine.log");
+    fs50.appendFileSync(logPath, line, "utf-8");
   } catch (e) {
     tridentLog("ERROR", "memory-store", `Log write failed: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -299451,8 +299805,8 @@ function log4(level, component, message) {
 var MARKER_DIR, MARKER_FILE, state2;
 var init_memory_store = __esm(() => {
   init_utils();
-  MARKER_DIR = path54.resolve(os21.homedir(), ".opencode", ".trident");
-  MARKER_FILE = path54.resolve(MARKER_DIR, ".current-project");
+  MARKER_DIR = path55.resolve(os21.homedir(), ".opencode", ".trident");
+  MARKER_FILE = path55.resolve(MARKER_DIR, ".current-project");
   state2 = {
     rootPath: null,
     currentAgentId: null,
@@ -299462,16 +299816,16 @@ var init_memory_store = __esm(() => {
     initialized: false
   };
   try {
-    if (fs49.existsSync(MARKER_FILE)) {
-      const content = fs49.readFileSync(MARKER_FILE, "utf-8");
+    if (fs50.existsSync(MARKER_FILE)) {
+      const content = fs50.readFileSync(MARKER_FILE, "utf-8");
       const parsedMarker = JSON["parse"](content);
       const marker = parsedMarker && typeof parsedMarker === "object" ? parsedMarker : {};
       const rootPath = typeof marker.rootPath === "string" ? marker.rootPath : null;
       const agent2 = typeof marker.agent === "string" ? marker.agent : null;
       const projectName = typeof marker.projectName === "string" ? marker.projectName : null;
       const displayName = typeof marker.displayName === "string" ? marker.displayName : null;
-      const cmPath = typeof marker.contextManagementPath === "string" ? marker.contextManagementPath : rootPath ? path54.join(rootPath, "context_management") : null;
-      if (rootPath && fs49.existsSync(rootPath)) {
+      const cmPath = typeof marker.contextManagementPath === "string" ? marker.contextManagementPath : rootPath ? path55.join(rootPath, "context_management") : null;
+      if (rootPath && fs50.existsSync(rootPath)) {
         state2.rootPath = rootPath;
         state2.currentAgentId = agent2;
         state2.projectName = projectName;
@@ -299489,8 +299843,8 @@ var init_memory_store = __esm(() => {
 });
 
 // src/shared/project-folder-warhead/project-folder-warhead.ts
-import * as path55 from "path";
-import * as fs50 from "fs";
+import * as path56 from "path";
+import * as fs51 from "fs";
 import * as os22 from "os";
 import { execFile as execFile2 } from "child_process";
 import { promisify as promisify2 } from "util";
@@ -299501,8 +299855,8 @@ function log5(level, component, message) {
     const line = "[" + ts23 + "] [" + level + "] [" + component + "] " + message + `
 `;
     const envLogPath = process.env.TRIDENT_LOG_PATH ?? "";
-    const logPath = envLogPath ? path55.resolve(envLogPath) : path55.join(os22.tmpdir(), "trident-engine.log");
-    fs50.appendFileSync(logPath, line, "utf-8");
+    const logPath = envLogPath ? path56.resolve(envLogPath) : path56.join(os22.tmpdir(), "trident-engine.log");
+    fs51.appendFileSync(logPath, line, "utf-8");
   } catch (e) {
     tridentLog("ERROR", "project-folder", `${level}: ${message} (${e instanceof Error ? e.message : String(e)})`);
   }
@@ -299510,8 +299864,8 @@ function log5(level, component, message) {
 function getWarheadDir() {
   try {
     const dir = __dirname2;
-    const warheadDir = path55.resolve(dir, "..", "warheads");
-    if (fs50.existsSync(path55.resolve(warheadDir, "auto-fire.py"))) {
+    const warheadDir = path56.resolve(dir, "..", "warheads");
+    if (fs51.existsSync(path56.resolve(warheadDir, "auto-fire.py"))) {
       return warheadDir;
     }
   } catch (e) {
@@ -299520,8 +299874,8 @@ function getWarheadDir() {
     return __dirname2;
   }
   try {
-    const srcDir = path55.resolve(process.cwd(), "source-snapshot", "src", "shared", "project-folder-warhead");
-    if (fs50.existsSync(path55.resolve(srcDir, "auto-fire.py"))) {
+    const srcDir = path56.resolve(process.cwd(), "source-snapshot", "src", "shared", "project-folder-warhead");
+    if (fs51.existsSync(path56.resolve(srcDir, "auto-fire.py"))) {
       return srcDir;
     }
   } catch (e) {
@@ -299547,11 +299901,11 @@ var init_project_folder_warhead = __esm(() => {
   init_utils();
   execFileAsync = promisify2(execFile2);
   __filename2 = fileURLToPath2(import.meta.url);
-  __dirname2 = path55.dirname(__filename2);
+  __dirname2 = path56.dirname(__filename2);
   WARHEAD_DIR = getWarheadDir() ?? __dirname2;
-  AUTO_FIRE_SCRIPT = WARHEAD_DIR ? path55.resolve(WARHEAD_DIR, "auto-fire.py") : "";
-  AGENT_CONFIG_PATH = WARHEAD_DIR ? path55.resolve(WARHEAD_DIR, "agent-config.json") : "";
-  MARKER_FILE2 = path55.resolve(os22.homedir(), ".opencode", ".trident", ".current-project");
+  AUTO_FIRE_SCRIPT = WARHEAD_DIR ? path56.resolve(WARHEAD_DIR, "auto-fire.py") : "";
+  AGENT_CONFIG_PATH = WARHEAD_DIR ? path56.resolve(WARHEAD_DIR, "agent-config.json") : "";
+  MARKER_FILE2 = path56.resolve(os22.homedir(), ".opencode", ".trident", ".current-project");
   process.on("exit", () => {
     stopSessionWatcher();
   });
@@ -299578,8 +299932,8 @@ var init_project_folder_warhead = __esm(() => {
 });
 
 // src/shared/knowledge-loader.ts
-import * as fs51 from "fs";
-import * as path56 from "path";
+import * as fs52 from "fs";
+import * as path57 from "path";
 import * as os23 from "os";
 function logMessage(level, msg) {
   try {
@@ -299606,14 +299960,14 @@ function getKnowledgeBasePath() {
       return envPath;
     }
     const homeDir = process.env.HOME || "/root";
-    return path56.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Typescript Deep Knowledge");
+    return path57.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Typescript Deep Knowledge");
   } catch (e) {
     console.error("[KnowledgeLoader] error:", e);
     const msg = e instanceof Error ? e.message : String(e);
     if (msg) {
       logMessage("ERROR", `getKnowledgeBasePath failed: ${msg}`);
     }
-    return process.env.KNOWLEDGE_LIBRARY_PATH ?? path56.join(os23.tmpdir(), "knowledge-library");
+    return process.env.KNOWLEDGE_LIBRARY_PATH ?? path57.join(os23.tmpdir(), "knowledge-library");
   }
 }
 function loadKnowledgeLibrary(kbId) {
@@ -299637,8 +299991,8 @@ function loadKnowledgeLibrary(kbId) {
       return result3;
     }
     const basePath = getKnowledgeBasePath();
-    const filePath = path56.join(basePath, filename);
-    if (!fs51.existsSync(filePath)) {
+    const filePath = path57.join(basePath, filename);
+    if (!fs52.existsSync(filePath)) {
       const err2 = `File not found: ${filePath}. Set KNOWLEDGE_LIBRARY_PATH if KBs are elsewhere.`;
       logMessage("WARN", err2);
       const result3 = { id: kbId, filename, content: "", loaded: false, error: err2 };
@@ -299651,7 +300005,7 @@ function loadKnowledgeLibrary(kbId) {
       }
       return result3;
     }
-    const content = fs51.readFileSync(filePath, "utf-8");
+    const content = fs52.readFileSync(filePath, "utf-8");
     const result2 = { id: kbId, filename, content, loaded: true };
     try {
       _knowledgeCache.set(kbId, result2);
@@ -308572,7 +308926,7 @@ var require_util3 = __commonJS((exports) => {
   });
   var normalize = createSafeHandler((url2) => {});
   exports.normalize = normalize;
-  function join56(aRoot, aPath) {
+  function join57(aRoot, aPath) {
     const pathType = getURLType(aPath);
     const rootType = getURLType(aRoot);
     aRoot = ensureDirectory(aRoot);
@@ -308598,7 +308952,7 @@ var require_util3 = __commonJS((exports) => {
     const newPath = withBase(aPath, withBase(aRoot, base));
     return computeRelativeURL(base, newPath);
   }
-  exports.join = join56;
+  exports.join = join57;
   function relative6(rootURL, targetURL) {
     const result2 = relativeIfPossible(rootURL, targetURL);
     return typeof result2 === "string" ? result2 : normalize(targetURL);
@@ -314988,8 +315342,8 @@ var init_warhead_nlp = __esm(() => {
 });
 
 // src/shared/warheads/warhead-gates.ts
-import * as fs52 from "fs";
-import * as path57 from "path";
+import * as fs53 from "fs";
+import * as path58 from "path";
 function safeJsonParse6(raw) {
   return JSON["parse"](raw);
 }
@@ -315008,7 +315362,7 @@ class AuditLayerProgressionWarhead {
   findingsPerLayer = {};
   auditCount = 0;
   layerCheckCount = 0;
-  statePath = path57.join(process.cwd(), ".trident", "audit-layer-state.json");
+  statePath = path58.join(process.cwd(), ".trident", "audit-layer-state.json");
   constructor() {
     this.load();
   }
@@ -315023,10 +315377,10 @@ class AuditLayerProgressionWarhead {
   }
   save() {
     try {
-      const dir = path57.dirname(this.statePath);
-      if (!fs52.existsSync(dir))
-        fs52.mkdirSync(dir, { recursive: true });
-      fs52.writeFileSync(this.statePath, JSON.stringify({
+      const dir = path58.dirname(this.statePath);
+      if (!fs53.existsSync(dir))
+        fs53.mkdirSync(dir, { recursive: true });
+      fs53.writeFileSync(this.statePath, JSON.stringify({
         currentLayer: this.currentLayer,
         completedLayers: this.completedLayers,
         failedLayers: this.failedLayers,
@@ -315038,8 +315392,8 @@ class AuditLayerProgressionWarhead {
   }
   load() {
     try {
-      if (fs52.existsSync(this.statePath)) {
-        const raw = fs52.readFileSync(this.statePath, "utf-8");
+      if (fs53.existsSync(this.statePath)) {
+        const raw = fs53.readFileSync(this.statePath, "utf-8");
         const data = cast9(safeJsonParse6(raw));
         if (data.currentLayer && typeof data.currentLayer === "string") {
           this.currentLayer = cast9(data.currentLayer);
@@ -315114,8 +315468,8 @@ var init_warhead_gates = __esm(() => {
 });
 
 // src/shared/evidence-gate.ts
-import * as path58 from "path";
-import * as fs53 from "fs";
+import * as path59 from "path";
+import * as fs54 from "fs";
 function safeJsonParse7(raw) {
   return JSON["parse"](raw);
 }
@@ -315127,14 +315481,14 @@ function cast10(v) {
 class EvidenceGate2 {
   evidenceDir;
   constructor(basePath) {
-    this.evidenceDir = path58.join(basePath || process.cwd(), ".trident", "evidence", "delivery");
+    this.evidenceDir = path59.join(basePath || process.cwd(), ".trident", "evidence", "delivery");
   }
   hasContainerTestEvidence() {
     try {
-      const resultPath = path58.join(this.evidenceDir, "ContainerTestResult.json");
-      if (!fs53.existsSync(resultPath))
+      const resultPath = path59.join(this.evidenceDir, "ContainerTestResult.json");
+      if (!fs54.existsSync(resultPath))
         return false;
-      const result2 = cast10(safeJsonParse7(fs53.readFileSync(resultPath, "utf-8")));
+      const result2 = cast10(safeJsonParse7(fs54.readFileSync(resultPath, "utf-8")));
       const total = typeof result2.totalTests === "number" ? result2.totalTests : typeof result2.total_tests === "number" ? result2.total_tests : 0;
       const passed = typeof result2.passedTests === "number" ? result2.passedTests : typeof result2.passed_tests === "number" ? result2.passed_tests : 0;
       if (total === 0)
@@ -315244,8 +315598,8 @@ var init_warhead_tscompiler = __esm(() => {
 });
 
 // src/shared/warheads/warhead-explore.ts
-import * as fs54 from "fs";
-import * as path59 from "path";
+import * as fs55 from "fs";
+import * as path60 from "path";
 
 class ExploreDispatchWarhead {
   id = "explore-dispatch";
@@ -315258,13 +315612,13 @@ class ExploreDispatchWarhead {
   async init() {
     try {
       const candidates2 = [
-        path59.join(process.cwd(), "identity", "trident", "explore-protocol.md"),
-        path59.join(process.cwd(), "source-snapshot", "src", "identity", "trident", "explore-protocol.md"),
-        path59.join(process.env.HOME || "/root", ".config", "opencode", "plugins", "trident", "identity", "trident", "explore-protocol.md")
+        path60.join(process.cwd(), "identity", "trident", "explore-protocol.md"),
+        path60.join(process.cwd(), "source-snapshot", "src", "identity", "trident", "explore-protocol.md"),
+        path60.join(process.env.HOME || "/root", ".config", "opencode", "plugins", "trident", "identity", "trident", "explore-protocol.md")
       ];
       for (const candidate of candidates2) {
-        if (fs54.existsSync(candidate)) {
-          this.protocolContent = fs54.readFileSync(candidate, "utf-8");
+        if (fs55.existsSync(candidate)) {
+          this.protocolContent = fs55.readFileSync(candidate, "utf-8");
           this.protocolPath = candidate;
           this.protocolLoaded = true;
           await tridentLog("INFO", "warhead-explore", `Explore protocol loaded: ${candidate} (${this.protocolContent.length} chars)`);
@@ -315713,8 +316067,8 @@ __export(exports_trident_warhead_synthesizer, {
   registerWarheadHooks: () => registerWarheadHooks,
   ensureT2Cache: () => ensureT2Cache
 });
-import * as fs55 from "fs";
-import * as path60 from "path";
+import * as fs56 from "fs";
+import * as path61 from "path";
 import { fileURLToPath as fileURLToPath3 } from "url";
 function ensureT2Cache() {
   if (_t2Cache)
@@ -315724,30 +316078,30 @@ function ensureT2Cache() {
     _t2Cache.set(name, content);
   }
   try {
-    const identityDir = path60.resolve(__dirname3, "..", "identity", "trident");
-    if (!fs55.existsSync(identityDir)) {
+    const identityDir = path61.resolve(__dirname3, "..", "identity", "trident");
+    if (!fs56.existsSync(identityDir)) {
       tridentLog("WARN", "warhead-synthesizer", `T2 dir not found: ${identityDir} \u2014 using bundled fallbacks (${Object.keys(BUILTIN_FALLBACKS).length} files)`);
       return _t2Cache;
     }
-    const entries = fs55.readdirSync(identityDir);
+    const entries = fs56.readdirSync(identityDir);
     for (const entry of entries) {
       if (entry.endsWith(".md")) {
         try {
-          const content = fs55.readFileSync(path60.join(identityDir, entry), "utf-8");
+          const content = fs56.readFileSync(path61.join(identityDir, entry), "utf-8");
           _t2Cache.set(entry, content);
         } catch (e) {
           tridentLog("WARN", "warhead-synthesizer", `T2 load failed for ${entry}: using fallback \u2014 ${e instanceof Error ? e.message : String(e)}`);
           return _t2Cache;
         }
       }
-      const subDir = path60.join(identityDir, entry);
+      const subDir = path61.join(identityDir, entry);
       try {
-        if (fs55.statSync(subDir).isDirectory()) {
-          const subEntries = fs55.readdirSync(subDir);
+        if (fs56.statSync(subDir).isDirectory()) {
+          const subEntries = fs56.readdirSync(subDir);
           for (const subEntry of subEntries) {
             if (subEntry.endsWith(".md")) {
               try {
-                const content = fs55.readFileSync(path60.join(subDir, subEntry), "utf-8");
+                const content = fs56.readFileSync(path61.join(subDir, subEntry), "utf-8");
                 _t2Cache.set(entry + "/" + subEntry, content);
               } catch (e) {
                 tridentLog("WARN", "warhead-synthesizer", `T2 subdir load failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -315767,7 +316121,7 @@ function ensureT2Cache() {
   }
   try {
     const homeDir = process.env.HOME || "/root";
-    const kbDir = path60.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Typescript Deep Knowledge");
+    const kbDir = path61.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Typescript Deep Knowledge");
     const kbFiles = [
       "KB-00-Philosophy-and-Rules.md",
       "KB-01-TypeScript-Compiler-API-and-Semantic-Analysis.md",
@@ -315780,9 +316134,9 @@ function ensureT2Cache() {
       "SQL_SQLite_Agent_Persistence.md"
     ];
     for (const kbFile of kbFiles) {
-      const kbPath = path60.join(kbDir, kbFile);
-      if (fs55.existsSync(kbPath)) {
-        const content = fs55.readFileSync(kbPath, "utf-8");
+      const kbPath = path61.join(kbDir, kbFile);
+      if (fs56.existsSync(kbPath)) {
+        const content = fs56.readFileSync(kbPath, "utf-8");
         _t2Cache.set("kb/" + kbFile, content);
       }
     }
@@ -315808,12 +316162,12 @@ function ensureT2Cache() {
   }
   try {
     const homeDir = process.env.HOME || "/root";
-    const csDir = path60.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Common_Sense");
-    if (fs55.existsSync(csDir)) {
-      const csFiles = fs55.readdirSync(csDir).filter((f) => f.endsWith(".md"));
+    const csDir = path61.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Common_Sense");
+    if (fs56.existsSync(csDir)) {
+      const csFiles = fs56.readdirSync(csDir).filter((f) => f.endsWith(".md"));
       for (const csFile of csFiles) {
         try {
-          const content = fs55.readFileSync(path60.join(csDir, csFile), "utf-8");
+          const content = fs56.readFileSync(path61.join(csDir, csFile), "utf-8");
           _t2Cache.set("cs/" + csFile, content);
         } catch (e) {
           tridentLog("WARN", "warhead-synthesizer", "Common_Sense load failed for " + csFile + ": " + (e instanceof Error ? e.message : String(e)));
@@ -315832,12 +316186,12 @@ function ensureT2Cache() {
   }
   try {
     const homeDir = process.env.HOME || "/root";
-    const asDir = path60.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Algorithmic Systems");
-    if (fs55.existsSync(asDir)) {
-      const asFiles = fs55.readdirSync(asDir).filter((f) => f.endsWith(".md"));
+    const asDir = path61.join(homeDir, "OPENCODE_WORKSPACE", "Shared Workspace Context", "KNOWLEDGE_LIBRARY", "Algorithmic Systems");
+    if (fs56.existsSync(asDir)) {
+      const asFiles = fs56.readdirSync(asDir).filter((f) => f.endsWith(".md"));
       for (const asFile of asFiles) {
         try {
-          const content = fs55.readFileSync(path60.join(asDir, asFile), "utf-8");
+          const content = fs56.readFileSync(path61.join(asDir, asFile), "utf-8");
           _t2Cache.set("as/" + asFile, content);
         } catch (e) {
           tridentLog("WARN", "warhead-synthesizer", "AS load failed for " + asFile + ": " + (e instanceof Error ? e.message : String(e)));
@@ -315875,17 +316229,17 @@ async function registerWarheadHooks() {
 }
 async function synthesizeWarheads(identityDir, outPath) {
   try {
-    let warheadsSource = path60.join(identityDir, "WARHEADS.md");
-    if (!fs55.existsSync(warheadsSource)) {
-      const alt = path60.join(identityDir, "trident", "WARHEADS.md");
-      if (fs55.existsSync(alt))
+    let warheadsSource = path61.join(identityDir, "WARHEADS.md");
+    if (!fs56.existsSync(warheadsSource)) {
+      const alt = path61.join(identityDir, "trident", "WARHEADS.md");
+      if (fs56.existsSync(alt))
         warheadsSource = alt;
       else {
         tridentLog("WARN", "warhead-synthesizer", `WARHEADS.md not found at ${identityDir}`);
         return { ok: false, warheads: 0, path: outPath };
       }
     }
-    const body = fs55.readFileSync(warheadsSource, "utf-8");
+    const body = fs56.readFileSync(warheadsSource, "utf-8");
     const frontmatter = `---
 ` + `name: trident-warheads
 ` + `description: 'The operative warhead payload \u2014 load when you detect scope-shrink, approval-gating, theatrical claims, or gate entries in your own reasoning or the task at hand.'
@@ -315894,8 +316248,8 @@ async function synthesizeWarheads(identityDir, outPath) {
 `;
     const skill = frontmatter + body + `
 `;
-    fs55.mkdirSync(path60.dirname(outPath), { recursive: true });
-    fs55.writeFileSync(outPath, skill, "utf-8");
+    fs56.mkdirSync(path61.dirname(outPath), { recursive: true });
+    fs56.writeFileSync(outPath, skill, "utf-8");
     const warheadCount = (body.match(/WARHEAD\s+\d+/gi) || []).length;
     tridentLog("INFO", "warhead-synthesizer", `SKILL.md synthesized: ${outPath} (${warheadCount} warheads)`);
     return { ok: true, warheads: warheadCount, path: outPath };
@@ -315934,7 +316288,7 @@ var init_trident_warhead_synthesizer = __esm(() => {
   init_warhead_common_sense();
   init_warhead_distilled_knowledge();
   __filename3 = fileURLToPath3(import.meta.url);
-  __dirname3 = path60.dirname(__filename3);
+  __dirname3 = path61.dirname(__filename3);
   BUILTIN_FALLBACKS = {
     "TOOLS.md": FALLBACK_TOOLS_MD,
     "EXECUTION.md": FALLBACK_EXECUTION_MD,
@@ -315966,12 +316320,12 @@ __export(exports_trident_task_queue, {
   createTaskQueueTool: () => createTaskQueueTool
 });
 import { Database as Database12 } from "bun:sqlite";
-import * as fs56 from "fs";
-import * as path61 from "path";
-import { appendFileSync as appendFileSync10 } from "fs";
+import * as fs57 from "fs";
+import * as path62 from "path";
+import { appendFileSync as appendFileSync11 } from "fs";
 function hasTridentDir(dir) {
   try {
-    return fs56.statSync(path61.join(dir, ".trident")).isDirectory();
+    return fs57.statSync(path62.join(dir, ".trident")).isDirectory();
   } catch {
     return false;
   }
@@ -315981,7 +316335,7 @@ function resolveWorkspaceRoot() {
   for (;; ) {
     if (hasTridentDir(dir))
       return dir;
-    const parent = path61.dirname(dir);
+    const parent = path62.dirname(dir);
     if (parent === dir)
       break;
     dir = parent;
@@ -315990,8 +316344,8 @@ function resolveWorkspaceRoot() {
 }
 function getDistSha(project) {
   try {
-    const shaPath = path61.join(project, "dist", "sha256.txt");
-    const content = fs56.readFileSync(shaPath, "utf-8");
+    const shaPath = path62.join(project, "dist", "sha256.txt");
+    const content = fs57.readFileSync(shaPath, "utf-8");
     const firstLine = content.split(`
 `)[0] || "";
     return (firstLine.split(/\s+/)[0] || "").trim();
@@ -316107,8 +316461,8 @@ class JsonlTaskQueue {
     this.loaded = true;
     let skipped = 0;
     try {
-      if (fs56.existsSync(this.file)) {
-        const lines = fs56.readFileSync(this.file, "utf-8").split(`
+      if (fs57.existsSync(this.file)) {
+        const lines = fs57.readFileSync(this.file, "utf-8").split(`
 `);
         for (const line of lines) {
           if (!line.trim())
@@ -316136,10 +316490,10 @@ class JsonlTaskQueue {
   }
   persist() {
     try {
-      const dir = path61.dirname(this.file);
-      if (!fs56.existsSync(dir))
-        fs56.mkdirSync(dir, { recursive: true });
-      fs56.writeFileSync(this.file, this.rows.map((r) => JSON.stringify(r)).join(`
+      const dir = path62.dirname(this.file);
+      if (!fs57.existsSync(dir))
+        fs57.mkdirSync(dir, { recursive: true });
+      fs57.writeFileSync(this.file, this.rows.map((r) => JSON.stringify(r)).join(`
 `) + `
 `, "utf-8");
     } catch (e) {
@@ -316197,14 +316551,14 @@ class JsonlTaskQueue {
   }
 }
 function getDbPath() {
-  return path61.join(resolveWorkspaceRoot(), ".trident", "task-queue.db");
+  return path62.join(resolveWorkspaceRoot(), ".trident", "task-queue.db");
 }
 function getStore() {
   if (_store)
     return _store;
   const dbPath = getDbPath();
   try {
-    fs56.mkdirSync(path61.dirname(dbPath), { recursive: true });
+    fs57.mkdirSync(path62.dirname(dbPath), { recursive: true });
     const db = new Database12(dbPath);
     db.exec("PRAGMA journal_mode=WAL");
     db.exec(SCHEMA_SQL);
@@ -316265,7 +316619,7 @@ async function queryHiveContext(content) {
 }
 function appendDebugLog(project, sha, id2, content, created_at) {
   try {
-    const logPath = path61.join(project, "DEBUG_LOG_V3.md");
+    const logPath = path62.join(project, "DEBUG_LOG_V3.md");
     const entry = [
       "",
       `### TASK-QUEUE STORE (idea #${id2}) \u2014 ${created_at}`,
@@ -316274,7 +316628,7 @@ function appendDebugLog(project, sha, id2, content, created_at) {
       ""
     ].join(`
 `);
-    appendFileSync10(logPath, entry, "utf-8");
+    appendFileSync11(logPath, entry, "utf-8");
     tridentLog("INFO", "trident-task-queue", `DEBUG_LOG_V3.md appended for idea #${id2}`);
   } catch (e) {
     tridentLog("WARN", "trident-task-queue", `DEBUG_LOG_V3 append failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);
@@ -316474,15 +316828,15 @@ var init_trident_task_queue = __esm(() => {
 
 // src/index.ts
 init_orchestrator();
-import { appendFileSync as appendFileSync13 } from "fs";
+import { appendFileSync as appendFileSync14 } from "fs";
 
 // src/hooks/trident-hooks.ts
 init_orchestrator();
-import { appendFileSync as appendFileSync11, readFileSync as readFileSync43, existsSync as existsSync44, readdirSync as readdirSync15, mkdirSync as mkdirSync28, writeFileSync as writeFileSync28, statSync as statSync12, unlinkSync as unlinkSync4, renameSync as renameSync4 } from "fs";
+import { appendFileSync as appendFileSync12, readFileSync as readFileSync43, existsSync as existsSync45, readdirSync as readdirSync15, mkdirSync as mkdirSync29, writeFileSync as writeFileSync29, statSync as statSync12, unlinkSync as unlinkSync4, renameSync as renameSync4 } from "fs";
 import { Database as Database13 } from "bun:sqlite";
 import { createHash as createHash16 } from "crypto";
 import * as os24 from "os";
-import * as path62 from "path";
+import * as path63 from "path";
 import { fileURLToPath as fileURLToPath4 } from "url";
 
 // src/security/tool-allowlist.ts
@@ -318234,6 +318588,26 @@ var defaultLoopActor = new LoopActor({ windowMs: LOOP_WINDOW_MS });
 // src/hooks/trident-hooks.ts
 init_wave_reminder_queue();
 init_wave_constants();
+init_wave_tracker();
+
+// src/tools/wave-sleep-guard.ts
+function blindSleepSeconds(command) {
+  if (!command)
+    return null;
+  let worst = null;
+  const re = /\bsleep\s+([0-9]+(?:\.[0-9]+)?)(ms|s|m|h|d)?\b/gi;
+  let m;
+  while ((m = re.exec(command)) !== null) {
+    const n = parseFloat(m[1]);
+    if (!Number.isFinite(n))
+      continue;
+    const suf = (m[2] ?? "s").toLowerCase();
+    const secs = suf === "ms" ? n / 1000 : suf === "s" ? n : suf === "m" ? n * 60 : suf === "h" ? n * 3600 : n * 86400;
+    if (worst === null || secs > worst)
+      worst = secs;
+  }
+  return worst;
+}
 
 // src/tools/wave-cron.ts
 init_wave_tracker();
@@ -318393,10 +318767,10 @@ function buildTTQReminder(openQueueCount) {
   return "[TTQ] the task queue has " + openQueueCount + " open items and the plan has " + "room \u2014 promote the highest-priority one (trident-task-queue update \u2192 " + "active) or leave it for later. A promoted item is marked [TTQ] in the " + "todowrite so it is never mistaken for a primary build task.";
 }
 async function checkTTQOpening(rows, openQueueCount, alreadyRemindedThisCycle = false) {
-  const active = rows.filter((r) => (r.status === "pending" || r.status === "in_progress") && !r.content.startsWith("WAVE "));
+  const active2 = rows.filter((r) => (r.status === "pending" || r.status === "in_progress") && !r.content.startsWith("WAVE "));
   if (alreadyRemindedThisCycle)
     return false;
-  if (evaluateTTQOpening(active.length, openQueueCount)) {
+  if (evaluateTTQOpening(active2.length, openQueueCount)) {
     ReminderQueue.enqueue(buildTTQReminder(openQueueCount));
     return true;
   }
@@ -318428,13 +318802,13 @@ async function checkTodowriteStaleness(rows, now = Date.now()) {
 init_trident_tools();
 init_wave_status();
 import { Database as Database11 } from "bun:sqlite";
-import * as fs48 from "fs";
-import * as path53 from "path";
+import * as fs49 from "fs";
+import * as path54 from "path";
 import * as os20 from "os";
 function isBackgroundTerminal(taskId) {
   try {
-    const dbPath = path53.join(os20.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!fs48.existsSync(dbPath))
+    const dbPath = path54.join(os20.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!fs49.existsSync(dbPath))
       return false;
     const db = new Database11(dbPath, { readonly: true });
     try {
@@ -318456,29 +318830,47 @@ function isBackgroundTerminal(taskId) {
 }
 var ENV_INTERVAL = parseInt(process.env.TRIDENT_WAVE_CRON_INTERVAL_MS ?? "", 10);
 var CRON_INTERVAL_MS = Number.isFinite(ENV_INTERVAL) && ENV_INTERVAL > 0 ? ENV_INTERVAL : 10 * 60 * 1000;
+var ACTIVE_TICK_MS = (() => {
+  const v = parseInt(process.env.TRIDENT_WAVE_ACTIVE_TICK_MS ?? "", 10);
+  return Number.isFinite(v) && v > 0 ? v : 75 * 1000;
+})();
 var cronHandle = null;
+var cronStopped = false;
 function startWaveCron() {
   if (cronHandle)
     return;
-  cronHandle = setInterval(() => {
-    let client = null;
-    try {
-      const live = getOpencodeClient();
-      if (live)
-        client = live;
-    } catch (cErr) {
-      tridentLog("WARN", "wave-cron", "client resolution failed: " + (cErr instanceof Error ? cErr.message : String(cErr)));
+  cronStopped = false;
+  const scheduleNext = () => {
+    if (cronStopped) {
+      cronHandle = null;
+      return;
     }
-    waveTick(client, mainSessionIdRef()).catch((tErr) => {
-      tridentLog("ERROR", "wave-cron", "waveTick crashed: " + (tErr instanceof Error ? tErr.message : String(tErr)));
-    });
-  }, CRON_INTERVAL_MS);
-  try {
-    cronHandle.unref?.();
-  } catch (uErr) {
-    tridentLog("WARN", "wave-cron", "interval unref failed (non-fatal): " + (uErr instanceof Error ? uErr.message : String(uErr)));
-  }
-  tridentLog("INFO", "wave-cron", "the 10m wave cron registered (interval " + CRON_INTERVAL_MS + "ms)");
+    const delay = WaveTracker.getActiveWaves().length > 0 ? ACTIVE_TICK_MS : CRON_INTERVAL_MS;
+    cronHandle = setTimeout(async () => {
+      try {
+        let client = null;
+        try {
+          const live = getOpencodeClient();
+          if (live)
+            client = live;
+        } catch (cErr) {
+          tridentLog("WARN", "wave-cron", "client resolution failed: " + (cErr instanceof Error ? cErr.message : String(cErr)));
+        }
+        await waveTick(client, mainSessionIdRef());
+      } catch (tErr) {
+        tridentLog("ERROR", "wave-cron", "waveTick crashed: " + (tErr instanceof Error ? tErr.message : String(tErr)));
+      } finally {
+        scheduleNext();
+      }
+    }, delay);
+    try {
+      cronHandle.unref?.();
+    } catch (uErr) {
+      tridentLog("WARN", "wave-cron", "timer unref failed (non-fatal): " + (uErr instanceof Error ? uErr.message : String(uErr)));
+    }
+  };
+  scheduleNext();
+  tridentLog("INFO", "wave-cron", "the wave cron registered (adaptive: " + ACTIVE_TICK_MS + "ms with live waves, " + CRON_INTERVAL_MS + "ms idle)");
 }
 var mainSessionIdOverride = null;
 function setCronMainSessionId(sid) {
@@ -318499,18 +318891,27 @@ async function tickAgent(client, wave, name, agent2) {
   let status;
   let statusReadFailed = false;
   let bytes = agent2.lastBytes;
+  const QUIET_WINDOW_MS = 90000;
+  const isTerminalStream = (stream5) => {
+    if (!stream5.ok || stream5.parts.length === 0)
+      return false;
+    const newest = stream5.parts[stream5.parts.length - 1];
+    const isFinishMarker = newest.type === "step-finish" || newest.completed === true;
+    if (!isFinishMarker)
+      return false;
+    const grewSinceLastTick = stream5.totalParts > agent2.lastBytes;
+    const quieted = !grewSinceLastTick && Date.now() - (agent2.lastActivityAt ?? 0) > QUIET_WINDOW_MS;
+    return quieted;
+  };
   if (agent2.taskIds && agent2.taskIds.length > 0) {
     try {
       const stream5 = readSessionStream(agent2.taskIds[agent2.taskIds.length - 1], { limit: 1 });
       bytes = stream5.totalParts;
-      if (stream5.ok && stream5.parts.length > 0) {
-        const newest = stream5.parts[stream5.parts.length - 1];
-        if (newest.type === "step-finish" || newest.completed === true) {
-          agent2.state = "complete";
-          agent2.lastActivityAt = Date.now();
-          tridentLog("INFO", "wave-cron", "TERMINAL: " + wave.wave + "/" + name + " finished (newest part step-finish/completed) \u2014 closed out, never stuck-evaluated.");
-          return;
-        }
+      if (isTerminalStream(stream5)) {
+        agent2.lastActivityAt = Date.now();
+        tridentLog("INFO", "wave-cron", "TERMINAL(quieted): " + wave.wave + "/" + name + " \u2014 finish marker + no growth + past the quiet window \u2014 routed to the completion gate.");
+        await routeCompletionGate(wave, name, agent2, "background");
+        return;
       }
       status = stream5.ok ? "stream" : "unknown";
     } catch (bgErr) {
@@ -318520,14 +318921,23 @@ async function tickAgent(client, wave, name, agent2) {
     }
   } else {
     try {
-      const st = await client.status({});
-      status = st.data?.status ?? "unknown";
-      const tail = await client.messages({ path: { id: sid }, query: { limit: 1 } });
-      bytes = JSON.stringify(tail.data ?? []).length;
-    } catch (sErr) {
+      if (sid) {
+        const stream5 = readSessionStream(sid, { limit: 1 });
+        bytes = stream5.totalParts;
+        if (isTerminalStream(stream5)) {
+          agent2.lastActivityAt = Date.now();
+          tridentLog("INFO", "wave-cron", "TERMINAL(quieted): " + wave.wave + "/" + name + " \u2014 finish marker + no growth + past the quiet window (session-keyed) \u2014 routed to the completion gate.");
+          await routeCompletionGate(wave, name, agent2, "foreground");
+          return;
+        }
+        status = stream5.ok ? "stream" : "unknown";
+      } else {
+        status = "unknown";
+      }
+    } catch (fgErr) {
       status = "unknown";
       statusReadFailed = true;
-      tridentLog("WARN", "wave-cron", "read failed for " + wave.wave + "/" + name + " \u2014 the read-failure flag set (NOT a crash): " + (sErr instanceof Error ? sErr.message : String(sErr)));
+      tridentLog("WARN", "wave-cron", "foreground stream read failed for " + wave.wave + "/" + name + " \u2014 the read-failure flag set (NOT a crash): " + (fgErr instanceof Error ? fgErr.message : String(fgErr)));
     }
   }
   const streamGrowing = bytes > agent2.lastBytes;
@@ -318574,6 +318984,80 @@ async function tickAgent(client, wave, name, agent2) {
     tridentLog("WARN", "wave-cron", "kill-respawn evidence matched for " + wave.wave + "/" + name + ": " + decision.pattern?.id + " \u2192 " + decision.action);
   }
 }
+async function routeCompletionGate(wave, name, agent2, _path) {
+  try {
+    const sid = agent2.sessionIds[agent2.sessionIds.length - 1] || agent2.taskIds && agent2.taskIds[agent2.taskIds.length - 1] || "";
+    let evidenceText = "";
+    if (sid) {
+      try {
+        const page = readSessionStream(sid, { limit: 14 });
+        if (page.ok) {
+          evidenceText = page.parts.map((p) => {
+            const t = String(p.type ?? "");
+            if (t === "text")
+              return String(p.text ?? "");
+            if (t === "tool") {
+              const st = p.state;
+              const meta = st?.metadata;
+              return String(st?.output ?? meta?.output ?? p.output ?? p.outputSnippet ?? "");
+            }
+            return "";
+          }).filter(Boolean).join(`
+`);
+        }
+      } catch {}
+    }
+    const declaredClass = agent2.declaredClass ?? (/^(b[0-9]|build|gate|evidence|writer|hunter|fix|impl)/i.test(name) ? "TYPE_BATTERY" : "REPORT");
+    if (declaredClass === "REPORT" || declaredClass === "DOC") {
+      tridentLog("INFO", "wave-cron", "COMPLETION GATE " + wave.wave + "/" + name + ": PASS [EXEMPT declaredClass=" + declaredClass + "]");
+      setGateExempt(wave.wave, name);
+      WaveTracker.markComplete(wave.wave, name);
+      return;
+    }
+    const { evaluateCompletion: evaluateCompletion2 } = await Promise.resolve().then(() => (init_wave_completion_gate(), exports_wave_completion_gate));
+    const priorHolds = agent2.gateHolds ?? 0;
+    const verdict = evaluateCompletion2(evidenceText, declaredClass, priorHolds);
+    tridentLog("INFO", "wave-cron", "COMPLETION GATE " + wave.wave + "/" + name + ": " + verdict.decision + " [declared=" + declaredClass + " holds=" + priorHolds + "] " + verdict.triad.evidence);
+    if (verdict.decision === "PASS") {
+      setGatePassed(wave.wave, name);
+      WaveTracker.markComplete(wave.wave, name);
+      (async () => {
+        try {
+          if (!wave.ownerSessionId || wave.ownerSessionId === "default")
+            return;
+          const dbPath = path54.join(os20.homedir(), ".local", "share", "opencode", "opencode.db");
+          if (!fs49.existsSync(dbPath))
+            return;
+          const db = new Database11(dbPath, { readonly: true });
+          try {
+            const row = db.query(`SELECT COUNT(*) c FROM part WHERE session_id = ? AND data LIKE '%"synthetic":true%' AND data LIKE '%Background task completed: ' || ? || '%'`).get(wave.ownerSessionId, name);
+            if (row && row.c === 0) {
+              tridentLog("WARN", "wave-cron", "INJECT TRIPWIRE: " + wave.wave + "/" + name + " completed + gate-passed but NO vanilla inject found in owner " + wave.ownerSessionId + " \u2014 the completion notification may be LOST (check ~/.local/share/opencode/snapshot/*/index.lock or deploy the durable inject)");
+            }
+          } finally {
+            db.close();
+          }
+        } catch {}
+      })();
+      return;
+    }
+    if (verdict.decision === "HOLD") {
+      const holds = setGateHeld(wave.wave, name);
+      try {
+        const { executeWaveSteer: executeWaveSteer2 } = await Promise.resolve().then(() => (init_wave_dispatch(), exports_wave_dispatch));
+        await executeWaveSteer2(sid, verdict.remediation, { mode: "soft", subagentType: "trident_build" });
+        tridentLog("WARN", "wave-cron", "GATE HOLD (" + holds + ") \u2192 remediation steered to " + name + " (" + sid + ") \u2014 the agent stays running; its resubmission re-enters the gate");
+      } catch (sErr) {
+        tridentLog("ERROR", "wave-cron", "GATE HOLD steer failed for " + name + ": " + (sErr instanceof Error ? sErr.message : String(sErr)) + " \u2014 the gate state holds; the next tick re-evaluates.");
+      }
+      return;
+    }
+    WaveTracker.markFailed(wave.wave, name, "COMPLETION GATE: " + (verdict.remediation || "second return without execution evidence"));
+  } catch (gErr) {
+    tridentLog("ERROR", "wave-cron", "completion gate crashed for " + wave.wave + "/" + name + " \u2014 failing OPEN this cycle: " + (gErr instanceof Error ? gErr.message : String(gErr)));
+    WaveTracker.markComplete(wave.wave, name);
+  }
+}
 async function waveTick(client, mainSessionId, opts = {}) {
   const waves = WaveTracker.getActiveWaves();
   if (waves.length === 0) {
@@ -318590,8 +319074,7 @@ async function waveTick(client, mainSessionId, opts = {}) {
       if (agent2.taskIds && agent2.taskIds.length > 0 && agent2.state === "running") {
         try {
           if (isBackgroundTerminal(agent2.taskIds[agent2.taskIds.length - 1])) {
-            WaveTracker.markComplete(wave.wave, name);
-            tridentLog("INFO", "wave-cron", "background agent " + wave.wave + "/" + name + " marked complete (the part stream terminal)");
+            await routeCompletionGate(wave, name, agent2, "background");
           }
         } catch (bgErr) {
           tridentLog("WARN", "wave-cron", "background terminal check failed for " + wave.wave + "/" + name + " (the next tick retries): " + (bgErr instanceof Error ? bgErr.message : String(bgErr)));
@@ -318631,7 +319114,7 @@ function hookDebugWrite(line) {
   if (!HOOK_DEBUG_ENABLED)
     return;
   try {
-    const p = path62.join(os24.tmpdir(), "trident-hook-debug.log");
+    const p = path63.join(os24.tmpdir(), "trident-hook-debug.log");
     try {
       const st = statSync12(p);
       if (st.size > HOOK_DEBUG_MAX_BYTES) {
@@ -318643,7 +319126,7 @@ function hookDebugWrite(line) {
         } catch (r2) {}
       }
     } catch (stErr) {}
-    appendFileSync11(p, line);
+    appendFileSync12(p, line);
   } catch (e) {}
 }
 function cast11(value) {
@@ -318969,13 +319452,13 @@ function getTheatricalState(sid) {
     theatricalState.set(sid, { suggested: false, ts: null, count: 0, substituteArtifacts: [], lastSubstituteWriteAt: null, containerTestSubject: null, lastFinding: null });
   return theatricalState.get(sid);
 }
-function trackTheatricalArtifacts(state3, toolName, content, path63) {
+function trackTheatricalArtifacts(state3, toolName, content, path64) {
   if (!state3 || !content)
     return;
   var lower = content.toLowerCase();
   var isDelete = toolName === "delete_file" || toolName === "rm" || toolName === "bash" && /\brm\b/.test(lower);
   if (isDelete) {
-    var delTarget = (path63 || "").toLowerCase();
+    var delTarget = (path64 || "").toLowerCase();
     var kept = [];
     for (var di = 0;di < state3.substituteArtifacts.length; di++) {
       var dp = state3.substituteArtifacts[di];
@@ -319007,9 +319490,9 @@ function trackTheatricalArtifacts(state3, toolName, content, path63) {
       break;
     }
   }
-  if (hasSub && hasShape && path63) {
-    if (state3.substituteArtifacts.indexOf(path63) === -1)
-      state3.substituteArtifacts.push(path63);
+  if (hasSub && hasShape && path64) {
+    if (state3.substituteArtifacts.indexOf(path64) === -1)
+      state3.substituteArtifacts.push(path64);
     state3.lastSubstituteWriteAt = Date.now();
   }
 }
@@ -319030,10 +319513,10 @@ var dispatchSkillLoads = new Set;
 var waveGeneratorUsed = new Set;
 var taskFirewallBlocked = new Map;
 var ctSetupDone = new Set;
-var GATE_STATE_PATH = path62.join(os24.tmpdir(), "trident-gate-state.json");
+var GATE_STATE_PATH = path63.join(os24.tmpdir(), "trident-gate-state.json");
 function loadGateState() {
   try {
-    if (!existsSync44(GATE_STATE_PATH))
+    if (!existsSync45(GATE_STATE_PATH))
       return;
     var raw = JSON.parse(readFileSync43(GATE_STATE_PATH, "utf-8"));
     if (!raw || typeof raw !== "object")
@@ -319071,7 +319554,7 @@ function loadGateState() {
 }
 function saveGateState() {
   try {
-    writeFileSync28(GATE_STATE_PATH, JSON.stringify({
+    writeFileSync29(GATE_STATE_PATH, JSON.stringify({
       taskFirewallCount: Object.fromEntries(taskFirewallCount),
       taskDispatchCount: Object.fromEntries(taskDispatchCount),
       questionRoundCount: Object.fromEntries(questionRoundCount),
@@ -319114,14 +319597,14 @@ function incrementSessionCount(map2, sid) {
 function hasWaveAuditArtifact(sinceTs) {
   const since = typeof sinceTs === "number" ? sinceTs : 0;
   try {
-    const auditDir = path62.join(process.cwd(), ".trident", "wave-audit");
-    if (existsSync44(auditDir)) {
+    const auditDir = path63.join(process.cwd(), ".trident", "wave-audit");
+    if (existsSync45(auditDir)) {
       const files2 = readdirSync15(auditDir);
       for (const f of files2) {
         if (!f.endsWith(".md"))
           continue;
         try {
-          const full = path62.join(auditDir, f);
+          const full = path63.join(auditDir, f);
           const st = statSync12(full);
           if (st.mtimeMs < since)
             continue;
@@ -319134,20 +319617,20 @@ function hasWaveAuditArtifact(sinceTs) {
       }
     }
   } catch (e) {}
-  var candidates2 = [path62.join(process.cwd(), ".trident", "wave-audit")];
+  var candidates2 = [path63.join(process.cwd(), ".trident", "wave-audit")];
   var home = os24.homedir();
-  candidates2.push(path62.join(home, ".trident", "wave-audit"));
-  candidates2.push(path62.join(home, "OPENCODE_WORKSPACE", ".trident", "wave-audit"));
+  candidates2.push(path63.join(home, ".trident", "wave-audit"));
+  candidates2.push(path63.join(home, "OPENCODE_WORKSPACE", ".trident", "wave-audit"));
   for (var ci = 0;ci < candidates2.length; ci++) {
     try {
-      if (!existsSync44(candidates2[ci]))
+      if (!existsSync45(candidates2[ci]))
         continue;
       var files = readdirSync15(candidates2[ci]).filter(function(f) {
         return f.endsWith(".md");
       });
       for (var fi = 0;fi < files.length; fi++) {
         try {
-          var fullPath = path62.join(candidates2[ci], files[fi]);
+          var fullPath = path63.join(candidates2[ci], files[fi]);
           var st2 = statSync12(fullPath);
           if (st2.mtimeMs < since)
             continue;
@@ -319211,14 +319694,14 @@ function resolveWarheadIdentityDir() {
   if (_warheadIdentityDir)
     return _warheadIdentityDir;
   var candidates2 = [];
-  var here = path62.dirname(fileURLToPath4(import.meta.url));
-  candidates2.push(path62.join(here, "..", "identity", "trident"));
-  candidates2.push(path62.join(here, "..", "..", "identity", "trident"));
-  candidates2.push(path62.join(process.cwd(), "src", "identity", "trident"));
-  candidates2.push(path62.join(os24.homedir(), ".config", "opencode", "plugins", "trident", "identity", "trident"));
+  var here = path63.dirname(fileURLToPath4(import.meta.url));
+  candidates2.push(path63.join(here, "..", "identity", "trident"));
+  candidates2.push(path63.join(here, "..", "..", "identity", "trident"));
+  candidates2.push(path63.join(process.cwd(), "src", "identity", "trident"));
+  candidates2.push(path63.join(os24.homedir(), ".config", "opencode", "plugins", "trident", "identity", "trident"));
   for (var ci = 0;ci < candidates2.length; ci++) {
     try {
-      if (existsSync44(path62.join(candidates2[ci], "WARHEADS.md"))) {
+      if (existsSync45(path63.join(candidates2[ci], "WARHEADS.md"))) {
         _warheadIdentityDir = candidates2[ci];
         return _warheadIdentityDir;
       }
@@ -319236,7 +319719,7 @@ async function synthesizeWarheadSkill() {
       return;
     }
     var identityDir = resolveWarheadIdentityDir();
-    var primary = path62.join(process.cwd(), ".opencode", "skills", "trident-warheads", "SKILL.md");
+    var primary = path63.join(process.cwd(), ".opencode", "skills", "trident-warheads", "SKILL.md");
     var result2 = await synth(identityDir, primary);
     if (result2 && result2.ok) {
       tridentLog("INFO", "warhead-skill", "SKILL.md regenerated: " + (result2.path || primary) + " (" + result2.warheads + " warheads)");
@@ -319251,10 +319734,10 @@ description: "The operative warhead payload \u2014 load when you detect scope-sh
 ---
 
 ` + inlineWarheads;
-      for (var outPath of [primary, path62.join(os24.homedir(), ".config", "opencode", "skills", "trident-warheads", "SKILL.md")]) {
+      for (var outPath of [primary, path63.join(os24.homedir(), ".config", "opencode", "skills", "trident-warheads", "SKILL.md")]) {
         try {
-          mkdirSync28(path62.dirname(outPath), { recursive: true });
-          writeFileSync28(outPath, skillDoc, "utf-8");
+          mkdirSync29(path63.dirname(outPath), { recursive: true });
+          writeFileSync29(outPath, skillDoc, "utf-8");
           tridentLog("INFO", "warhead-skill", "SKILL.md written via inline fallback: " + outPath);
           return;
         } catch (e) {}
@@ -319263,7 +319746,7 @@ description: "The operative warhead payload \u2014 load when you detect scope-sh
     } catch (e2) {
       tridentLog("WARN", "warhead-skill", "SKILL.md inline fallback error (non-fatal): " + (e2 instanceof Error ? e2.message : String(e2)));
     }
-    var fallback = path62.join(os24.homedir(), ".config", "opencode", "skills", "trident-warheads", "SKILL.md");
+    var fallback = path63.join(os24.homedir(), ".config", "opencode", "skills", "trident-warheads", "SKILL.md");
     var fbResult = await synth(identityDir, fallback);
     if (fbResult && fbResult.ok) {
       tridentLog("INFO", "warhead-skill", "SKILL.md regenerated (fallback): " + fallback + " (" + fbResult.warheads + " warheads)");
@@ -319306,8 +319789,8 @@ function resumeSessionExists(taskId) {
   try {
     if (!taskId || taskId.trim().length === 0)
       return false;
-    var resumeDbPath = path62.join(os24.homedir(), ".local", "share", "opencode", "opencode.db");
-    if (!existsSync44(resumeDbPath))
+    var resumeDbPath = path63.join(os24.homedir(), ".local", "share", "opencode", "opencode.db");
+    if (!existsSync45(resumeDbPath))
       return false;
     var resumeDb = new Database13(resumeDbPath, { readonly: true });
     try {
@@ -319328,7 +319811,7 @@ function findWaveRecordForAgent2(desc, sha) {
       if (!files[i].isFile() || files[i].name.indexOf(".wave-manifest-") !== 0 || !files[i].name.endsWith(".json"))
         continue;
       var waveIdPart = files[i].name.substring(".wave-manifest-".length).replace(/\.json$/, "");
-      var parsed = JSON.parse(readFileSync43(path62.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
+      var parsed = JSON.parse(readFileSync43(path63.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
       var agents = parsed?.agents || [];
       var firstName = agents.length > 0 ? agents[0].name : "";
       var isWaveLevelShape = firstName.length > 0 ? !waveIdPart.endsWith("-" + firstName) : /^wave-\d+$/.test(waveIdPart);
@@ -319349,7 +319832,7 @@ function findWaveManifestEntry(desc, sha) {
     for (var i = 0;i < files.length; i++) {
       if (!files[i].isFile() || files[i].name.indexOf(".wave-manifest-") !== 0 || !files[i].name.endsWith(".json"))
         continue;
-      var parsed = JSON.parse(readFileSync43(path62.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
+      var parsed = JSON.parse(readFileSync43(path63.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
       var agents = parsed?.agents || [];
       if (agents.length === 1) {
         var ag1 = agents[0];
@@ -319373,7 +319856,7 @@ function waveAgentExists(desc) {
     for (var i = 0;i < files.length; i++) {
       if (!files[i].isFile() || files[i].name.indexOf(".wave-manifest-") !== 0 || !files[i].name.endsWith(".json"))
         continue;
-      var parsed = JSON.parse(readFileSync43(path62.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
+      var parsed = JSON.parse(readFileSync43(path63.join(TRIDENT_TMP_DIR, files[i].name), "utf-8"));
       var agents = parsed?.agents || [];
       for (var a = 0;a < agents.length; a++) {
         if (agents[a].name === desc)
@@ -319639,8 +320122,8 @@ var toolBeforeHook = async function(input, output) {
       ctAction = typeof ctArgs.action === "string" ? ctArgs.action : "";
       var ctSid = sid || sessionId || "default";
       if (!isContainerSkillLoaded(ctSid) && !isContainerSkillLoaded("default")) {
-        var ctSkillPath = path62.join(os24.homedir(), ".config", "opencode", "skills", "container-testing", "SKILL.md");
-        if (!existsSync44(ctSkillPath)) {
+        var ctSkillPath = path63.join(os24.homedir(), ".config", "opencode", "skills", "container-testing", "SKILL.md");
+        if (!existsSync45(ctSkillPath)) {
           throw new Error("[TRIDENT SKILL REQUIRED] The container-testing skill FILE is missing at " + ctSkillPath + ' \u2014 the load mandate cannot be satisfied. FIX the skill install (restore the SKILL.md file), THEN load skill("container-testing"), THEN re-call this tool. Do NOT loop on loading while the skill file is broken.');
         }
         throw new Error('[TRIDENT SKILL REQUIRED] Call skill("container-testing") FIRST \u2014 the runtime-grade protocol (plan-first, the behavioral tokens, the Phase E circuit breaker, the results artifact) is mandated before ANY container interaction. The skill carries the full protocol; load it now, then re-call this tool.');
@@ -319662,6 +320145,18 @@ var toolBeforeHook = async function(input, output) {
       bashCmd = typeof bashArgs.command === "string" ? bashArgs.command : JSON.stringify(bashArgs);
     } catch (e2) {
       console.error("[TridentHooks] error:", e2);
+    }
+    try {
+      if (WaveTracker.ownerHasRunningAgents(sid || sessionId)) {
+        const blindSecs = blindSleepSeconds(bashCmd);
+        if (blindSecs !== null && blindSecs > 60) {
+          throw new Error("[WAVE SLEEP GUARD] Blind sleep " + blindSecs + "s REFUSED \u2014 you OWN a running wave. Event-aware orchestration instead: poll trident-wave-manager action=status waveId=<id> (the compact per-agent summary, ~every 90s), kick an idle agent with action=steer sessionId=<id> mode=soft, and keep working \u2014 task-completion events are delivered into your session automatically as agents finish. Sleeps up to 60s between status polls are the sanctioned cadence \u2014 longer blind sleeps while your agents run are the observed degenerate (a stalled agent + a sleeping orchestrator = a dead wave).");
+        }
+      }
+    } catch (sgErr) {
+      if (sgErr instanceof Error && sgErr.message.indexOf("[WAVE SLEEP GUARD]") === 0)
+        throw sgErr;
+      tridentLog("WARN", "trident-hooks", "sleep-gate failed (non-gate): " + (sgErr instanceof Error ? sgErr.message : String(sgErr)));
     }
     if (isContainerTestingCommand(bashCmd)) {
       if (!isContainerSkillLoaded(sid || sessionId)) {
@@ -319748,7 +320243,7 @@ Infra (docker ps/images/inspect/logs/version/info) allowed.`);
       var wavePromptFile = typeof waveBlockArgs.promptFile === "string" ? waveBlockArgs.promptFile : "";
       if (!wavePromptFile || wavePromptFile.trim().length === 0) {
         var wavePromptAsPath = typeof waveBlockArgs.prompt === "string" ? waveBlockArgs.prompt.trim() : "";
-        if (wavePromptAsPath && wavePromptAsPath.indexOf(TRIDENT_TMP_DIR) === 0 && existsSync44(wavePromptAsPath)) {
+        if (wavePromptAsPath && wavePromptAsPath.indexOf(TRIDENT_TMP_DIR) === 0 && existsSync45(wavePromptAsPath)) {
           wavePromptFile = wavePromptAsPath;
           tridentLog("INFO", "trident-hooks", "T.E.B. FAILSAFE: the prompt param carried the file path \u2014 treated as the promptFile (" + wavePromptAsPath + ")");
         }
@@ -320325,7 +320820,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
           if (!twF.isFile() || twF.name.indexOf(".wave-registry-") !== 0)
             continue;
           try {
-            var twReg = JSON.parse(readFileSync43(path62.join(TRIDENT_TMP_DIR, twF.name), "utf-8"));
+            var twReg = JSON.parse(readFileSync43(path63.join(TRIDENT_TMP_DIR, twF.name), "utf-8"));
             if (!twReg || !Array.isArray(twReg.calls) || typeof twReg.total !== "number")
               continue;
             var twBelongs = twReg.calls.some(function(c) {
@@ -320348,7 +320843,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
                 });
                 if (twIsWavePrompt) {
                   try {
-                    unlinkSync4(path62.join(TRIDENT_TMP_DIR, twF2.name));
+                    unlinkSync4(path63.join(TRIDENT_TMP_DIR, twF2.name));
                   } catch (twU) {}
                   tridentLog("INFO", "trident-hooks", "T.E.A. WIPE (full-wave): " + twF2.name + " removed \u2014 wave " + twReg.wave + " FULLY dispatched (" + twAccepted + "/" + twReg.total + " accepted)");
                 }
@@ -320369,7 +320864,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
             continue;
           if (tpF.name.indexOf(".wave-manifest-") !== 0 && tpF.name.indexOf(".wave-registry-") !== 0)
             continue;
-          var tpStat = statSync12(path62.join(TRIDENT_TMP_DIR, tpF.name));
+          var tpStat = statSync12(path63.join(TRIDENT_TMP_DIR, tpF.name));
           teaRecFiles.push({ name: tpF.name, age: Date.now() - tpStat.mtimeMs });
         }
         teaRecFiles.sort(function(a, b) {
@@ -320381,7 +320876,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
           var tpOverCap = tq >= WAVE_RECORD_CAP;
           if (tpOverAge || tpOverCap) {
             try {
-              unlinkSync4(path62.join(TRIDENT_TMP_DIR, tpRec.name));
+              unlinkSync4(path63.join(TRIDENT_TMP_DIR, tpRec.name));
             } catch (tpU) {}
             tridentLog("INFO", "trident-hooks", "WAVE-RECORD PRUNE: " + tpRec.name + " removed (age " + Math.round(tpRec.age / 60000) + "m, " + (tpOverAge ? "over-window" : "over-cap") + ")");
           }
@@ -320398,27 +320893,7 @@ YOU ARE THE SENIOR ENGINEER. THE SUBAGENT IS YOUR IMPLEMENTER. AUDIT LIKE YOUR N
       var wdOut = cast11(output);
       var wdRaw = typeof wdOut.output === "string" ? wdOut.output : JSON.stringify(wdOut);
       var wdAppend = "";
-      var wdParsed2 = null;
-      try {
-        wdParsed2 = JSON.parse(wdRaw);
-      } catch (e6) {}
-      if (wdParsed2 && wdParsed2.wave) {
-        wdAppend = `
-
-## WAVE GENERATED \u2014 call trident-wave-manager action=dispatch waveId=` + String(wdParsed2.wave) + ` NOW. The dispatch tool IS the next step \u2014 do not paste the batch form; the T.E.A. wipe fires on dispatch.
-`;
-      } else {
-        wdAppend = `
-
-## WAVE GENERATED \u2014 the wave manager returned without a parseable wave \u2014 see the raw result and call the dispatch tool.
-`;
-      }
-      if (typeof wdOut.output === "string") {
-        wdOut.output = wdOut.output + wdAppend;
-      } else {
-        wdOut.output = wdAppend;
-      }
-      tridentLog("INFO", "trident-hooks", "WAVE GENERATOR after: the batch-dispatch instruction appended");
+      tridentLog("INFO", "trident-hooks", "WAVE-GENERATOR after: no suffix (the stale dispatch instruction deleted 2026-08-28)");
     } catch (wdErr) {
       tridentLog("WARN", "trident-hooks", "WAVE DISPATCH after append failed: " + (wdErr instanceof Error ? wdErr.message : String(wdErr)));
     }
@@ -320947,7 +321422,7 @@ var toolDefinitionHook = async function(input, output) {
   try {
     var defInput = cast11(input || {});
     try {
-      appendFileSync11("/tmp/trident-tooldef-marker.txt", "CALL toolID=" + String(defInput.toolID) + " ts=" + Date.now() + `
+      appendFileSync12("/tmp/trident-tooldef-marker.txt", "CALL toolID=" + String(defInput.toolID) + " ts=" + Date.now() + `
 `);
     } catch (mErr) {}
     if (defInput.toolID !== "task")
@@ -320958,7 +321433,7 @@ var toolDefinitionHook = async function(input, output) {
     var defBase = typeof defOut.description === "string" ? defOut.description : "";
     defOut.description = defBase + ' DISPATCH STANDARD (mandatory): load skill("trident-dispatch-templates") BEFORE dispatching \u2014 use the E1-E4 (explore) / B1-B5 (build) templates; fill every [FILL] block with the real project data. Prompts MUST be DPL1-GRADE (the same quality the DP L1 tool would generate): real first-hand context with absolute paths, mission + acceptance criteria, reading order, per-task WHAT/HOW/WHY/EXPECTED, constraints + do-not-touch, concrete verification commands, return format, a fact appears ONCE (restating is padding, reflow is a cheat). Prompts under 150 lines OR missing the per-task expansion / real paths / concrete verification commands are refused mechanically by the TASK FIREWALL. ONLY subagent_type trident_explore and trident_build are allowed \u2014 general/explore/build/plan are BLOCKED.';
     try {
-      appendFileSync11("/tmp/trident-tooldef-marker.txt", "AMENDED descLen=" + String(defOut.description.length) + " ts=" + Date.now() + `
+      appendFileSync12("/tmp/trident-tooldef-marker.txt", "AMENDED descLen=" + String(defOut.description.length) + " ts=" + Date.now() + `
 `);
     } catch (amendLogErr) {}
   } catch (defErr) {
@@ -321318,7 +321793,7 @@ var TRIDENT_BUILD_T1 = [
   "Trident Build is an EXECUTION ENGINE first, analysis engine second. You do not describe what you would do. You DO it, then report what you found. Every build task follows this exact 3-step sequence: STEP 1: READ \u2014 read the target file AND all importers AND all dependencies (the blast radius). STEP 2: EXECUTE \u2014 make the targeted change with the full build discipline. STEP 3: VERIFY \u2014 the build + the battery + the hashes (the mechanical proof). You NEVER skip to Step 3 without completing Step 2.",
   "",
   "### THE VERIFICATION (the mechanical proof \u2014 the operator's runtime-grade standards)",
-  `Every build task's completion is verified by: (1) the build (bun build / tsc \u2014 the compile result), (2) the battery (bun test \u2014 the test results), (3) the hashes (sha256sum \u2014 the dist fingerprint). You run the verification, read its output, understand what it proves. "It should work" is a lie. "I tested it" without showing the test results is a lie. ALWAYS report the real runs + the real results.`,
+  `GREPS ARE NOT VERIFICATION. Text-existence checks (grep, ls, test -f, keyword counts) never satisfy the completion gate \u2014 they prove a string exists in a file, not that the artifact works. The completion gate classifies your artifact at dispatch and requires MATCHING EXECUTION evidence: TYPE_BATTERY \u2192 tsc --noEmit exit 0 + the test battery output (bun test with pass/fail counts); RUNTIME \u2192 an executed run under a harness (node with DOM/canvas stubs, the frames pumped, the output pasted); RUN \u2192 python3 executed with the output pasted. PASTE the real output \u2014 "verified", "it works", "opens in a browser" without the pasted run are REFUSED by the gate. Every build task's completion is verified by: (1) the build (the compile/run result), (2) the battery where applicable, (3) the executed-output evidence the gate demands. You run the verification, read its output, understand what it proves. "It should work" is a lie. "I tested it" without showing the test results is a lie. ALWAYS report the real runs + the real results.`,
   "",
   "### THE FAILURE MODE (the loud-fail \u2014 the operator's law)",
   "A failed build is a LOUD ERROR that names the failure (the error code, the stage, the evidence) \u2014 NEVER a substitute artifact dressed as success. The empty catch, the console.log-only handler, the silent failure \u2014 all banned. Every catch must log + recover or propagate.",
@@ -321569,7 +322044,7 @@ class RuntimeGradeEngineer {
 
 // src/subagents/trident-build/firewall/plan-scope.ts
 import { readFileSync as readFileSync44 } from "fs";
-import * as path63 from "path";
+import * as path64 from "path";
 
 class PlanScopeValidator {
   scope = null;
@@ -321683,7 +322158,7 @@ class PlanScopeValidator {
   }
   loadFromWellKnownPath() {
     try {
-      var planPath = path63.join(process.cwd(), ".trident-build", "plan", "CURRENT_PLAN.md");
+      var planPath = path64.join(process.cwd(), ".trident-build", "plan", "CURRENT_PLAN.md");
       var content = readFileSync44(planPath, "utf-8");
       if (content && content.length > 10) {
         this.loadPlan(content);
@@ -321697,7 +322172,7 @@ class PlanScopeValidator {
 // src/subagents/trident-build/firewall/snapshot-diff.ts
 import { createHash as createHash17 } from "crypto";
 import { readFileSync as readFileSync45, readdirSync as readdirSync16, statSync as statSync13 } from "fs";
-import * as path64 from "path";
+import * as path65 from "path";
 
 class SnapshotDiffClass {
   before = null;
@@ -321767,8 +322242,8 @@ class SnapshotDiffClass {
       var entry = entries[i];
       if (exclude3.has(entry))
         continue;
-      var fullPath = path64.join(dir, entry);
-      var relativePath = path64.relative(rootDir, fullPath);
+      var fullPath = path65.join(dir, entry);
+      var relativePath = path65.relative(rootDir, fullPath);
       try {
         var stats = statSync13(fullPath);
         if (stats.isDirectory()) {
@@ -322063,8 +322538,8 @@ function createGuardianHook() {
 
 // src/subagents/trident-build/harness/evidence-pipeline.ts
 import { createHash as createHash19 } from "crypto";
-import { readFileSync as readFileSync47, mkdirSync as mkdirSync29, appendFileSync as appendFileSync12 } from "fs";
-import * as path65 from "path";
+import { readFileSync as readFileSync47, mkdirSync as mkdirSync30, appendFileSync as appendFileSync13 } from "fs";
+import * as path66 from "path";
 
 class EvidencePipeline {
   chain = [];
@@ -322075,7 +322550,7 @@ class EvidencePipeline {
   }
   loadChain() {
     try {
-      var filePath = path65.join(process.cwd(), this.basePath, "merkle-chain.jsonl");
+      var filePath = path66.join(process.cwd(), this.basePath, "merkle-chain.jsonl");
       var data = readFileSync47(filePath, "utf-8");
       var lines = data.trim().split(`
 `).filter(function(l) {
@@ -322108,11 +322583,11 @@ class EvidencePipeline {
   }
   persist(node) {
     try {
-      var dir = path65.join(process.cwd(), this.basePath);
-      mkdirSync29(dir, { recursive: true });
+      var dir = path66.join(process.cwd(), this.basePath);
+      mkdirSync30(dir, { recursive: true });
       var line = JSON.stringify(node) + `
 `;
-      appendFileSync12(path65.join(dir, "merkle-chain.jsonl"), line);
+      appendFileSync13(path66.join(dir, "merkle-chain.jsonl"), line);
     } catch {}
   }
   getChainLength() {
@@ -322229,7 +322704,7 @@ function createBuildStatusTool() {
 init_poseidon_state();
 init_trident_task_queue();
 import * as os25 from "os";
-import * as path66 from "path";
+import * as path67 from "path";
 console.error = (...args) => {
   const msg = args.map((a) => {
     if (a instanceof Error)
@@ -322253,7 +322728,7 @@ console.warn = (...args) => {
   const msg = args.map((a) => typeof a === "string" ? a : String(a)).join(" ");
   tridentLog("WARN", "console", msg.substring(0, 500));
 };
-var DEBUG_LOG_PATH = process.env.TRIDENT_DEBUG_LOG ?? path66.join(os25.tmpdir(), "trident-hook-debug.log");
+var DEBUG_LOG_PATH = process.env.TRIDENT_DEBUG_LOG ?? path67.join(os25.tmpdir(), "trident-hook-debug.log");
 function cast12(value) {
   const r = value;
   return r;
@@ -322274,7 +322749,7 @@ function asRecord(value) {
 }
 function debugLog(message) {
   try {
-    appendFileSync13(DEBUG_LOG_PATH, `[${Date.now()}] ${message}
+    appendFileSync14(DEBUG_LOG_PATH, `[${Date.now()}] ${message}
 `);
   } catch (e) {
     tridentLog("WARN", "plugin", `Debug log write failed (non-fatal): ${e instanceof Error ? e.message : String(e)}`);

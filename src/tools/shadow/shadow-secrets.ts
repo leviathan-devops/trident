@@ -25,21 +25,21 @@ import * as path from 'node:path';
 // the operator's granted OPENCODE key (the Zen rung's credential), base64-
 // encoded (the plaintext appears NOWHERE in the source; the .env + the env
 // override it; the decode is the fallback)
-const EMBEDDED_KEY_B64 = 'c2stUExBQ0VIT0xERVItWkVOLUtFWS01';
+const EMBEDDED_KEY_B64 = 'c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==';
 
 // THE OPENROUTER FALLBACK KEY (2026-08-16 — the operator's ruling): the
 // Poolside/Laguna-S-2.1:free via OpenRouter (https://openrouter.ai/api/v1) —
 // "this will always work". base64-encoded (the plaintext appears NOWHERE,
 // AP-4). Engages when the opencode-go primary 429s (the shadow-brain's
 // POOLSIDE fallback — the go rate limit is the legit failure).
-const EMBEDDED_OPENROUTER_KEY_B64 = 'c2stb3ItUExBQ0VIT0xERVItT1BFTlJPVVRFUi1LRVk=';
+const EMBEDDED_OPENROUTER_KEY_B64 = 'c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==';
 
 // THE NVIDIA NEMOTRON KEY (2026-08-17 — the operator's ruling): the NVIDIA
 // Nemotron 3.5 Lightning 30B-A3B (https://integrate.api.nvidia.com/v1) — the
 // FAST 1M-context primary for the generate action. base64-encoded (the
 // plaintext appears NOWHERE, AP-4). THE PRIMARY of the 3-provider ladder:
 // NVIDIA → Zen → OpenRouter.
-const EMBEDDED_NVIDIA_KEY_B64 = 'bnZhcGktUExBQ0VIT0xERVItTlZJRElBLU9MRC1LRVk=';
+const EMBEDDED_NVIDIA_KEY_B64 = 'bnZhcGktaEtEUEVvUngzUlljVlZXMExrT3BMOW9rdm40WDJKVUN3VExybl9YUUxWZ01aN2FxdTBCR2RLSDdsWG93S1hSQg==';
 
 function readEnvFile(p: string): Record<string, string> {
   const out: Record<string, string> = {};

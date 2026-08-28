@@ -4,20 +4,28 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build:check": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
+    "build:check": "bun build src/index.ts --outdir dist --target bun --format esm --bundle --external=effect",
+    "build": "bun build src/index.ts --outdir dist --target bun --format esm --bundle --external=effect",
     "build:esbuild": "esbuild src/index.ts --bundle --platform=node --format=esm --target=node20 --outfile=dist/index.js --sourcemap --external:@opencode-ai/plugin --external:zod --external:xstate --external:@xstate/fsm --banner:js=\"import{createRequire as __cr}from'module';import{fileURLToPath as __ftp}from'url';import{dirname as __dn}from'path';const require=__cr(import.meta.url);const __filename=__ftp(import.meta.url);const __dirname=__dn(__filename);\"",
-    "build:bun": "bun build src/index.ts --outdir dist --target bun --format esm --bundle",
+    "build:bun": "bun build src/index.ts --outdir dist --target bun --format esm --bundle --external=effect",
     "test": "npx tsx ../tests/properties.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "0.91.1",
+    "@google/genai": "1.52.0",
     "@opencode-ai/plugin": "^1.16.0",
+    "diff": "8.0.4",
+    "ignore": "7.0.5",
+    "openai": "6.40.0",
+    "partial-json": "0.1.7",
     "peggy": "^4.2.0",
     "sql.js": "^1.14.1",
+    "typebox": "1.3.7",
     "typescript": "^6.0.3",
     "wink-eng-lite-web-model": "^1.8.1",
     "wink-nlp": "^2.4.0",
     "xstate": "^5.32.1",
+    "yaml": "2.9.0",
     "zod": "4.1.8"
   },
   "devDependencies": {

@@ -14,6 +14,16 @@ export type WaveStatus =
 export type AgentState =
   | 'spawned' | 'running' | 'stuck' | 'killed' | 'respawned' | 'complete' | 'failed' | 'paused';   // 'paused' (2026-08-13): the non-destructive hold
 
+// ── THE COMPLETION GATE STATE (COMPLETION_GATE_SPEC §2.3-2.4 — the gate is
+//    the ONLY completion authority for code-class artifacts). The declared
+//    class is computed AT DISPATCH from the spec's filepaths + template —
+//    never re-derived from return text (the guessing that let smoke passes
+//    through). gateState: 'pending' until the gate evaluates; markComplete
+//    REFUSES a pending gate for code classes — the cron's gate-PASS is the
+//    only completion path. ──
+export type DeclaredArtifactClass = 'TYPE_BATTERY' | 'RUNTIME' | 'RUN' | 'DOC' | 'REPORT';
+export type GateState = 'pending' | 'held' | 'passed' | 'exempt';
+
 export type KillReason =
   | 'STUCK_NO_ACTIVITY' | 'PROVIDER_QUOTA' | 'SESSION_CRASH' | 'ORCHESTRATOR_ABORT';
 
@@ -39,6 +49,15 @@ export interface AgentTrack {
   // exactly-once per agent and give the escalation window its anchor.
   kickedAt?: number;                     // when the single steer-kick fired
   kickCount?: number;                    // 0/1 — the kick is never repeated
+  // ── THE COMPLETION GATE FIELDS (COMPLETION_GATE_SPEC) — the mechanical
+  //    enforcement surface. declaredClass is set ONCE at dispatch (from the
+  //    spec's filepaths + template — the known targets, never guessed from
+  //    return text). gateState gates markComplete. gateHolds counts the HOLD
+  //    cycles (2nd insufficient return → markFailed — never an infinite
+  //    loop, never a stranded state). ──
+  declaredClass?: DeclaredArtifactClass; // the dispatch-time artifact class
+  gateState?: GateState;                 // pending → held/passed/exempt
+  gateHolds?: number;                    // the HOLD count (0, 1, then FAILED on 2)
 }
 
 export interface WaveTrack {
@@ -64,6 +83,10 @@ export interface WaveTrack {
   // the first generation solved").
   argSnapshot?: Record<string, number>;   // agent name → the total arg chars
   archiveIndex?: number;                 // the archive slot (the last-10 pruning)
+  // THE OWNER SESSION (2026-08-26 — the RC-5 fixes): the session that fired
+  // the generate. The sleep guard blocks ITS blind sleeps while agents run;
+  // the completion toasts deliver INTO it.
+  ownerSessionId?: string;
 }
 
 export function freshAgentTrack(sessionId: string, now = Date.now()): AgentTrack {
@@ -77,6 +100,55 @@ export function freshAgentTrack(sessionId: string, now = Date.now()): AgentTrack
     lastBytes: 0,
     errorCodes: [],
   };
+}
+
+/** THE DECLARED-CLASS COMPUTATION (COMPLETION_GATE_SPEC §2.2 — at DISPATCH,
+ *  from the spec's template + the KNOWN targets. THE FILEPATHS ARE THE
+ *  READING ORDER (inputs), NOT the write targets — a B-agent that reads an
+ *  .md spec to write .ts code MUST classify TYPE_BATTERY, never DOC. The
+ *  write-target signal comes from the filepaths' code extensions AND the
+ *  mission/taskTargets text (a B-agent whose inputs are docs but whose
+ *  mission names .ts/.html/.py targets is code-class). B-template agents
+ *  can NEVER classify below TYPE_BATTERY on input-shape grounds — only an
+ *  explicit "documentation only" mission narrows to DOC. */
+export function computeDeclaredClass(filepaths: string[], template: string, missionText?: string): DeclaredArtifactClass {
+  const isBuild = template.toUpperCase().startsWith('B');
+  if (!isBuild) return 'REPORT';
+  const ts = filepaths.some((f) => /\.(ts|tsx|js|mjs)$/.test(f));
+  const html = filepaths.some((f) => /\.(html?|htm)$/.test(f));
+  const py = filepaths.some((f) => /\.py$/.test(f));
+  if (ts) return 'TYPE_BATTERY';
+  if (html) return 'RUNTIME';
+  if (py) return 'RUN';
+  // The inputs are docs — but a B-agent's WRITE targets live in its mission
+  // text: scan for code-target extensions there before any exemption.
+  const m = (missionText ?? '');
+  if (/\.(ts|tsx)\b|\btypescript\b|\bsrc\/v?\d|\bmodule\b|\bclass\b|\bfunction\b/i.test(m) && /\b(implement|build|create|write|fix|add|edit|refactor)\b/i.test(m)) return 'TYPE_BATTERY';
+  if (/\.(html?|htm)\b/i.test(m) && /\b(implement|build|create|write)\b/i.test(m)) return 'RUNTIME';
+  if (/\.(py)\b|\bpython\b/i.test(m) && /\b(implement|build|create|write)\b/i.test(m)) return 'RUN';
+  const docOnly = filepaths.length > 0 && filepaths.every((f) => /\.(md|txt|json|ya?ml)$/i.test(f));
+  if (docOnly && /\b(document|readme|docs? only|markdown)\b/i.test(m)) return 'DOC';
+  // B-agent with unresolvable targets → the strictest class (NEVER exempt)
+  return 'TYPE_BATTERY';
+}
+
+/** THE GATE SETTERS — called by the cron's gate router ONLY (the single
+ *  write path to the gate state; markComplete enforces them). */
+export function setGatePassed(wave: string, name: string): void {
+  const agent = TRACKER.get(wave)?.agents[name];
+  if (agent) { agent.gateState = 'passed'; persistWaveRow(TRACKER.get(wave)!); }
+}
+export function setGateHeld(wave: string, name: string): number {
+  const agent = TRACKER.get(wave)?.agents[name];
+  if (!agent) return 0;
+  agent.gateState = 'held';
+  agent.gateHolds = (agent.gateHolds ?? 0) + 1;
+  persistWaveRow(TRACKER.get(wave)!);
+  return agent.gateHolds;
+}
+export function setGateExempt(wave: string, name: string): void {
+  const agent = TRACKER.get(wave)?.agents[name];
+  if (agent) { agent.gateState = 'exempt'; persistWaveRow(TRACKER.get(wave)!); }
 }
 
 // THE ARCHIVE CAP (Part 4.4 — the last 10 completed/aborted waves kept).
@@ -97,6 +169,9 @@ export interface WaveTrackerSurface {
   markPaused(wave: string, name: string): void;   // NEW (2026-08-13): the non-destructive pause
   getWave(wave: string): WaveTrack | undefined;
   getActiveWaves(): WaveTrack[];
+  /** THE OWNER GUARD QUERY (2026-08-26 — the sleep guard): does THIS session
+   *  own a wave with any live agent? True → the session must not blind-sleep. */
+  ownerHasRunningAgents(sessionId: string | undefined | null): boolean;
   archiveWave(wave: string): void;
   getArchive(): WaveTrack[];
   clear(): void;
@@ -362,6 +437,23 @@ export const WaveTracker: WaveTrackerSurface = {
   markComplete(wave, name): void {
     const agent = TRACKER.get(wave)?.agents[name];
     if (!agent) return;
+    // ═══ THE GATE ENFORCEMENT (COMPLETION_GATE_SPEC §2.4 — "markComplete is
+    // NOT called" on a non-passed gate): a code-class agent whose gate has
+    // not PASSED or EXEMPTED cannot complete through ANY path. The cron's
+    // gate-PASS sets gateState='passed' FIRST; every other caller (manual
+    // status calls, legacy paths) hits this throw. The gate is the ONLY
+    // completion authority. ═══
+    if (agent.gateState !== undefined
+      && agent.gateState !== 'passed'
+      && agent.gateState !== 'exempt'
+      && agent.declaredClass !== undefined
+      && agent.declaredClass !== 'DOC'
+      && agent.declaredClass !== 'REPORT') {
+      throw new Error(
+        '[COMPLETION GATE] markComplete REFUSED for ' + wave + '/' + name +
+        ' — gateState=' + agent.gateState + ' declaredClass=' + agent.declaredClass +
+        '. The completion gate has not passed this agent. Route through the gate (the cron tick) or markFailed.');
+    }
     agent.state = 'complete';                   // running → complete
     agent.spawnTimes.completedAt = Date.now();
     agent.lastActivityAt = Date.now();
@@ -374,8 +466,7 @@ export const WaveTracker: WaveTrackerSurface = {
     if (!agent) return;
     agent.state = 'failed';                     // running → failed (the crash)
     agent.lastError = error;
-    const w2 = TRACKER.get(wave);
-    if (w2) persistWaveRow(w2);
+    const w2 = TRACKER.get(wave);    if (w2) persistWaveRow(w2);
   },
 
   markKilled(wave, name, reason): void {
@@ -411,6 +502,18 @@ export const WaveTracker: WaveTrackerSurface = {
   getActiveWaves() {
     return [...TRACKER.values()].filter((w) =>
       w.status === 'running' || w.status === 'checking' || w.status === 'dispatching');
+  },
+
+  ownerHasRunningAgents(sessionId: string | undefined | null): boolean {
+    if (!sessionId || sessionId === 'default') return false;
+    for (const w of TRACKER.values()) {
+      if (w.ownerSessionId !== sessionId) continue;
+      if (w.status === 'running' || w.status === 'dispatching' || w.status === 'checking' || w.status === 'paused') return true;
+      for (const a of Object.values(w.agents)) {
+        if (a.state === 'running' || a.state === 'spawned') return true;
+      }
+    }
+    return false;
   },
 
   getArchive() {

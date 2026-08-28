@@ -1,18 +1,13 @@
-// src/tools/batch-tool.ts — THE PLUGIN-SIDE BATCH TOOL (2026-08-10)
+// src/tools/batch-tool.ts — THE PLUGIN-SIDE BATCH TOOL
 //
-// THE WHY: the runtime 1.14.43's tool registry (/experimental/tool/ids)
-// LACKS the vanilla build's 'batch' tool (016_batch.md:
-// vanilla-source/packages/opencode/src/tool/batch.ts) — the model surface
-// cannot invoke it — the wave manager's batch form falls back to the
-// session loop's SEQUENTIAL per-call execution (the task tool's sync prompt
-// holds the loop until each subagent finishes — the wave's agents ran
-// one-at-a-time, the manifest's startedAt chain proved it). THE FIX: the
-// plugin REGISTERS its own 'batch' tool (the plugin's tools DO appear in the
-// registry) — the 016_batch.md schema (tool_calls array) — the execute runs
-// the task entries IN PARALLEL via the opencode client (session.create +
-// session.promptAsync — the SAME machinery the native task tool uses: the
-// SubtaskPartInput message → the child session). The wave's dispatch becomes
-// a genuine parallel batch.
+// 2026-08-27 — CLIENT-SPAWN IS DEAD (the operator's ruling): every spawn MUST
+// go through extra.taskDispatch (the fork's TaskTool.execute background
+// branch) — that is the ONLY surface that produces the vanilla completion:
+// the live task card + the synthetic "Background task completed" part + the
+// idle wake. The old client.session.create + promptAsync spawn produced a
+// real child with NO card, NO BackgroundJob, NO inject, NO wake — a silently
+// mute agent. That path is FORBIDDEN; this tool now either dispatches via
+// taskDispatch or refuses LOUDLY. No fallback, no fake visibility metadata.
 //
 // THE SECURITY: the wave-verbatim discipline is enforced INSIDE the batch:
 // a task entry whose description matches a wave-manifest agent MUST carry
@@ -27,14 +22,22 @@ import * as path from 'node:path';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tridentLog } from '../utils.js';
-import { loadPromptFileForDispatch, type SpawnCall } from './wave-dispatch.ts';
-import { getOpencodeClient } from './trident-tools.ts';
+import { loadPromptFileForDispatch } from './wave-dispatch.ts';
 import { TRIDENT_TMP_DIR } from './wave-constants.ts';
 
 export interface BatchToolCall {
   tool: string;
   parameters: Record<string, unknown>;
 }
+
+/** The fork's dispatch surface (context.extra.taskDispatch → makeTaskDispatch
+ *  → TaskTool.execute background) — the ONLY sanctioned spawn. */
+export type TaskDispatchSurface = (params: {
+  description: string;
+  prompt: string;
+  subagent_type: string;
+  background?: boolean;
+}) => Promise<{ sessionId: string; partID?: string; callID?: string }>;
 
 /** THE WAVE-MANIFEST SHA VERIFICATION (the batch's [WAVE VERBATIM]): find the
  *  manifest entry for the description + compare the dispatched prompt's SHA.
@@ -56,28 +59,14 @@ export function findManifestSha(desc: string): { sha256: string; lines: number }
   return null;
 }
 
-/** THE PARALLEL TASK SPAWN (the doc's PART 1 — the client's session.create +
- *  promptAsync — the SAME SubtaskPartInput the native task tool uses).
- *  THE VISIBILITY REGISTRATION (2026-08-17 — the [CORRECT SUBAGENT DISPATCH
- *  MECHANICS FOR CUSTOM TOOLS] canon, the phantom-session fix): the native
- *  task tool (task.ts:161-177) calls ctx.metadata({ title, metadata:
- *  { parentSessionId, sessionId, model } }) after the child's creation — THE
- *  TUI RENDERS THE SUBAGENT FROM THIS METADATA. WITHOUT IT, the child exists
- *  in the DB but the parent's message metadata has NO record → the TUI
- *  renders NO subagent → the PHANTOM SESSION. THE FIX: spawnTask gains the
- *  metadataCb (the ToolContext's metadata function) + calls it per child —
- *  the SAME registration the native task tool does. */
-export interface DispatchMetadataInput {
-  title?: string;
-  metadata?: { [key: string]: any };
-}
-export type DispatchMetadataCb = (input: DispatchMetadataInput) => void;
-
+/** THE TASKDISPATCH SPAWN — the ONLY spawn: extra.taskDispatch (TaskTool
+ *  background) → the live card + the completion inject + the idle wake.
+ *  The prompt resolution ([promptFile | prompt | text]) + the [WAVE VERBATIM]
+ *  SHA gate run FIRST; the dispatch is the last step. */
 export async function spawnTask(
-  client: { session: { create(opts: { body: { parentID?: string; title: string } }): Promise<{ data: { id: string } }>; promptAsync(opts: { path: { id: string }; body: SpawnCall['promptBody'] }): Promise<unknown> } },
+  taskDispatch: TaskDispatchSurface,
   mainSessionId: string | null,
   entry: BatchToolCall,
-  metadataCb?: DispatchMetadataCb,
 ): Promise<{ ok: boolean; sessionId?: string; error?: string }> {
   const p = entry.parameters || {};
   const description = typeof p.description === 'string' ? p.description : 'agent';
@@ -103,61 +92,18 @@ export async function spawnTask(
       return { ok: false, error: '[WAVE VERBATIM] the dispatched prompt for \"' + description + '\" is NOT the exact generated prompt — the SHA mismatch (compressed/condensed). DISPATCH THE BATCH FORM\'S PROMPT VERBATIM — 0 ignore, 0 condensation.' };
     }
   }
-  // THE SPAWN (the child session + the subtask message):
+  // THE SPAWN — taskDispatch ONLY (TaskTool.execute background → card +
+  // inject + wake). parent lineage rides the dispatching context
+  // (ctx.sessionID inside the fork), never a manual create.
   try {
-    const created = await client.session.create({
-      body: mainSessionId ? { parentID: mainSessionId, title: description } : { title: description },
+    const dr = await taskDispatch({
+      description,
+      prompt: promptText,
+      subagent_type: subagentType,
+      background: true,
     });
-    const childId = created.data.id;
-    await client.session.promptAsync({
-      path: { id: childId },
-      body: {
-        agent: subagentType,
-        // THE LEAF-NODE TOOL SURFACE (2026-08-17 — the [CORRECT SUBAGENT
-        // DISPATCH MECHANICS] canon, the REAL root cause of the
-        // [TRIDENT LEAF NODE] block): the native task tool (task.ts:196) runs
-        // the child with `tools: { task: false, todowrite: false, ... }` —
-        // the leaf-node's restricted surface. THE DIRECT session.create spawn
-        // OMITTED this → the child COULD see + call the task tool → the
-        // plugin's leaf-node gate (trident-hooks.ts:1683-1702) blocked it with
-        // [TRIDENT LEAF NODE]. THE FIX: the child's promptAsync body carries
-        // the SAME tools restriction the native path does — the child is a
-        // leaf node that executes + returns, it NEVER dispatches.
-        tools: { task: false, todowrite: false },
-        parts: [{
-          type: 'subtask',
-          prompt: promptText,
-          description: description,
-          agent: subagentType,
-        }],
-      },
-    });
-    // THE VISIBILITY REGISTRATION (2026-08-17 — the phantom-session fix, the
-    // [CORRECT SUBAGENT DISPATCH MECHANICS FOR CUSTOM TOOLS] canon): the
-    // native task tool's ctx.metadata({ title, metadata: { parentSessionId,
-    // sessionId, model } }) — THE TUI RENDERS THE SUBAGENT FROM THIS
-    // METADATA. The metadataCb is the ToolContext's metadata function passed
-    // by the caller (the batch tool / the machine-dispatch) — the child's
-    // session id is registered in the PARENT's message metadata so the TUI
-    // shows it inline in the parent stream. WITHOUT THIS, THE CHILD IS A
-    // PHANTOM (exists in the DB, invisible in the TUI).
-    if (typeof metadataCb === 'function') {
-      try {
-        metadataCb({
-          title: description,
-          metadata: {
-            parentSessionId: mainSessionId,
-            sessionId: childId,
-            background: true,
-          },
-        });
-        tridentLog('INFO', 'batch-tool', 'VISIBILITY-REGISTERED ' + description + ' → ' + childId + ' in parent ' + (mainSessionId ?? 'root') + ' (the ctx.metadata registration — the TUI renders the subagent)');
-      } catch (metaErr) {
-        tridentLog('WARN', 'batch-tool', 'the visibility registration failed (non-fatal — the child still spawned): ' + (metaErr instanceof Error ? metaErr.message : String(metaErr)));
-      }
-    }
-    tridentLog('INFO', 'batch-tool', 'spawned ' + description + ' → ' + childId + ' (parent ' + (mainSessionId ?? 'root') + ')');
-    return { ok: true, sessionId: childId };
+    tridentLog('INFO', 'batch-tool', 'TASKDISPATCHED ' + description + ' → ' + dr.sessionId + ' (parent ' + (mainSessionId ?? 'ctx') + ' — the fork surface: card + inject + wake)');
+    return { ok: true, sessionId: dr.sessionId };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
@@ -165,22 +111,21 @@ export async function spawnTask(
 
 export function createBatchTool() {
   return tool({
-    description: 'Execute multiple tool calls concurrently — THE PARALLEL BATCH (016_batch.md). The tool_calls array (min 1, max 25): each entry {tool, parameters}. The task entries spawn their subagents IN PARALLEL (the child sessions via the client — the wave manager\'s batch form dispatches through this). The non-task entries are refused with the named error (the plugin-side batch executes the task/spawn surface). Returns the batch summary: {title: "Batch execution (N/M successful)", output}. THE WAVE-VERBATIM ENFORCEMENT: a task entry whose description matches a wave-manifest agent must carry the exact generated prompt — the promptFile channel + the SHA verification — a condensed prompt is BLOCKED.',
+    description: 'Execute multiple tool calls concurrently — THE PARALLEL BATCH (016_batch.md). The tool_calls array (min 1, max 25): each entry {tool, parameters}. The task entries dispatch their subagents IN PARALLEL via extra.taskDispatch (the fork TaskTool background surface — the live card + the vanilla "Background task completed" inject + the idle wake). THE CLIENT-SPAWN PATH IS FORBIDDEN AND DEAD. The non-task entries are refused with the named error. THE WAVE-VERBATIM ENFORCEMENT: a task entry whose description matches a wave-manifest agent must carry the exact generated prompt — the promptFile channel + the SHA verification — a condensed prompt is BLOCKED.',
     args: {
       tool_calls: z.array(z.object({
         tool: z.string().describe('The tool to execute — "task" for the subagent spawns'),
         parameters: z.record(z.string(), z.any()).describe('The tool parameters: description, subagent_type, promptFile (or prompt), etc.'),
       })).min(1).max(25).describe('The array of tool calls to execute in parallel (max 25)'),
     },
-    execute: async (args: { tool_calls: BatchToolCall[] }, context?: { sessionID?: string; metadata?: DispatchMetadataCb }) => {
+    execute: async (args: { tool_calls: BatchToolCall[] }, context?: { sessionID?: string; extra?: { taskDispatch?: TaskDispatchSurface } }) => {
       const mainSessionId = (context && typeof context.sessionID === 'string' && context.sessionID) || null;
-      const metadataCb = (context && typeof context.metadata === 'function') ? context.metadata : undefined;
-      const client = getOpencodeClient();
-      if (!client || typeof client.session !== 'object' || typeof client.session.create !== 'function' || typeof client.session.promptAsync !== 'function') {
-        throw new Error('[BATCH TOOL] the opencode client is unavailable — the batch spawns require the session.create + promptAsync surface');
+      const taskDispatch = context?.extra?.taskDispatch;
+      if (typeof taskDispatch !== 'function') {
+        throw new Error('[BATCH TOOL] LOUD FAIL — context.extra.taskDispatch is missing: this runtime has NO dispatch surface. Client-spawn (session.create + promptAsync) is FORBIDDEN AND DELETED (no card, no completion inject, no wake). Run on the fork runtime or do not spawn.');
       }
       // THE PARALLEL EXECUTION (allSettled — the per-unit failure capture, the wave survives the stragglers):
-      const results = await Promise.allSettled((args.tool_calls || []).map((entry) => spawnTask(client, mainSessionId, entry, metadataCb)));
+      const results = await Promise.allSettled((args.tool_calls || []).map((entry) => spawnTask(taskDispatch, mainSessionId, entry)));
       const details: Array<{ status: string; sessionId?: string; error?: string }> = [];
       let ok = 0;
       for (const r of results) {
@@ -194,7 +139,7 @@ export function createBatchTool() {
       const total = (args.tool_calls || []).length;
       const summary = {
         title: 'Batch execution (' + ok + '/' + total + ' successful)',
-        output: 'The batch spawned ' + ok + '/' + total + ' agents in parallel (parent ' + (mainSessionId ?? 'root') + '). Per-call: ' + JSON.stringify(details),
+        output: 'The batch dispatched ' + ok + '/' + total + ' agents in parallel via taskDispatch (parent ' + (mainSessionId ?? 'ctx') + '). Per-call: ' + JSON.stringify(details),
         metadata: { totalCalls: total, successful: ok, failed: total - ok, tools: (args.tool_calls || []).map((c) => c.tool) },
       };
       return summary;

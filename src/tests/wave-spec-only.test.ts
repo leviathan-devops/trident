@@ -219,10 +219,15 @@ describe('wave-spec-only — the action inference v2', () => {
     fs.writeFileSync(path.join(box, '.trident', 'wave-plan.md'), 'WAVES: 1\n# inference probe plan\n');
     const exec = getExecute();
     // planningNote latches the planning gate ACTIVE for this session id.
+    // projectToken: the MANDATORY scope root (2026-08-26) — the sandbox box.
     let out = '';
     try {
-      await exec({ planningNote: 'spec-only inference probe: 1 agent E1 extracting spec mechanics' },
-        { sessionID: 'sess-infer-b1', extra: {} });
+      // extra.taskDispatch stub (2026-08-28): the dispatch-surface gate throws
+      // LOUD before generate when the runtime lacks the fork surface — this
+      // probe tests ACTION INFERENCE + the template refusal, so the stub
+      // satisfies the gate and lets generate reach the spec branch.
+      await exec({ planningNote: 'spec-only inference probe: 1 agent E1 extracting spec mechanics', projectToken: box },
+        { sessionID: 'sess-infer-b1', extra: { taskDispatch: (async () => { throw new Error('stub — never reached in this probe') }) as never } });
     } catch (e) { out = e instanceof Error ? e.message : String(e); }
     // generate RAN (no action-mandatory refusal) and hit the spec-file refusal:
     expect(out).toContain('WAVE SPEC TEMPLATE created at');

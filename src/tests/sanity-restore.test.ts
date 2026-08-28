@@ -13,7 +13,9 @@ import * as path from 'node:path';
 import { PI_MAX_ROUNDS } from '../tools/shadow/shadow-runner.ts';
 import { EXILE_MS } from '../tools/shadow/rpm-ledger.ts';
 
-const SRC = path.join(process.cwd(), 'src', 'tools');
+// CWD-INDEPENDENT (2026-08-28 — the drift fix): resolve from THIS file's location —
+// the battery runs from either the project root or src/; process.cwd() broke one of them.
+const SRC = path.join(__dirname, '..', 'tools');
 const SHADOW_DIR = path.join(SRC, 'shadow');
 const readSrc = (f: string) => fs.readFileSync(path.join(SHADOW_DIR, f), 'utf-8');
 
@@ -56,7 +58,7 @@ describe('THE SETTLED ARCHITECTURE — source-invariant pins', () => {
 
   test('WATCHDOG: terminal-guard + exactly-once kick exist in the cron', () => {
     const cron = fs.readFileSync(path.join(SRC, 'wave-cron.ts'), 'utf-8');
-    expect(cron).toContain('TERMINAL:');
+    expect(cron).toContain('TERMINAL(quieted)');
     expect(cron).toContain('KICKED (1/1)');
     expect(cron).toMatch(/agent\.kickCount = \(agent\.kickCount \?\? 0\) \+ 1;/);
     const tracker = fs.readFileSync(path.join(SRC, 'wave-tracker.ts'), 'utf-8');
@@ -83,7 +85,7 @@ describe('THE INFERENCE-CONTENT GATE', () => {
   // validateFinalText is module-private — exercise it through the exported
   // surface that consumes it: re-read the source to assert the gate exists,
   // and test the tail-extraction logic shape via the same regex contract.
-  const agentSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'tools', 'shadow', 'shadow-agent.ts'), 'utf-8');
+  const agentSrc = fs.readFileSync(path.join(__dirname, '..', 'tools', 'shadow', 'shadow-agent.ts'), 'utf-8');
 
   test('the gate exists: content required after the LAST marker, ≥100c', () => {
     expect(agentSrc).toContain("text.lastIndexOf('[SHADOW INFERENCE]')");
@@ -111,7 +113,7 @@ describe('THE INFERENCE-CONTENT GATE', () => {
   });
 
   test('the W4 demand states the bar so R1 complies', () => {
-    const runnerSrc = fs.readFileSync(path.join(process.cwd(), 'src', 'tools', 'shadow', 'shadow-runner.ts'), 'utf-8');
+    const runnerSrc = fs.readFileSync(path.join(__dirname, '..', 'tools', 'shadow', 'shadow-runner.ts'), 'utf-8');
     expect((runnerSrc.match(/bare marker FAILS validation/g) ?? []).length).toBe(2);
   });
 });
@@ -124,7 +126,7 @@ describe('THE INFERENCE-CONTENT GATE', () => {
 
 describe('THE SESSION-AUTO-SCOPE (no single global .trident)', () => {
   test('the resolver exists and derives the codebase root, never a hardcode', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'tools', 'wave-dispatch.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'tools', 'wave-dispatch.ts'), 'utf-8');
     expect(src).toContain('function resolveScopeRoot');
     expect(src).toContain('scoreProjectRoots');
     expect(src).toContain("'package.json'");
@@ -133,7 +135,7 @@ describe('THE SESSION-AUTO-SCOPE (no single global .trident)', () => {
   });
 
   test('source: every sidecar now derives from scopeRoot, not process.cwd()', () => {
-    const src = fs.readFileSync(path.join(process.cwd(), 'src', 'tools', 'wave-dispatch.ts'), 'utf-8');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'tools', 'wave-dispatch.ts'), 'utf-8');
     // reset + budget-tick + plan check all thread scopeRoot:
     expect(src).toContain('resetToTemplate(scopeRoot)');
     expect(src).toContain("path.join(scopeRoot, '.trident', 'wave-plan.md')");

@@ -12,7 +12,9 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
-  buildSpawnCall, resolveSubagentType, generateWave, normalizeAgents,
+  // buildSpawnCall DELETED (2026-08-27 — client-spawn is forbidden; taskDispatch-only)
+  resolveSubagentType, generateWave, normalizeAgents,
+
   type WaveDispatchClient,
 } from '../tools/wave-dispatch.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
@@ -55,23 +57,13 @@ function generatorFor(prompt: string) {
 }
 
 describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
-  test('the subtask part shape: { type:"subtask", prompt, description, agent }', () => {
-    const call = buildSpawnCall({ name: 'agent-1', template: 'E1' }, 'main-sess', 'THE PROMPT TEXT');
-    expect(call.promptBody.parts).toHaveLength(1);
-    const part = call.promptBody.parts[0];
-    expect(part.type).toBe('subtask');
-    expect(part.prompt).toBe('THE PROMPT TEXT');
-    expect(part.description).toBe('agent-1');
-    expect(part.agent).toBe('trident_explore');
-  });
+  // buildSpawnCall DELETED (2026-08-27): client-spawn (session.create +
+  // promptAsync) is the FORBIDDEN path — no TaskTool, no card, no completion
+  // inject, no wake. Spawns route through extra.taskDispatch ONLY.
 
   test('the B-templates resolve to trident_build (the shared rule)', () => {
     expect(resolveSubagentType('B3')).toBe('trident_build');
     expect(resolveSubagentType('E1')).toBe('trident_explore');
-    const call = buildSpawnCall({ name: 'builder', template: 'B1' }, 'main', 'p');
-    expect(call.type).toBe('trident_build');
-    expect(call.promptBody.agent).toBe('trident_build');
-    expect(call.promptBody.parts[0].agent).toBe('trident_build');
   });
 
   test('THE GENERATOR-ONLY BASELINE: the prompts written to the tmp + the batch form carries the EXACT content (0 ignore)', async () => {
@@ -114,16 +106,7 @@ describe('wave-spawn — the spawn-arg construction (Part 3)', () => {
     expect('prompt' in makeValidAgent('file-src')).toBe(false);
   });
 
-  test('the B-templates resolve to trident_build (the shared rule)', () => {
-    const call = buildSpawnCall({ name: 'b-agent', template: 'B2' }, 'main', 'p');
-    expect(call.type).toBe('trident_build');
-  });
-
-  test('the rootless fallback when the main session ID is absent', () => {
-    const call = buildSpawnCall({ name: 'rootless', template: 'E2' }, null, 'p');
-    expect(call.createBody.parentID).toBeUndefined();
-    expect(call.createBody.title).toBe('rootless');
-  });
+  // buildSpawnCall rootless-fallback test DELETED (2026-08-27 — with the test above).
 
   test('THE BASELINE: the generator produces the batch form for ALL agents (no direct spawns)', async () => {
     sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'wave-spawn-'));

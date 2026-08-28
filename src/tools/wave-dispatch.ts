@@ -17,13 +17,16 @@ import { createHash } from 'node:crypto';
 import { tridentLog } from '../utils.js';
 import { runShadowPipeline } from './shadow/shadow-runner.ts';
 import { RpmLedger } from './shadow/rpm-ledger.ts';
+// THE SHADOW CAPTURE (2026-08-26 — the operator: "/export-level detail per
+// shadow agent, EVERYTHING VISIBLE"): begin/emit/end around runOne.
+import { beginCapture, captureEvent, endCapture } from './shadow/capture.ts';
 import { checkWavePlanning, recordWaveServed } from './wave-planning-gate.ts';
 import { coerceContextValue, validateWaveCount } from './wave-pipeline.ts';
 import { ensureSpecFile, validateSpecFile, formatDiagnostics, resetToTemplate, WAVE_SPEC_RELATIVE_PATH } from './wave-spec.ts';
 import type { TetheredSession } from './shadow/shadow-sidecar.ts';
 import { validateAgentSpec, type AgentSpec } from './trident-task-preflight.ts';
 import { validateTaskPromptLines } from './trident-preflight.ts';
-import { WaveTracker, type WaveStatus } from './wave-tracker.ts';
+import { WaveTracker, computeDeclaredClass, type WaveStatus } from './wave-tracker.ts';
 import { getOpencodeClient } from './trident-tools.ts';
 import {
   TRIDENT_TMP_DIR, resolveTmpDir,
@@ -124,27 +127,12 @@ export interface SpawnCall {
   promptBody: { agent: string; parts: SubtaskPartShape[]; tools?: Record<string, boolean> };
 }
 
-/** THE SPAWN-CALL CONSTRUCTION (Part 3.2) — the create (parentID) + the
- *  promptAsync (the subtask part). The prompt comes from the FILE's content
- *  (never the args). The parentID is omitted when the main session ID is
- *  unavailable (the rootless fallback). */
-export function buildSpawnCall(
-  spec: { name: string; template: string },
-  mainSessionId: string | null,
-  promptText: string,
-): SpawnCall {
-  const type = resolveSubagentType(spec.template);
-  const createBody: SpawnCreateBody = mainSessionId
-    ? { parentID: mainSessionId, title: spec.name }
-    : { title: spec.name };
-  const part: SubtaskPartShape = {
-    type: 'subtask',
-    prompt: promptText,                   // THE FILE'S FULL CONTENT — verbatim
-    description: spec.name,
-    agent: type,
-  };
-  return { name: spec.name, type, createBody, promptBody: { agent: type, parts: [part] } };
-}
+// 2026-08-27 — buildSpawnCall DELETED (the operator's ruling): the client-
+// spawn constructor (session.create + promptAsync) is the FORBIDDEN path —
+// no TaskTool, no card, no completion inject, no wake. Every spawn routes
+// through extra.taskDispatch (the fork's TaskTool.execute background
+// branch) or dies loudly. The batch-tool's spawnTask now takes the
+// taskDispatch surface directly.
 
 // THE SPAWN CLIENT SURFACE (the live client's session.create + promptAsync):
 export interface WaveDispatchClient {
@@ -182,7 +170,7 @@ export type PromptGenerator = (spec: AgentSpec) => Promise<PromptGeneratorResult
 // generation error). The loud-fail law demands the REAL named error: the
 // manifest's ready:false + error fields are checked BEFORE any file read, and
 // the real error is thrown.)
-async function shadowGenerate(spec: AgentSpec, tmpDir: string, options?: { tether?: TetheredSession; ledger?: RpmLedger }): Promise<PromptGeneratorResult> {
+async function shadowGenerate(spec: AgentSpec, tmpDir: string, options?: { tether?: TetheredSession; ledger?: RpmLedger; captureKey?: string }): Promise<PromptGeneratorResult> {
   // THE PER-AGENT TETHER (2026-08-21 — the operator: "EACH SHADOW AGENT IS ITS
   // OWN FUCKING SESSION/PID IN PI. 4 SEPARATE SESSIONS. NO THEATRICAL ASYNC."):
   // the tether is now passed IN from runOne — each agent carries its OWN
@@ -193,7 +181,7 @@ async function shadowGenerate(spec: AgentSpec, tmpDir: string, options?: { tethe
   // THE LEDGER (2026-08-21 — the operator's hybrid) rides the same options:
   // ONE shared RpmLedger per wave → every ShadowAgent's chainedStream admits/
   // exiles providers on the WHOLE WAVE's observations, not its own.
-  const manifestStr = await runShadowPipeline(spec, undefined, { outDir: tmpDir, tether: options?.tether, ledger: options?.ledger });
+  const manifestStr = await runShadowPipeline(spec, undefined, { outDir: tmpDir, tether: options?.tether, ledger: options?.ledger, captureKey: options?.captureKey });
   const parsed = JSON.parse(manifestStr) as { agents?: Array<{ path?: string; notes?: string[]; ready?: boolean; error?: string; validated?: boolean }> };
   const agent = parsed.agents && parsed.agents.length > 0 ? parsed.agents[0] : null;
   if (!agent || !agent.path) {
@@ -238,7 +226,7 @@ export function buildCheckInText(waveId: string, count: number, etaMs: number): 
   // via extra.taskDispatch, no manual batch-form pasting, no path-string
   // transcription. The generation is ALWAYS background; the orchestrator polls
   // the SESSION STREAM (trident-wave-read), never task_status.)
-  return 'WAVE ' + waveId + ' (' + count + ' agents) READY — DISPATCH via trident-wave-manager action=dispatch waveId=' + waveId + ' (THE ONLY SUBAGENT DISPATCH PATH). Do NOT paste the batch form and do NOT use the raw task tool — the dispatch tool reads the generated prompt files and spawns the subagents itself. Track it via trident-wave-manager action=status waveId=' + waveId + ' (or trident-wave-read sessionId) — the full per-agent state + the session stream is retrieved on demand (never stored in context).';
+  return 'WAVE ' + waveId + ' (' + count + ' agents) READY — DISPATCH via trident-wave-manager action=dispatch waveId=' + waveId + ' (THE ONLY SUBAGENT DISPATCH PATH). Do NOT paste the batch form and do NOT use the raw task tool — the dispatch tool reads the generated prompt files and spawns the subagents itself. Track it via trident-wave-manager action=status waveId=' + waveId + ' (or trident-wave-read sessionId) — the full per-agent state + the session stream is retrieved on demand (never stored in context). ORCHESTRATION CONTRACT: NEVER RETURN OR STOP EXECUTING COMMANDS UNTIL THE FULL WAVE PLAN IS COMPLETED — a return before the wave plan is complete is how the loop dies and hours are wasted; if you have nothing to do, cycle poll trident-wave-manager action=status waveId=' + waveId + ' (compact summaries) with short pauses (sleep 45 is acceptable between polls) — DO NOT RETURN. If an agent shows idle/stalled, kick it with action=steer sessionId=<id> mode=soft. Task-completion toasts arrive into your session automatically as agents finish. NEVER blind-sleep past one poll interval while your agents run.';
 }
 
 // THE NORMALIZATION (the front-end freeze — the flat single-agent args are a
@@ -617,6 +605,15 @@ export async function generateWave(
   const runOne = async (spec: AgentSpec): Promise<void> => {
     const startedAt = new Date().toISOString();
     const t0 = Date.now();
+    // THE FULL-SESSION CAPTURE (2026-08-26): one .md per agent under the
+    // capture root — /export-level (every LLM call, every round, every tool
+    // call + result, the dispatch columns). ALWAYS on (the injected-generator
+    // tests exercise + verify the runOne-tier rows; the real path adds the
+    // agent-tier transcripts). Tests point TRIDENT_SHADOW_CAPTURE_DIR at a
+    // sandbox; production defaults to /tmp/trident-shadow-captures.
+    const capKey = waveId + '-' + spec.name;
+    beginCapture(capKey, waveId, spec.name);
+    captureEvent(capKey, 'RUN_START', { name: spec.name, template: spec.template, filepaths: spec.filepaths, argChars: { mission: (spec.mission || '').length, knownContext: (spec.knownContext || '').length, doctrine: (spec.doctrine || '').length, measurements: (spec.measurements || '').length, acceptance: (spec.acceptance || '').length, taskTargets: (spec.taskTargets || '').length, position: (spec.position || '').length } });
     let result: PromptGeneratorResult;
     try {
       result = generator
@@ -641,10 +638,12 @@ export async function generateWave(
               pid: process.pid,                              // same process, DIFFERENT session
             },
             ledger: waveLedger,
+            captureKey: capKey,
           });
     } catch (genErr) {
       const msg = genErr instanceof Error ? genErr.message : String(genErr);
       tridentLog('WARN', 'wave-dispatch', 'generation failed for ' + spec.name + ': ' + msg);
+      if (capKey) endCapture(capKey, 'RUNONE_END', { outcome: 'GEN_THROW', error: msg.slice(0, 300), durMs: Date.now() - t0 });
       try {
         fs.writeFileSync(path.join(tmpDir, 'ERROR-' + spec.name + '.txt'), msg, 'utf-8');
       } catch (wErr) {
@@ -658,11 +657,15 @@ export async function generateWave(
       return;
     }
     const filePath = path.join(tmpDir, spec.name + '.md');
+    if (capKey) {
+      captureEvent(capKey, 'GENERATION_END', { durMs: Date.now() - t0, lines: result.prompt.split('\n').length, sha256: createHash('sha256').update(result.prompt).digest('hex'), notes: (result.notes ?? []).join(' | ').slice(0, 300) });
+    }
     try {
       fs.writeFileSync(filePath, result.prompt, 'utf-8');
     } catch (wErr) {
       const msg = 'the tmp write failed for ' + spec.name + ': ' + (wErr instanceof Error ? wErr.message : String(wErr));
       tridentLog('ERROR', 'wave-dispatch', msg);
+      if (capKey) endCapture(capKey, 'RUNONE_END', { outcome: 'TMP_WRITE_FAIL', error: msg.slice(0, 300) });
       generationFailures.push({ name: spec.name, error: msg, startedAt, durationMs: Date.now() - t0 });
       return;
     }
@@ -678,15 +681,23 @@ export async function generateWave(
       try {
         const content = fs.readFileSync(filePath, 'utf-8');
         const v = validateTaskPromptLines(content);
+        if (capKey) captureEvent(capKey, 'DPL1', { passed: v.passed, reasons: (v.lines ?? []).join(' | ').slice(0, 300) });
         if (!v.passed) {
           tridentLog('WARN', 'wave-dispatch', 'auto-dispatch skipped for ' + spec.name + ': DPL1 validation failed — ' + v.lines.join(' | '));
+          if (capKey) endCapture(capKey, 'RUNONE_END', { outcome: 'DPL1_FAIL', reasons: v.lines.join(' | ').slice(0, 300) });
         } else {
+          // THE RC-2 COLUMNS — the dispatch-call/return timestamps (read against
+          // the subagents' task completions to adjudicate the linkage question).
+          const dispT0 = Date.now();
+          if (capKey) captureEvent(capKey, 'TASKDISPATCH_CALL', { t0: dispT0, subagentType: resolveSubagentType(spec.template) });
           const dr = await opts.taskDispatch({
             description: spec.name,
             prompt: content,
             subagent_type: resolveSubagentType(spec.template),
             background: true,
           });
+          const dispT1 = Date.now();
+          if (capKey) captureEvent(capKey, 'TASKDISPATCH_RETURN', { t1: dispT1, awaitMs: dispT1 - dispT0, sessionId: dr.sessionId });
           autoSessionIds[spec.name] = dr.sessionId;   // propagated to the result + check-in
           tridentLog('INFO', 'wave-dispatch', 'AUTO-DISPATCHED ' + spec.name + ' → sessionId=' + dr.sessionId);
         }
@@ -694,6 +705,7 @@ export async function generateWave(
         tridentLog('ERROR', 'wave-dispatch', 'auto-dispatch failed for ' + spec.name + ': ' + (dErr instanceof Error ? dErr.message : String(dErr)));
       }
     }
+    if (capKey) endCapture(capKey, 'RUNONE_END', { outcome: 'OK', durMs: Date.now() - t0, dispatched: Boolean(autoSessionIds[spec.name]) });
   };
   // THE BOUNDED POOL: the specs process in slices of CONCURRENT_GENERATIONS;
   // the per-slice allSettled keeps the per-unit failure capture (the runs
@@ -743,14 +755,20 @@ export async function generateWave(
     }
     console.error('[wave-dispatch] RETRY PASS — ' + failedSpecs.length + ' failed agent(s) re-running after cool-down');
     await new Promise((r) => setTimeout(r, opts?.retryPassMs ?? 30_000));
-    for (const spec of failedSpecs) {
+    // CONCURRENT (2026-08-26 — the operator: "literally everything in this
+    // tool should be batch async. the only sequential pipeline is in the
+    // individual shadow agent polishing workflow"): the retry pass re-runs
+    // every failed agent IN PARALLEL — the old serial for-await stacked the
+    // generation walls one after another. Per-agent failure capture unchanged
+    // (runOne lands failures in generationFailures; this catch is the net).
+    await Promise.allSettled(failedSpecs.map(async (spec) => {
       try {
         await runOne(spec);
       } catch (reason) {
         const msg = reason instanceof Error ? reason.message : String(reason);
         tridentLog('ERROR', 'wave-dispatch', 'RETRY also failed for ' + spec.name + ': ' + msg);
       }
-    }
+    }));
     console.error('[wave-dispatch] RETRY PASS complete — ' + generated.length + '/' + specs.length + ' agents ready');
   }
   // THE LEDGER WAVE SUMMARY (the observability feed — the operator: "where are
@@ -899,6 +917,10 @@ export async function generateWave(
       wave: waveId,
       alias: requestedAlias || undefined,
       projectToken: typeof args.projectToken === 'string' && args.projectToken.trim().length > 0 ? args.projectToken.trim() : undefined,
+      // THE OWNER SESSION (2026-08-26 — the sleep guard + the completion
+      // toasts): the session that fired the generate — the one that must
+      // NEVER blind-sleep while its agents run, and the toast target.
+      ownerSessionId: mainSessionId ?? undefined,
       names: specs.map((s) => s.name),
       sessionIds: dispatched.map((d) => d.sessionId),
       dispatchedAt: Date.now(),
@@ -914,16 +936,22 @@ export async function generateWave(
       })),
       agents: Object.fromEntries(specs.map((s) => {
         const d = dispatched.find((x) => x.name === s.name);
+        // THE DECLARED CLASS AT DISPATCH (COMPLETION_GATE_SPEC §2.2): the
+        // artifact class from the spec's KNOWN targets + template — set once
+        // here, never re-derived from return text. The gate reads THIS.
+        const declaredClass = computeDeclaredClass(s.filepaths ?? [], s.template, (s.mission ?? '') + ' ' + (s.taskTargets ?? '') + ' ' + (s.acceptance ?? ''));
         return [s.name, d ? {
           sessionIds: [d.sessionId], state: 'running' as const,
           respawnCount: 0, lastKillReason: null,
           spawnTimes: { spawnedAt: Date.now() },
           lastActivityAt: Date.now(), lastBytes: 0, errorCodes: [],
+          declaredClass, gateState: 'pending' as const, gateHolds: 0,
         } : {
           sessionIds: [], state: 'failed' as const,
           respawnCount: 0, lastKillReason: null,
           spawnTimes: { spawnedAt: Date.now() },
           lastActivityAt: null, lastBytes: 0, errorCodes: [],
+          declaredClass, gateState: 'exempt' as const, gateHolds: 0,
         }];
       })),
     };
@@ -949,6 +977,7 @@ export async function generateWave(
       + '. Track via trident-wave-manager action=status waveId=' + waveId
       + (generated.length - Object.keys(autoSessionIds).length > 0
         ? '. NOT dispatched: ' + dispatched.filter((d) => !d.sessionId).map((d) => d.name).join(', ') + '.' : '.')
+      + ' ORCHESTRATION CONTRACT: NEVER RETURN OR STOP EXECUTING COMMANDS UNTIL THE FULL WAVE PLAN IS COMPLETED — a return before the wave plan is complete is how the loop dies and hours are wasted; if you have nothing to do, cycle poll trident-wave-manager action=status waveId=' + waveId + ' (compact summaries) with short pauses (sleep 45 is acceptable between polls) — DO NOT RETURN. If an agent shows idle/stalled, kick it with action=steer sessionId=<id> mode=soft. Completion notifications arrive automatically: the runtime injects "Background task completed" into your session when an agent finishes (the wake fires once your session is idle) and the cron reminders ride your tool results — poll for STALLS, not for completion.'
     : buildCheckInText(waveId, dispatched.length, etaPlaceholderMs);
   // THE BUDGET TICK (2026-08-23 — v3 semantics, the operator: "waves should
   // not be consumed until the agents are actually dispatched"): consumed HERE
@@ -1342,12 +1371,16 @@ export function createWaveManagerTool() {
         }
       }
       const action = args.action as string;
-      // THE MODE-SPILLOVER GATE (steer is the ONLY soft/hard action):
-      // generate/pause/kill/resume/status/dispatch have NO mode — their
-      // targeting is all-vs-session. A mode on a non-steer call is spillover
-      // from the steer surface; block it loudly so the caller re-fires clean.
+      // THE MODE-SPILLOVER STRIP (2026-08-26 — the operator: "why is mode even
+      // still able to be passed on any action that isn't steer? this is
+      // silly"): a mode on a non-steer call is spillover from the steer
+      // surface — it used to BLOCK the whole call + demand a re-fire. Now it
+      // is STRIPPED with a note in the output: the call executes, the note
+      // names the ignored param. Steer itself still REQUIRES its mode.
+      let modeStripped = false;
       if (args.mode !== undefined && action !== 'steer') {
-        throw new Error('[MODE] mode="' + args.mode + '" is STEER-ONLY — this call is action=' + action + ' which has NO mode (generate/pause/kill/resume target by waveId/sessionId/taskIds, never soft/hard). Re-fire action=' + action + ' WITHOUT the mode parameter.');
+        modeStripped = true;
+        args = { ...args, mode: undefined };
       }
 
       if (action === 'dispatch') {
@@ -1515,6 +1548,19 @@ export function createWaveManagerTool() {
       // budget; the tick happens ONLY in generateWave when agents
       // actually dispatch. A refused call burns ZERO waves.)
       if (action === 'generate') {
+        // ═══ THE MANDATORY SCOPE TOKEN (2026-08-26 — the live cross-project
+        // bleed: a generate resolved its spec from the WORKSPACE ROOT, where
+        // ANOTHER project's spec sat — the wave fired the wrong agents. The
+        // operator: "I NEVER WANT TO SEE THIS BULLSHIT OF OTHER PROJECTS
+        // CONTEXT SPILLING OVER AGAIN. THIS IS NOT ALLOWED." Auto-detection
+        // from session file activity is GUESSWORK under concurrent sessions;
+        // the explicit root is now REQUIRED — the spec, the plan, the budget,
+        // and the state all resolve under it. No token, no generate. ═══
+        const scopeTok = typeof args.projectToken === 'string' ? args.projectToken.trim() : '';
+        if (scopeTok.length === 0 || !fs.existsSync(scopeTok)) {
+          throw new Error(
+            '[WAVE SCOPE] projectToken is MANDATORY on generate — pass projectToken="<the ABSOLUTE project root this wave builds>" (the dir containing .trident/). Auto-detected scopes caused cross-project spec bleed under concurrent sessions; the explicit root is now mechanically required. The spec read is ' + '<projectToken>/.trident/wave-spec.json.');
+        }
         // THE SESSION-SCOPED CHECK (2026-08-24): resolves the plan + state
         // under the session's codebase root — a concurrent session never
         // sees another session's plan file. Non-session callers fall back to
@@ -1524,12 +1570,23 @@ export function createWaveManagerTool() {
           path.join(scRoot, '.trident', 'wave-planning-state.json'),
           path.join(scRoot, '.trident', 'wave-plan.md'));
       }
-      const result = await generateWave(args, mainSessionId, {
-        taskDispatch: context?.extra?.taskDispatch,
-      });
+        // THE DISPATCH-SURFACE GATE (2026-08-27 — the operator's ruling):
+        // auto-dispatch MUST go through extra.taskDispatch (the fork's
+        // TaskTool.execute background branch — the ONLY surface with the
+        // card + the completion inject + the idle wake). NO taskDispatch =
+        // LOUD THROW — never a silent skip (a phantom wave), never a
+        // client-spawn fallback (a mute agent).
+        if (typeof context?.extra?.taskDispatch !== 'function') {
+          throw new Error('[WAVE DISPATCH] LOUD FAIL — context.extra.taskDispatch is missing: this runtime has NO dispatch surface. Auto-dispatch requires the fork taskDispatch (TaskTool.execute background → the live card + the completion inject + the idle wake). Generating here would create a PHANTOM WAVE. Re-fire from a fork-runtime session.');
+        }
+        const result = await generateWave(args, mainSessionId, {
+          taskDispatch: context.extra.taskDispatch,
+        });
       return {
         title: 'WAVE ' + result.wave + ' — ' + result.dispatched.length + ' dispatched',
-        output: JSON.stringify(result, null, 2),
+        output: JSON.stringify(modeStripped
+          ? { ...result, note: 'mode was ignored — mode is steer-only; this action=' + action + ' carries no mode.' }
+          : result, null, 2),
       };
     },
   });

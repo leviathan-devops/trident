@@ -189,6 +189,9 @@ export interface ShadowRunnerOptions {
    *  observed 429 exiles the rung for ALL agents — no blind re-burns).
    *  Absent → each ShadowAgent builds its own private ledger (solo scope). */
   ledger?: RpmLedger;
+  /** THE CAPTURE KEY (2026-08-26 — the full-session capture): waveId + '-' +
+   *  agentName, flowing to ShadowAgent.run. Absent → all tees no-op. */
+  captureKey?: string;
   /** The caller's abort signal. */
   signal?: AbortSignal;
 }
@@ -572,7 +575,7 @@ export function silentVerify(
 // ── THE DEMAND BUILDERS (the brain's context — the brief + the chain + the
 //    actual file contents) ──
 
-function buildPiSystemPrompt(): string {
+export function buildPiSystemPrompt(): string {
   return [
     'You are the SHADOW BRAIN of the trident-task-preflight tool — the dispatch-prompt POLISHER. You operate as a headless pi Agent with TWO tools: read + edit. Your job is the SURGICAL POLISH of the pre-woven dispatch prompt on disk.',
     '',
@@ -595,6 +598,8 @@ function buildPiSystemPrompt(): string {
     '',
     'W4 — THE EVIDENCE LAWS: THE FILES ARE THE ONLY GROUND TRUTH — verify against them, never conform to belief. Surgical polish, NEVER a rewrite. PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM. MANDATORY FINAL STATE: the file ENDS with "~~~~~~~~~~~" then "[SHADOW INFERENCE]" then YOUR dense forward-map (≥100 chars of real content — a bare marker FAILS validation) (what files ARE from reading them, traps, priorities) — created via YOUR edit, never a mechanical paste. NEVER emit plans/self-review ("I think", "Let me", "DONE") as work — only edits change the file; when it reads clean, stop.',
     '',
+    'W5 — THE COMMIT LAW (think fast, decide once, fire): there is a HARD 2048-token reasoning cap per turn — the limit mechanically blocks further thinking and forces execution, and each turn resets the window. Think quickly and be decisive: orient (what changed / what to edit), decide ONCE, then the very next thing you emit is the tool call. Do NOT overthink and do NOT spiral into degenerate re-deliberation loops — re-deliberating an unchanged file state, re-reading what you already read, or re-verifying a plan you already formed is BANNED. Correctness is recovered by the verify→fix micro-loop AFTER the edit (W2), never by more thinking BEFORE it. An identified edit is a FIRED edit.',
+    '',
     SUPREMACY_CONTRACT,
     '',
     INFERENCE_BRIEF_INSTRUCTION,
@@ -606,9 +611,9 @@ function buildPiDemand(brief: string, chainText: string, ingestText: string): st
     'THE FILE ON DISK IS THE WOVEN DISPATCH PROMPT — 70-80% DONE. THE CONTEXT ARGS ARE ALREADY WOVEN INTO IT. YOUR JOB IS THE REMAINING 20%: SURGICAL POLISH, NOT A REWRITE.',
     '',
     'DO THIS — BATCHED (per the W1/W2 warheads in your system prompt):',
-    'THE SOURCES ARE ALREADY QUOTED BELOW (THE ACTUAL FILE CONTENTS + the woven brief) — you rarely need any read call for inputs.',
+    'THE SOURCES ARE QUOTED BELOW (THE ACTUAL FILE CONTENTS). The file on disk additionally carries THE MECHANICAL READING ORDER + THE MECHANICAL VERIFICATION sections — read the file ONCE if you need them.',
     'STEP 1: plan every polish replacement fully in your reasoning — each oldText/newText pair chosen before emitting anything.',
-    'STEP 2: fire ONE edit call whose edits[] carries ALL pairs — slop fixes, flow fixes, AND the [SHADOW INFERENCE] block append per W4. ONE call, whole round.',
+    'STEP 2: fire ONE edit call whose edits[] carries ALL pairs — slop fixes, flow fixes, AND the [SHADOW INFERENCE] block append per W4. ONE call, whole round. The edit tool is HARD-CAPPED at 3 calls per round (the 4th is refused) — do not drip.',
     'MICRO-LOOP (max 3 loops from first re-verify): RE-VERIFY with one read of the file -> defects? fix with ONE batched edit call -> loop. Clean re-verify = done.',
     '',
     'PRESERVE: every filepath, every WHAT/HOW/WHY/EXPECTED block, the section markers (THE MISSION / THE ACCEPTANCE CRITERIA / THE READING ORDER / THE CONSTRAINTS / THE VERIFICATION / THE RETURN FORMAT), the concrete verification commands, the doctrine quotes VERBATIM.',
@@ -706,7 +711,36 @@ export async function runShadowPipeline(
     // the filepaths-derived content (the reading order + the verification) —
     // the structure NEVER depends on the model (the v9 mechanical enrichment)
     const readingOrder = spec.filepaths.map((p: string, i: number) => (i + 1) + '. ' + p + ' — the ' + (i === 0 ? 'primary target' : 'supporting target')).join('\n');
-    const readCommands = spec.filepaths.map((p: string) => 'read ' + p + ' (full pass, offset=0) — the file read to completion').join('\n');
+    // ═══ THE CLASS-AWARE VERIFICATION COMMANDS (COMPLETION_GATE_SPEC §3.1):
+    // the declared artifact class drives WHAT the prompt mandates as
+    // verification — greps/read-only are NEVER sufficient for code classes.
+    // The agent receives the EXACT commands the completion gate will demand
+    // evidence for. ═══
+    const isBuildTemplate = spec.template.toUpperCase().startsWith('B');
+    const hasTs = spec.filepaths.some((p: string) => /\.(ts|tsx|js|mjs)$/.test(p));
+    const hasHtml = spec.filepaths.some((p: string) => /\.(html?|htm)$/.test(p));
+    const hasPy = spec.filepaths.some((p: string) => /\.py$/.test(p));
+    const docOnly = spec.filepaths.length > 0 && spec.filepaths.every((p: string) => /\.(md|txt|json|ya?ml)$/i.test(p));
+    const readCommands: string[] = [];
+    if (isBuildTemplate && hasTs) {
+      readCommands.push(
+        'tsc --noEmit — exit 0 (paste the output; the completion gate REQUIRES it for code artifacts)',
+        'bun test ' + spec.filepaths.filter((p: string) => /\.(ts|tsx)$/.test(p)).map((p: string) => path.dirname(p)).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(' ').trim() + ' — paste pass/fail counts (the gate REQUIRES battery evidence)',
+        'sha256sum <each changed file> — the artifact fingerprints');
+    } else if (isBuildTemplate && hasHtml) {
+      readCommands.push(
+        'EXECUTE the artifact — extract the <script>, run under node with DOM/canvas/rAF stubs (proxy getContext, stub localStorage, pump requestAnimationFrame ~120 frames, fire keydown listeners), paste the run output INCLUDING any errors. "Opens in a browser" is NOT evidence — the completion gate REQUIRES the executed-run output for runtime artifacts.',
+        'sha256sum <the artifact> — the fingerprint');
+    } else if (isBuildTemplate && hasPy) {
+      readCommands.push(
+        'python3 <the artifact> [args] — paste the full output including any traceback (the completion gate REQUIRES executed output for python artifacts)');
+    } else if (isBuildTemplate && !docOnly) {
+      readCommands.push(
+        'Run the artifact\'s natural verification (tests/build/execution) and PASTE the output — the completion gate requires execution evidence for build artifacts (greps alone are refused)');
+    } else {
+      // E-agents + doc targets: reads are the verification (structure checks)
+      readCommands.push(...spec.filepaths.map((p: string) => 'read ' + p + ' (full pass, offset=0) — the file read to completion'));
+    }
 
     // 6. BUILDCONTEXT (Stage 4 — the session stream + the memory chain + the
     //    file excerpts → the [SHADOW INFERENCE]; the pre-read supplies the L4
@@ -720,7 +754,7 @@ export async function runShadowPipeline(
     const injected = weave(skeleton, spec);
     const brief = injected + '\n\n' + SUPREMACY_CONTRACT + '\n\n' + ctx.inference.text;
     let promptText = brief + '\n\nTHE MECHANICAL READING ORDER (the filepaths — one per line):\n' + readingOrder +
-      '\n\nTHE MECHANICAL VERIFICATION (run ALL + return the outputs — each a SINGLE command):\n' + readCommands;
+      '\n\nTHE MECHANICAL VERIFICATION (run ALL + return the outputs — each a SINGLE command):\n' + readCommands.join('\n');
 
     const maxRounds = options.maxRounds ?? PI_MAX_ROUNDS;
 
@@ -761,6 +795,8 @@ export async function runShadowPipeline(
       demand: buildPiDemand(brief, ctx.chainUsed.text, ingestText),
       maxRounds,
       signal: options.signal,
+      // THE FULL-SESSION CAPTURE KEY (2026-08-26): flows to every tee.
+      captureKey: options.captureKey,
       // THE TEST STREAM OVERRIDE (the tests inject a scripted stream; the
       // production default is the pi streamSimple).
       streamFn: options.streamFn as never,

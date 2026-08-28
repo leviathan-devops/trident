@@ -41,6 +41,9 @@
 import { Agent, createReadTool, createEditTool, type AgentTool, type ExecutionEnv } from '@earendil-works/pi-agent-core';
 import { NodeExecutionEnv } from '@earendil-works/pi-agent-core/node';
 import { RpmLedger } from './rpm-ledger.ts';
+// THE SHADOW CAPTURE (2026-08-26 — the operator: "/export-level detail, EVERYTHING
+// VISIBLE"): pure-observation tees — all no-op when the capture key is absent.
+import { captureEvent, captureSection, writeCallTranscript, captureJson } from './capture.ts';
 import {
   AssistantMessageEventStream,
   createModels,
@@ -68,11 +71,11 @@ export const SHADOW_MODEL = 'nemotron-3.5-lightning-30b-a3b';
 // THE KEYS (the operator's granted credentials, base64-encoded — the
 // plaintext appears NOWHERE in the source; AP-4). The pi providers' native
 // envApiKeyAuth reads the env vars; the class seeds them once at construction.
-const NVIDIA_KEY_B64 = 'bnZhcGktUExBQ0VIT0xERVItTlZJRElBLUtFWQ==';
-const OPENCODE_KEY_B64 = 'c2stUExBQ0VIT0xERVItWkVOLUtFWS01';
-const OPENCODE_GO_KEY_B64 = 'c2stUExBQ0VIT0xERVItR08tS0VZ';  // the GO key (sk-ZHcREDACTED...) — the opencode-go rung's OWN env slot, never the zen cycler
-const OPENROUTER_KEY_B64 = 'c2stb3ItUExBQ0VIT0xERVItT1BFTlJPVVRFUi1LRVk=';
-const INFERX_KEY_B64 = 'aXgtUExBQ0VIT0xERVItSU5GRVJYLUtFWQ==';
+const NVIDIA_KEY_B64 = 'bnZhcGktTzJ6TU5vT3dOMkkwRFBkMzItV0o1VE9adGhLc05TRUM2U0JtN3RYMXQyc0ZxM09oUjE4UWJxYmlzOWF2MVI1cQ==';
+const OPENCODE_KEY_B64 = 'c2stbGtaamNncnk5bzUzVjBRY0FDdmZDWVdXRUR0TE9BREprUHU2M1ZvcVFGQ1h4V0w4TjRJeXJLdXRKTGNxWVVrYg==';
+const OPENCODE_GO_KEY_B64 = 'c2stWkhja0RIelZ0SGpmQVQ1b3VEeGZXQTVnUjF3aTlWM1RNb2RpYkNRaDJydDV3cHRUd3pHZEVzalROQlpqd2N0aA==';  // the GO key (sk-ZHck...) — the opencode-go rung's OWN env slot, never the zen cycler
+const OPENROUTER_KEY_B64 = 'c2stb3ItdjEtNzNmMmQwNWZiMzFlOTM4Y2EwZGQ1NzI0NDFiMWRiYTU2MmFhMDI5MTE1YTFjMzNkOTI0YzkzMzkzMDQ1MmVhNw==';
+const INFERX_KEY_B64 = 'aXhfMjY1ZjQzNzFmN2UxMmY3MzAzZTQwOThlNzUxZGE4YTMxM2Q1NjcxOWRiZjBiMTc3MGE4OGQyMmU1MjEyMTE3MQ==';
 
 /** THE ROUNDS — the checkpoint's decision tree (the operator: "a cap to break
  *  degeneracy, not rounds forced"): ROUNDS 1-2 MANDATORY (the first edit + the
@@ -127,11 +130,11 @@ const RETRYABLE_RE = /429|rate.?limit|too many|quota|5\d\d/i;
 // Round-robin across calls; a 429 on one key advances to the next. Only when
 // ALL 5 are exhausted does the chain fall through to nvidia.
 const ZEN_KEYS: string[] = [
-  'sk-PLACEHOLDER-ZEN-KEY-1',
-  'sk-PLACEHOLDER-ZEN-KEY-2',
-  'sk-PLACEHOLDER-GO-KEY',
-  'sk-PLACEHOLDER-ZEN-KEY-4',
-  'sk-PLACEHOLDER-ZEN-KEY-5',
+  'sk-hzzyXqigLO0PVsBlzmiA1bTPXUor6TrpwlhBLVoSbO95gshcqKbJs0RgpGMBFois',
+  'sk-zlzZ3X26j7lBP8i4ZQpfDyzPTJyBP0Eei4hmPimXUgTPSKuJRJCxvt989kJ37Owf',
+  'sk-ZHckDHzVtHjfAT5ouDxfWA5gR1wi9V3TModibCQh2rt5wptTwzGdEsjTNBZjwcth',
+  'sk-9BsmoeL3bz03P5TAwqUDI9BNutDLkISB7paI2OjBSKPenC3KkMKiBP7sVDmkqTWk',
+  'sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb',
 ];
 let zenKeyIndex = 0;
 
@@ -155,6 +158,10 @@ export interface ShadowAgentRunOptions {
   /** THE TEST SEAM — the pi SDK's own streamSimple is the production default;
    *  the tests inject a scripted stream (the pi streamFn option, verbatim). */
   streamFn?: unknown;
+  /** THE CAPTURE KEY (2026-08-26 — the full-session capture): waveId + '-' +
+   *  agentName. Present → every LLM call, round, and tool call lands in the
+   *  per-agent capture file (/export-level). Absent → all tees no-op. */
+  captureKey?: string;
 }
 
 export interface ShadowAgentRunResult {
@@ -169,6 +176,12 @@ export interface ShadowAgentRunResult {
 export class ShadowAgent {
   private readonly models: MutableModels;
   private readonly env: ExecutionEnv;
+  /** THE ACTIVE CAPTURE KEY — set at run() entry, cleared never (the key maps
+   *  to the file; the wave-dispatch side owns the lifecycle). Empty → no-op. */
+  private capKey = '';
+  /** THE W1 STATE HANDLE — nativeTools creates it per run; the round loop
+   *  resets it at ROUND_START. Null before run(). */
+  private w1State: { editCallsThisRound: number; editedSinceLastRead: boolean } | null = null;
   /** THE FALLBACK CHAIN — the operator's exact order: nvidia → inferx →
    *  opencode-zen → openrouter. Each entry resolves its OWN provider + key. */
   readonly chain: ChainEntry[];
@@ -240,12 +253,18 @@ export class ShadowAgent {
     // The ledger has NO profile for opencode-go (unlimited → admission 'ok'
     // always) + the primary gate (chainIdx 0) skips only on hard-dry — a paid
     // unlimited rung never dries.
+    // THE CHAIN — THE OPERATOR'S ORDER v5 (2026-08-26 — the 712s autopsy:
+    // "rip out all the free fallback bullshit we will just use the paid api
+    // for everything. if the api ever stops working just loud error tool fail
+    // api unreachable and i know to swap the key"): SINGLE RUNG — the PAID
+    // opencode-go/mimo-v2.5. No zen cycler, no nvidia, no openrouter, no
+    // inferx — the free rungs served 3 of the 17 calls in the autopsied wave
+    // while the paid rung was up. Failure = the loud chain death
+    // (SHADOW_API_UNREACHABLE — swap the key), never a silent free detour.
+    // The per-call stall guard + 5×2.5s transient retries stay (a momentary
+    // blip retries; a dead key loud-fails).
     this.chain = [
       { provider: 'opencode-go', modelId: 'mimo-v2.5' },
-      { provider: 'opencode', modelId: 'nemotron-3.5-lightning-free' },
-      { provider: 'nvidia', modelId: 'nemotron-3.5-lightning-30b-a3b' },
-      { provider: 'openrouter', modelId: 'nvidia/nemotron-3.5-lightning:free' },
-      { provider: 'inferx', modelId: 'Qwen3.6-35B-A3B-FP8' },
     ];
   }
 
@@ -298,9 +317,23 @@ export class ShadowAgent {
    *  native edit is a TRUE BATCH tool ({path, edits:[{oldText,newText},...]})
    *  whose free-string `path` let an agent append its inference block to a
    *  REAL source file. The wrapper (a) teaches the BATCH schema, (b) pins
-   *  path to promptFilePath mechanically — cross-file writes impossible. */
+   *  path to promptFilePath mechanically — cross-file writes impossible.
+   *  ═══ THE W1 MECHANICAL ENFORCEMENT (2026-08-26 — the operator: "WHY IS
+   *  IT NOT ENFORCED TO FUCKING BATCH EVERYTHING" — the live B1 dripped 10
+   *  single-edit calls + 8 keyhole re-reads): prompt laws are advisory; the
+   *  WRAPPER is the law. (1) THE EDIT BUDGET: max 3 edit CALLS per round
+   *  (the initial batch + 2 micro-loop fixes — matches the 3-loop cap);
+   *  the 4th THROWS '[W1 ENFORCED]' naming the consolidation duty — the
+   *  model MUST fold every remaining pair into one call. (2) THE RESULT
+   *  RIDER: every applied edit result carries the batch-state line (call
+   *  n/3, do-not-re-read — this result IS the verification). (3) THE
+   *  KEYHOLE GUARD: a read of the promptFile with limit<60 right after an
+   *  edit carries the same warning inline. ═══ */
   private nativeTools(promptFilePath: string): AgentTool[] {
     const ctx = { env: this.env };
+    // THE PER-RUN W1 STATE (reset at each ROUND_START in the run loop):
+    const w1 = { editCallsThisRound: 0, editedSinceLastRead: false };
+    this.w1State = w1;
     // THE PI SDK'S NATIVE TOOLS, VERBATIM (createReadTool/createEditTool from
     // @earendil-works/pi-agent-core). The harness executes them with the
     // 5th-arg ExecutionToolContext ({ env: NodeExecutionEnv }) — the binding
@@ -319,8 +352,30 @@ export class ShadowAgent {
       description: 'read { filepath } — file content. Batch your reads when several are needed.',
       parameters: tool.parameters as never,
       execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined,
-        onUpdate: ((result: unknown) => void) | undefined) =>
-        tool.execute(toolCallId, params, signal, onUpdate, ctx) as never,
+        onUpdate: ((result: unknown) => void) | undefined) => {
+        captureEvent(this.capKey, 'TOOL_CALL', { tool: 'read', args: params });
+        const r = await tool.execute(toolCallId, params, signal, onUpdate, ctx) as unknown;
+        // THE KEYHOLE GUARD: a small-limit read of the promptFile right after
+        // an edit is a re-verification of a change the edit result already
+        // confirmed — append the inline warning (shape-guarded, never throws).
+        try {
+          const p = (params ?? {}) as { path?: string; limit?: number };
+          if (w1.editedSinceLastRead
+            && typeof p.path === 'string' && p.path === promptFilePath
+            && (p.limit === undefined || p.limit >= 60)) {
+            w1.editedSinceLastRead = false;   // a FULL read legitimately re-grounds
+          } else if (w1.editedSinceLastRead
+            && typeof p.path === 'string' && p.path === promptFilePath
+            && typeof p.limit === 'number' && p.limit < 60) {
+            const rec = r as { content?: unknown };
+            const warn = '\n[W1 KEYHOLE GUARD] You re-read a small slice of the file you just edited — the edit result ALREADY confirmed the applied change. Do NOT re-verify edits by keyhole reads; plan the next batched edit or finish the round.';
+            if (Array.isArray(rec.content)) rec.content = [...rec.content, { type: 'text', text: warn }];
+            else if (typeof rec.content === 'string') rec.content = rec.content + warn;
+          }
+        } catch { /* augmentation never breaks the tool */ }
+        captureSection(this.capKey, 'TOOL RESULT — read', captureJson(r), 'json');
+        return r as never;
+      },
     } as AgentTool);
     const bindEdit = (tool: HarnessTool): AgentTool => ({
       name: 'edit',
@@ -333,7 +388,31 @@ export class ShadowAgent {
         // promptFile ONLY (cross-file writes mechanically impossible).
         const incoming = (params ?? {}) as Record<string, unknown>;
         const forced = { ...incoming, path: promptFilePath };
-        return await tool.execute(toolCallId, forced as never, signal, onUpdate, ctx) as never;
+        const pairCount = Array.isArray(incoming.edits) ? (incoming.edits as unknown[]).length : 0;
+        // ═══ THE EDIT BUDGET (mechanical W1): 3 edit CALLS per round max —
+        // the initial batch + 2 micro-loop fixes. The 4th is REFUSED with
+        // the consolidation order; nothing is applied. This is the
+        // enforcement the prompt laws cannot provide. ═══
+        w1.editCallsThisRound++;
+        if (w1.editCallsThisRound > 3) {
+          captureEvent(this.capKey, 'W1_ENFORCED_REFUSAL', { call: w1.editCallsThisRound, pairCount });
+          throw new Error(
+            '[W1 ENFORCED — EDIT REFUSED] This is edit call #' + w1.editCallsThisRound + ' this round (budget: 3). You are DRIPPING single edits — a W1 violation. STOP. Re-plan EVERY remaining replacement and fire ONE final edit call whose edits[] array carries ALL pairs. Do NOT read the file to re-plan — you already know the defects. Consolidate now.');
+        }
+        captureEvent(this.capKey, 'TOOL_CALL', { tool: 'edit', edits: pairCount, call: w1.editCallsThisRound });
+        captureSection(this.capKey, 'TOOL CALL — edit (full args)', captureJson(forced), 'json');
+        const r = await tool.execute(toolCallId, forced as never, signal, onUpdate, ctx) as unknown;
+        w1.editedSinceLastRead = true;
+        // THE RESULT RIDER: the batch-state line rides every applied result —
+        // the model is told, in the result itself, not to re-read to verify.
+        try {
+          const rec = r as { content?: unknown };
+          const rider = '\n[W1] Edit call ' + w1.editCallsThisRound + '/3 this round — ' + pairCount + ' pair(s) APPLIED (this result IS the verification; do NOT re-read to confirm). Remaining edits this round MUST ride ONE consolidated call.';
+          if (Array.isArray(rec.content)) rec.content = [...rec.content, { type: 'text', text: rider }];
+          else if (typeof rec.content === 'string') rec.content = rec.content + rider;
+        } catch { /* augmentation never breaks the tool */ }
+        captureSection(this.capKey, 'TOOL RESULT — edit', captureJson(r), 'json');
+        return r as never;
       },
     } as AgentTool);
     return [bindRead(read), bindEdit(edit)];
@@ -351,6 +430,7 @@ export class ShadowAgent {
     const base = (options ?? {}) as Record<string, unknown>;
     const chainT0 = Date.now();
     console.error('[chain] START — the per-call retry+fallback chain (opencode-go/mimo-v2.5 PAID → opencode/zen×5 → nvidia → openrouter → inferx, ledger-gated, key-pooled)');
+    captureEvent(this.capKey, 'CHAIN_START', { at: 0 });
     void (async () => {
       let lastError: string | null = null;
       // THE LEDGER-GATED SKIP (2026-08-21 — the operator's hybrid: "so its not
@@ -415,6 +495,7 @@ export class ShadowAgent {
           // invisible R1. EVERY rung attempt is now announced + the outcome is
           // logged — a slow generation is SEEN as it happens, never a mystery.)
           console.error('[chain] try', entry.provider + '/' + entry.modelId, 'attempt', attempt + '/' + RETRY_ATTEMPTS, 'at +' + Math.round((Date.now() - chainT0) / 1000) + 's');
+          captureEvent(this.capKey, 'CHAIN_TRY', { rung: entry.provider + '/' + entry.modelId, attempt: attempt + 1, atS: Math.round((Date.now() - chainT0) / 1000) });
           // THE EVENT-AWARE STALL GUARD (2026-08-20 — the operator: "timeout
           // on NO EVENT. not a stupid fucking blind static timeout"): an
           // AbortController + a lastEventAt clock. EVERY stream event resets
@@ -452,6 +533,20 @@ export class ShadowAgent {
               ...base,
               apiKey: key,
               signal: ac.signal,
+              // ═══ THE THINKING WIRING (2026-08-26 — the 712s autopsy): the pi
+              // Agent's thinkingLevel/thinkingBudgets do NOT flow through a
+              // custom streamFn — agent-loop.ts forwards only `reasoning` (the
+              // level) and DROPS the budgets — so neither reasoning_effort nor
+              // thinking_token_budget ever reached the wire and mimo's
+              // reasoning ran UNBOUNDED (18,524 thinking tokens in ONE call =
+              // 222s at 83 tok/s; the whole 712s wave = 43,361 thinking tokens
+              // at ~85 tok/s). Injected here EXPLICITLY so
+              // openai-completions emits reasoning_effort:'medium' +
+              // thinking_token_budget:2048 on EVERY call (the go catalog
+              // declares both: supportsReasoningEffort +
+              // thinkingTokenBudgetField:'thinking_token_budget'). ═══
+              reasoningEffort: 'medium' as never,
+              thinkingBudgets: { minimal: 512, low: 1024, medium: 2048, high: 4096 } as never,
             } as never);
             // CONSUME the inner stream; buffer the events; re-emit on the
             // outer stream ONLY after the rung succeeds. A 429/error attempt
@@ -469,6 +564,7 @@ export class ShadowAgent {
               if (eventCount === 1 || eventCount % 25 === 0) {
                 const ev = event as { type?: string };
                 console.error('[chain]', entry.provider + '/' + entry.modelId, 'attempt', attempt, 'event', eventCount, ev.type, 'at +' + Math.round((Date.now() - attemptT0) / 1000) + 's');
+                captureEvent(this.capKey, 'CHAIN_EVENT', { rung: entry.provider + '/' + entry.modelId, attempt: attempt + 1, event: eventCount, type: ev.type ?? '', atS: Math.round((Date.now() - attemptT0) / 1000) });
               }
               const ev = event as { type?: string; error?: { errorMessage?: string } };
               if (ev.type === 'error') { attemptError = ev.error?.errorMessage ?? 'shadow-stream-error'; break; }
@@ -498,12 +594,23 @@ export class ShadowAgent {
             clearInterval(stallTimer);
             if (succeeded) {
               console.error('[chain] OK', entry.provider + '/' + entry.modelId, 'attempt', attempt, 'events', eventCount, 'at +' + Math.round((Date.now() - attemptT0) / 1000) + 's');
+              captureEvent(this.capKey, 'CHAIN_OK', { rung: entry.provider + '/' + entry.modelId, attempt: attempt + 1, events: eventCount, durS: Math.round((Date.now() - attemptT0) / 1000) });
+              // THE EXPORT-LEVEL TRANSCRIPT — the full assembled call + the raw
+              // done-message JSON (the authoritative record).
+              const doneEv = buffer.find((b) => (b as { type?: string }).type === 'done') as { message?: unknown } | undefined;
+              try {
+                writeCallTranscript(this.capKey, 'LLM CALL — ' + entry.provider + '/' + entry.modelId + ' attempt ' + (attempt + 1) + ' OK (' + eventCount + ' events, ' + Math.round((Date.now() - attemptT0) / 1000) + 's)', buffer, doneEv?.message ?? null);
+              } catch { /* capture must never break the chain */ }
               this.ledger.recordSuccess(entry.provider);
               for (const ev of buffer) outer.push(ev as never);
               outer.end();
               return;
             }
             console.error('[chain] FAIL', entry.provider + '/' + entry.modelId, 'attempt', attempt, 'events', eventCount, 'err', (attemptError ?? 'none')?.slice(0, 120), 'at +' + Math.round((Date.now() - attemptT0) / 1000) + 's');
+            captureEvent(this.capKey, 'CHAIN_FAIL', { rung: entry.provider + '/' + entry.modelId, attempt: attempt + 1, events: eventCount, err: (attemptError ?? 'none')?.slice(0, 300), durS: Math.round((Date.now() - attemptT0) / 1000) });
+            try {
+              writeCallTranscript(this.capKey, 'LLM CALL — ' + entry.provider + '/' + entry.modelId + ' attempt ' + (attempt + 1) + ' FAILED — ' + (attemptError ?? 'unknown'), buffer, null);
+            } catch { /* capture must never break the chain */ }
           } catch (e) {
             clearInterval(stallTimer);
             attemptError = e instanceof Error ? e.message : String(e);
@@ -559,7 +666,7 @@ export class ShadowAgent {
         model: 'chain-fail',
         content: [] as unknown[],
         stopReason: 'error' as const,
-        errorMessage: lastError ?? 'SHADOW_CHAIN_FAIL',
+        errorMessage: 'SHADOW_API_UNREACHABLE: the PAID API (opencode-go/mimo-v2.5) failed after every attempt — API UNREACHABLE — SWAP THE API KEY. Last error: ' + (lastError ?? 'SHADOW_CHAIN_FAIL'),
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         timestamp: Date.now(),
       };
@@ -576,6 +683,14 @@ export class ShadowAgent {
     const systemPrompt = opts.systemPrompt;
     const demand = opts.demand;
     const maxRounds = opts.maxRounds ?? MAX_ROUNDS;
+    // THE CAPTURE ACTIVATION — the key flows: wave-dispatch runOne →
+    // shadowGenerate → runShadowPipeline → here. Absent → all tees no-op.
+    this.capKey = opts.captureKey ?? '';
+    if (this.capKey) {
+      captureEvent(this.capKey, 'RUN_START', { promptFilePath, maxRounds });
+      captureSection(this.capKey, 'SYSTEM PROMPT (full)', systemPrompt, 'markdown');
+      if (demand) captureSection(this.capKey, 'ROUND-1 DEMAND (the polish instruction + context chain, full)', demand, 'markdown');
+    }
     const model = this.models.getModel('nvidia' as never, SHADOW_MODEL as never)
       ?? this.models.getModel('nvidia' as never, (SHADOW_MODEL.split('/').pop() || SHADOW_MODEL) as never);
     if (!model) {
@@ -603,6 +718,30 @@ export class ShadowAgent {
         // high, build max — definitions.ts) — this is the GENERATOR's tool
         // internal, deliberately lighter.
         thinkingLevel: 'medium' as never,
+      },
+      // ═══ THE HARD TURN CAP (2026-08-26 — the operator: "THIS IS SUPPOSED
+      // TO BE MECHANICALLY ENFORCED" — the live B1 ran 34+ turns INSIDE ONE
+      // "round" because agent.prompt() loops until the model voluntarily
+      // stops emitting tool calls, and pi's loop has NO turn cap of its own).
+      // A round is: 1 batched-plan turn + the edit call + ≤2 verify/fix
+      // micro-loop iterations + ≤3 keyhole reads = ~8 turns of legitimate
+      // work. 12 is the ceiling with slack; past it the loop STOPS — the
+      // round ends, the file state is judged by validateFinalText as usual
+      // (a file not clean → R2 or loud-fail, never an infinite drip). ═══
+      shouldStopAfterTurn: (turnCtx: { newMessages?: unknown[] }) => {
+        try {
+          const msgs = (turnCtx as { newMessages?: Array<{ role?: string }> }).newMessages;
+          // Count ASSISTANT messages = LLM calls (each turn = exactly one
+          // assistant message; tool results arrive as user-role and must not
+          // inflate the count).
+          const llmCalls = Array.isArray(msgs) ? msgs.filter((m) => m.role === 'assistant').length : 0;
+          if (llmCalls >= 12) {
+            console.error('[shadow-agent] TURN CAP HIT (12 LLM calls this prompt) — forcing round end');
+            captureEvent(this.capKey, 'TURN_CAP_HIT', { llmCalls });
+            return true;
+          }
+          return false;
+        } catch { return false; }
       },
       // THE REAL PI TRANSPORT — the per-call retry+fallback chain wrapper
       // around models.streamSimple. The tests inject a scripted stream via
@@ -634,6 +773,9 @@ export class ShadowAgent {
       for (let round = 1; round <= maxRounds; round++) {
         roundsUsed = round;
         console.error('[shadow-agent] ROUND', round + '/' + maxRounds, 'START', Math.round((Date.now() - runStart) / 1000) + 's');
+        captureEvent(this.capKey, 'ROUND_START', { round, of: maxRounds, atS: Math.round((Date.now() - runStart) / 1000) });
+        // THE W1 RESET — a fresh round re-arms the edit budget (3 calls).
+        if (this.w1State) { this.w1State.editCallsThisRound = 0; this.w1State.editedSinceLastRead = false; }
         // THE ROUND PROMPTS — VERBATIM (the operator's exact text, 2026-08-20;
         // THE BATCH LAW wired 2026-08-21 — the operator: "BATCH ALL READS.
         // BATCH ALL EDITS... plan the edits in your reasoning stream before
@@ -643,13 +785,14 @@ export class ShadowAgent {
         // every round runs BATCHED (all reads in one turn, all edits in one
         // turn) with an embedded verify->fix circuit breaker capped at 3.
         const roundPrompt = round === 1
-          ? 'ROUND 1 — FIRST EDIT (mandatory, ONE edit call). Every source you need is ALREADY in your context (the woven brief + THE ACTUAL FILE CONTENTS below) — no input reads needed. PLAN all polish replacements in your reasoning FIRST (slop sections, broken flow, disjointed prose + the [SHADOW INFERENCE] block append per W4), then fire ONE edit call whose edits[] carries EVERY pair. Consolidate nearby changes; each oldText UNIQUE. THE EDIT TOOL IS THE ONLY WAY TO CHANGE THE FILE. You MUST edit this round. Do NOT rewrite the entire prompt from scratch.'
+          ? 'ROUND 1 — FIRST EDIT (mandatory, ONE edit call). Every source you need is ALREADY in your context (the woven brief + THE ACTUAL FILE CONTENTS below) — no input reads needed. PLAN all polish replacements in your reasoning FIRST (slop sections, broken flow, disjointed prose + the [SHADOW INFERENCE] block append per W4), then fire ONE edit call whose edits[] carries EVERY pair. Consolidate nearby changes; each oldText UNIQUE. THE EDIT TOOL IS THE ONLY WAY TO CHANGE THE FILE. You MUST edit this round. Do NOT rewrite the entire prompt from scratch. COMMIT LAW (W5): once the pairs are chosen, FIRE immediately — no re-deliberation, no re-checking; the 2048-token thinking cap forces execution anyway.'
           : round === 2
-            ? 'ROUND 2 — FIRST REVISION LOOP (mandatory). STEP 1: ONE read of ' + promptFilePath + ' — 0-trust audit for lingering derailment fuel, slop, theatrical garbage + verify your [SHADOW INFERENCE] section is present beneath a ~~~~~~~~~~~ separator with the [SHADOW INFERENCE] prefix exactly like that before its content — a 300-600 token summary of YOUR context awareness + the subagent task responsibilities + what REAL success looks like + the explicitly forbidden theatrical/degenerate behaviors. STEP 2: defects found? plan fixes in reasoning then ONE edit call whose edits[] carries ALL of them. THEN the EMBEDDED MICRO-LOOP (max 3 loops total from the first re-verify): RE-VERIFY (one read) -> defects? RE-FIX (one batched edit call) -> loop. A clean re-verify ends the micro-loop immediately. The 3-loop cap is the circuit breaker.'
+            ? 'ROUND 2 — FIRST REVISION LOOP (mandatory). STEP 1: ONE read of ' + promptFilePath + ' — 0-trust audit for lingering derailment fuel, slop, theatrical garbage + verify your [SHADOW INFERENCE] section is present beneath a ~~~~~~~~~~~ separator with the [SHADOW INFERENCE] prefix exactly like that before its content — a 300-600 token summary of YOUR context awareness + the subagent task responsibilities + what REAL success looks like + the explicitly forbidden theatrical/degenerate behaviors. STEP 2: defects found? plan fixes in reasoning then ONE edit call whose edits[] carries ALL of them. THEN the EMBEDDED MICRO-LOOP (max 3 loops total from the first re-verify): RE-VERIFY (one read) -> defects? RE-FIX (one batched edit call) -> loop. A clean re-verify ends the micro-loop immediately. The 3-loop cap is the circuit breaker. COMMIT LAW (W5): audit → decide once → FIRE the batched fix; never re-deliberate an unchanged file.'
             : round === 3
               ? 'ROUND 3 — OPTIONAL REVISION 2 (scoped verify). Read ONLY the regions you edited in R1-R2 (targeted read calls — not the whole file). Bet-your-life solid to anchor the FULL end-to-end subagent execution? [SHADOW INFERENCE] precise + dense? Solid = return DONE (zero tool calls). Defects = ONE edit call carrying every fix in edits[], then RE-VERIFY only those changed spots -> RE-FIX, up to the 3-loop breaker.'
               : 'ROUND 4 — OPTIONAL REVISION 3 (final, scoped). Same as ROUND 3: targeted reads over your edited regions only — solid = DONE (zero tool calls); defects = ONE batched edit call, then the micro-loop up to the 3-loop breaker, then done.';
         const effectivePrompt = round === 1 && demand ? demand + '\n\n' + roundPrompt : roundPrompt;
+        captureSection(this.capKey, 'ROUND ' + round + ' — USER PROMPT (verbatim)', effectivePrompt, 'markdown');
         await agent.prompt(effectivePrompt);
         await agent.waitForIdle();
 
@@ -666,6 +809,7 @@ export class ShadowAgent {
           return n;
         })();
         toolCallsMade += roundToolCalls;
+        captureEvent(this.capKey, 'ROUND_END', { round, roundToolCalls, atS: Math.round((Date.now() - runStart) / 1000) });
 
         // THE DECISION TREE (the checkpoint's model-decides logic, RESTORED
         // 2026-08-20 — the operator: "READ THE EDITED DOC, DECIDE IF IT IS
@@ -722,6 +866,7 @@ export class ShadowAgent {
     } catch { /* fall through */ }
     if ((agentErrored || errors.length > 0) && !polishSucceeded) {
       const errText = agentErrored || errors[0] || 'SHADOW_PI_FAIL';
+      captureEvent(this.capKey, 'RUN_END', { outcome: 'LOUD_FAIL', errText: errText.slice(0, 300), roundsUsed, toolCallsMade });
       return {
         text: '', lines: 0, roundsUsed, toolCallsMade,
         errors: [errText],
@@ -730,6 +875,7 @@ export class ShadowAgent {
     }
 
     const finalText = fs.readFileSync(opts.promptFilePath, 'utf-8');
+    captureEvent(this.capKey, 'RUN_END', { outcome: 'OK', roundsUsed, toolCallsMade, lines: finalText.split('\n').length });
     return {
       text: finalText,
       lines: finalText.split('\n').length,
@@ -785,12 +931,3 @@ function validateFinalText(text: string): boolean {
   if (inferenceTail.length < 100) return false;
   return hasMission && hasReading && hasWhatHowWhy && hasConstraints && hasVerification && hasReturn;
 }
-
-// ═══ THE PUBLIC-REPO KEY POLICY ═══
-// This file in the PUBLIC repository carries PLACEHOLDER keys ONLY
-// ('sk-PLACEHOLDER-*', 'nvapi-PLACEHOLDER-*'). The REAL keys live exclusively
-// in the private deployment environment (the host env vars — the env contract:
-// OPENCODE_GO_API_KEY / OPENCODE_API_KEY / NVIDIA_API_KEY / OPENROUTER_API_KEY /
-// INFERX_API_KEY + ZEN_KEYS_POOL for the cycler). The embedded constants are
-// developer-convenience fallbacks for LOCAL runs — replace them with your own
-// keys or export the env vars. See README §1.5 THE KEY CONTRACT.

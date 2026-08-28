@@ -7,7 +7,7 @@
 // + the kill-respawn — the only two submit events). The tick NEVER crashes the
 // cron — a dead provider marks the session error and the next tick continues.
 
-import { WaveTracker, type WaveTrack } from './wave-tracker.ts';
+import { WaveTracker, setGatePassed, setGateHeld, setGateExempt, type WaveTrack } from './wave-tracker.ts';
 import { ReminderQueue } from './wave-reminder-queue.ts';
 import { matchStuckPatterns, STUCK_ACTIVITY_AGE_MS, type StuckEvidence } from './wave-stuck-detector.ts';
 import { buildCompletionDirective } from './wave-constants.ts';
@@ -57,7 +57,18 @@ export const CRON_INTERVAL_MS = Number.isFinite(ENV_INTERVAL) && ENV_INTERVAL > 
   ? ENV_INTERVAL
   : 10 * 60 * 1000;
 
-let cronHandle: ReturnType<typeof setInterval> | null = null;
+// THE ACTIVE TICK (2026-08-26 — the RC-3/RC-5 fixes): while any wave is live,
+// the tick runs at 60-90s cadence so task-completion toasts surface
+// near-real-time; idle = the 10m default (the env override preserved for
+// tests). A self-rescheduling setTimeout chain (setInterval cannot change its
+// own period).
+export const ACTIVE_TICK_MS = (() => {
+  const v = parseInt(process.env.TRIDENT_WAVE_ACTIVE_TICK_MS ?? '', 10);
+  return Number.isFinite(v) && v > 0 ? v : 75 * 1000;
+})();
+
+let cronHandle: ReturnType<typeof setTimeout> | null = null;
+let cronStopped = false;
 
 // THE TICK'S CLIENT SURFACE (the reads the cron performs — the sessions are
 // the truth, never the narration):
@@ -109,33 +120,43 @@ function resolveMainSessionId(client: WaveCronClient | null, mainSessionId: stri
 
 export function startWaveCron(): void {
   if (cronHandle) return;                  // the single registration per server
-  cronHandle = setInterval(() => {
-    // THE LIVE CLIENT — resolved at each tick (null before createTridentTools
-    // runs; the tick handles a null client gracefully — the reads mark the
-    // sessions error, the secondary checks still run):
-    let client: WaveCronClient | null = null;
+  cronStopped = false;
+  const scheduleNext = () => {
+    if (cronStopped) { cronHandle = null; return; }
+    // ADAPTIVE: live waves → the fast tick; idle → the base interval. The
+    // getActiveWaves check is an in-memory Map scan (microseconds idle cost).
+    const delay = WaveTracker.getActiveWaves().length > 0 ? ACTIVE_TICK_MS : CRON_INTERVAL_MS;
+    cronHandle = setTimeout(async () => {
+      try {
+        let client: WaveCronClient | null = null;
+        try {
+          const live = getOpencodeClient();
+          if (live) client = live as unknown as WaveCronClient;
+        } catch (cErr) {
+          tridentLog('WARN', 'wave-cron', 'client resolution failed: ' + (cErr instanceof Error ? cErr.message : String(cErr)));
+        }
+        await waveTick(client, mainSessionIdRef());
+      } catch (tErr) {
+        // THE CRON NEVER DIES (Part 5.5 — a dead tick must not stop the loop):
+        tridentLog('ERROR', 'wave-cron', 'waveTick crashed: ' + (tErr instanceof Error ? tErr.message : String(tErr)));
+      } finally {
+        scheduleNext();
+      }
+    }, delay);
+    // The timer MUST NOT hold the process open (the tests + the server
+    // shutdown rely on this):
     try {
-      const live = getOpencodeClient();
-      if (live) client = live as unknown as WaveCronClient;
-    } catch (cErr) {
-      tridentLog('WARN', 'wave-cron', 'client resolution failed: ' + (cErr instanceof Error ? cErr.message : String(cErr)));
+      (cronHandle as unknown as { unref?: () => void }).unref?.();
+    } catch (uErr) {
+      tridentLog('WARN', 'wave-cron', 'timer unref failed (non-fatal): ' + (uErr instanceof Error ? uErr.message : String(uErr)));
     }
-    void waveTick(client, mainSessionIdRef()).catch((tErr) => {
-      // THE CRON NEVER DIES (Part 5.5 — a dead tick must not stop the loop):
-      tridentLog('ERROR', 'wave-cron', 'waveTick crashed: ' + (tErr instanceof Error ? tErr.message : String(tErr)));
-    });
-  }, CRON_INTERVAL_MS);
-  // The interval MUST NOT hold the process open (the tests + the server
-  // shutdown rely on this):
-  try {
-    (cronHandle as unknown as { unref?: () => void }).unref?.();
-  } catch (uErr) {
-    tridentLog('WARN', 'wave-cron', 'interval unref failed (non-fatal): ' + (uErr instanceof Error ? uErr.message : String(uErr)));
-  }
-  tridentLog('INFO', 'wave-cron', 'the 10m wave cron registered (interval ' + CRON_INTERVAL_MS + 'ms)');
+  };
+  scheduleNext();
+  tridentLog('INFO', 'wave-cron', 'the wave cron registered (adaptive: ' + ACTIVE_TICK_MS + 'ms with live waves, ' + CRON_INTERVAL_MS + 'ms idle)');
 }
 
 export function stopWaveCron(): void {
+  cronStopped = true;
   if (cronHandle) {
     clearInterval(cronHandle);
     cronHandle = null;
@@ -188,26 +209,37 @@ async function tickAgent(
   let status: string;
   let statusReadFailed = false;
   let bytes = agent.lastBytes;
+  // ═══ THE EVENT-AWARE TERMINAL DETECTION (2026-08-26 — the operator: the
+  // gate "literally fired in the middle of the agent reading — ZERO event
+  // awareness"). THE BUG: step-finish fires after EVERY tool round — an
+  // agent mid-work (read→step-finish→step-start→next tool) shows "newest =
+  // step-finish" between every pair of steps, and the single-snapshot check
+  // fired the gate on every inter-step gap the cron sampled. THE FIX: a
+  // terminal state requires the stream QUIETED — the newest part is
+  // step-finish AND the part COUNT is unchanged since the last tick (no new
+  // work arrived) AND the last activity is at least one full quiet window
+  // old. A step-finish on a GROWING stream = mid-work, not terminal. ═══
+  const QUIET_WINDOW_MS = 90_000;   // one poll cycle of silence = quieted
+  const isTerminalStream = (stream: { ok: boolean; parts: Array<{ type?: string; completed?: boolean }>; totalParts: number }): boolean => {
+    if (!stream.ok || stream.parts.length === 0) return false;
+    const newest = stream.parts[stream.parts.length - 1];
+    const isFinishMarker = newest.type === 'step-finish' || newest.completed === true;
+    if (!isFinishMarker) return false;
+    // The stream must be QUIETED: no new parts since the last tick (the count
+    // didn't grow) AND the last activity is past the quiet window.
+    const grewSinceLastTick = stream.totalParts > agent.lastBytes;
+    const quieted = !grewSinceLastTick && (Date.now() - (agent.lastActivityAt ?? 0)) > QUIET_WINDOW_MS;
+    return quieted;
+  };
   if (agent.taskIds && agent.taskIds.length > 0) {
-    // THE BACKGROUND EVIDENCE (2026-08-12 — the background-only ruling): the DB
-    // part stream SIZE is the activity signal (the client messages read errored
-    // in the live environment). A growing part count = activity; a frozen count
-    // past the ETA = STUCK (the PatternFamily below decides).
     try {
       const stream = readSessionStream(agent.taskIds[agent.taskIds.length - 1], { limit: 1 });
       bytes = stream.totalParts;
-      // THE TERMINAL GUARD (2026-08-23 — the sanity restore; kills the
-      // STUCK-spam-on-a-corpsed class): the NEWEST part being step-finish or
-      // time.end'd means the agent FINISHED its turn — mark it completed and
-      // return. A finished agent is NEVER stuck evidence, no matter how old.
-      if (stream.ok && stream.parts.length > 0) {
-        const newest = stream.parts[stream.parts.length - 1];
-        if (newest.type === 'step-finish' || newest.completed === true) {
-          agent.state = 'complete';
-          agent.lastActivityAt = Date.now();
-          tridentLog('INFO', 'wave-cron', 'TERMINAL: ' + wave.wave + '/' + name + ' finished (newest part step-finish/completed) — closed out, never stuck-evaluated.');
-          return;
-        }
+      if (isTerminalStream(stream)) {
+        agent.lastActivityAt = Date.now();
+        tridentLog('INFO', 'wave-cron', 'TERMINAL(quieted): ' + wave.wave + '/' + name + ' — finish marker + no growth + past the quiet window — routed to the completion gate.');
+        await routeCompletionGate(wave, name, agent, 'background');
+        return;
       }
       status = stream.ok ? 'stream' : 'unknown';
     } catch (bgErr) {
@@ -217,18 +249,23 @@ async function tickAgent(
     }
   } else {
     try {
-      const st = await client.status({});
-      status = st.data?.status ?? 'unknown';
-      const tail = await client.messages({ path: { id: sid }, query: { limit: 1 } });
-      bytes = JSON.stringify(tail.data ?? []).length;
-    } catch (sErr) {
-      // THE READ-FAILURE DISTINCTION (2026-08-07 — the live false-positive):
-      // a failed read is NOT a session crash — the status stays unknown + the
-      // read-failure flag set; the SESSION_CRASH pattern requires the confirmed
-      // status, never the read error.
+      if (sid) {
+        const stream = readSessionStream(sid, { limit: 1 });
+        bytes = stream.totalParts;
+        if (isTerminalStream(stream)) {
+          agent.lastActivityAt = Date.now();
+          tridentLog('INFO', 'wave-cron', 'TERMINAL(quieted): ' + wave.wave + '/' + name + ' — finish marker + no growth + past the quiet window (session-keyed) — routed to the completion gate.');
+          await routeCompletionGate(wave, name, agent, 'foreground');
+          return;
+        }
+        status = stream.ok ? 'stream' : 'unknown';
+      } else {
+        status = 'unknown';
+      }
+    } catch (fgErr) {
       status = 'unknown';
       statusReadFailed = true;
-      tridentLog('WARN', 'wave-cron', 'read failed for ' + wave.wave + '/' + name + ' — the read-failure flag set (NOT a crash): ' + (sErr instanceof Error ? sErr.message : String(sErr)));
+      tridentLog('WARN', 'wave-cron', 'foreground stream read failed for ' + wave.wave + '/' + name + ' — the read-failure flag set (NOT a crash): ' + (fgErr instanceof Error ? fgErr.message : String(fgErr)));
     }
   }
   const streamGrowing = bytes > agent.lastBytes;
@@ -288,6 +325,127 @@ async function tickAgent(
   }
 }
 
+// ═══ THE TASK-COMPLETION TOAST — REMOVED (2026-08-26, DB-verified): the
+// runtime's VANILLA inject owns the completion notification. TaskTool.execute's
+// background branch (which extra.taskDispatch calls — task.ts is byte-identical
+// to vanilla 1.14.51) injects the synthetic `{type:"text",synthetic:true}` part
+// ("Background task completed: <name> | task_id: <child session> | state:
+// completed | <task_result>") into the OWNING session and wakes it only when
+// idle (noReply:true — the gentle kick). PROVEN MECHANICALLY 2026-08-26 via the
+// opencode.db probe (read-only, LIMIT-bounded): synthetic injects for
+// wave-dispatched agents — calc-builder (this session, wave-1787720204493),
+// util-builder, machine-surgery, gate-strategies, b4-verify-update, s5-battery,
+// … — all landed in their dispatching orchestrator sessions. The promptAsync
+// toast was a SECOND, chat-shaped, generation-forcing kick on every completion
+// — the double-notification bug. The gate below stays a PURE OBSERVER
+// (bookkeeping + the remediation steer): observation ≠ kick. Gate verdicts
+// surface via the orchestrator's status polls (the W16 doctrine) + the vanilla
+// inject's own task_result text — NEVER via promptAsync. ═══
+
+// ═══ THE COMPLETION GATE ROUTER (2026-08-26 — COMPLETION_GATE_SPEC §2.4):
+// BOTH completion paths route here. The gate evaluates the agent's return
+// text against the artifact class; PASS → markComplete; HOLD → the
+// one remediation steer + in_review; FAILED → the loud named failure.
+// NOTIFICATION: vanilla TaskTool inject owns it (see the tombstone above) —
+// this router NEVER prompts the orchestrator session. ═══
+async function routeCompletionGate(wave: WaveTrack, name: string, agent: WaveTrack['agents'][string], _path: 'background' | 'foreground'): Promise<void> {
+  try {
+    const sid = agent.sessionIds[agent.sessionIds.length - 1] || (agent.taskIds && agent.taskIds[agent.taskIds.length - 1]) || '';
+    // THE EVIDENCE READ: text parts AND tool-result outputs (the command
+    // OUTPUTS live in tool results — the DB part shape nests them at
+    // state.output / state.metadata.output; the read probes every level).
+    let evidenceText = '';
+    if (sid) {
+      try {
+        const page = readSessionStream(sid, { limit: 14 });
+        if (page.ok) {
+          evidenceText = page.parts.map((p: Record<string, unknown>) => {
+            const t = String(p.type ?? '');
+            if (t === 'text') return String(p.text ?? '');
+            if (t === 'tool') {
+              const st = p.state as Record<string, unknown> | undefined;
+              const meta = st?.metadata as Record<string, unknown> | undefined;
+              return String(st?.output ?? meta?.output ?? p.output ?? p.outputSnippet ?? '');
+            }
+            return '';
+          }).filter(Boolean).join('\n');
+        }
+      } catch { /* empty → INCONCLUSIVE → HOLD (the fail state, never a pass) */ }
+    }
+    // THE DECLARED CLASS — from the track (computed at dispatch from the
+    // spec's filepaths + template — NEVER from return text). The fallback
+    // for pre-gate waves: a B-shaped name never defaults to REPORT — the
+    // strictest defensible class for an unknown build agent is the battery
+    // gate (an E-shaped/exploration agent defaults REPORT).
+    const declaredClass = agent.declaredClass
+      ?? (/^(b[0-9]|build|gate|evidence|writer|hunter|fix|impl)/i.test(name) ? 'TYPE_BATTERY' : 'REPORT');
+    // EXEMPT classes complete without evidence checks (spec §2.6 misfire
+    // guards 1+2: DOC + REPORT).
+    if (declaredClass === 'REPORT' || declaredClass === 'DOC') {
+      tridentLog('INFO', 'wave-cron', 'COMPLETION GATE ' + wave.wave + '/' + name + ': PASS [EXEMPT declaredClass=' + declaredClass + ']');
+      setGateExempt(wave.wave, name);
+      WaveTracker.markComplete(wave.wave, name);
+      return;
+    }
+    const { evaluateCompletion } = await import('./wave-completion-gate.ts');
+    const priorHolds = agent.gateHolds ?? 0;
+    const verdict = evaluateCompletion(evidenceText, declaredClass, priorHolds);
+    tridentLog('INFO', 'wave-cron', 'COMPLETION GATE ' + wave.wave + '/' + name + ': ' + verdict.decision + ' [declared=' + declaredClass + ' holds=' + priorHolds + '] ' + verdict.triad.evidence);
+    if (verdict.decision === 'PASS') {
+      setGatePassed(wave.wave, name);
+      WaveTracker.markComplete(wave.wave, name);
+      // ═══ THE INJECT TRIPWIRE (2026-08-28 — the EN-200 lesson, plugin-side):
+      // the vanilla inject writes the synthetic "Background task completed"
+      // part into the OWNING session at job completion. If that write ever
+      // dies silently again (the stale-git-lock class), this WARN is the
+      // operator-visible signal — a completed+gate-passed agent with NO
+      // inject in the owner transcript. A tripwire, not a writer: the plugin
+      // has no synthetic-part API (verified); the fix for a tripped wire is
+      // environmental (e.g. rm a stale lock) or the shelved durable inject. ═══
+      void (async () => {
+        try {
+          if (!wave.ownerSessionId || wave.ownerSessionId === 'default') return;
+          const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+          if (!fs.existsSync(dbPath)) return;
+          const db = new Database(dbPath, { readonly: true });
+          try {
+            const row = db.query(
+              "SELECT COUNT(*) c FROM part WHERE session_id = ? AND data LIKE '%\"synthetic\":true%' AND data LIKE '%Background task completed: ' || ? || '%'"
+            ).get(wave.ownerSessionId, name) as { c: number } | null;
+            if (row && row.c === 0) {
+              tridentLog('WARN', 'wave-cron', 'INJECT TRIPWIRE: ' + wave.wave + '/' + name + ' completed + gate-passed but NO vanilla inject found in owner ' + wave.ownerSessionId + ' — the completion notification may be LOST (check ~/.local/share/opencode/snapshot/*/index.lock or deploy the durable inject)');
+            }
+          } finally { db.close(); }
+        } catch { /* the tripwire never breaks the gate path */ }
+      })();
+      return;
+    }
+    if (verdict.decision === 'HOLD') {
+      // THE REAL ENFORCEMENT LOOP (spec §2.3-2.4): the agent STAYS 'running'
+      // (tickAgent keeps processing it) — the steer makes it work again; its
+      // next terminal state RE-ENTERS this gate (the re-evaluation). The
+      // gateHolds counter rides the track; the 2nd insufficient hold →
+      // evaluateCompletion returns FAILED (no infinite loop, no stranding).
+      const holds = setGateHeld(wave.wave, name);
+      try {
+        const { executeWaveSteer } = await import('./wave-dispatch.ts');
+        await executeWaveSteer(sid, verdict.remediation, { mode: 'soft', subagentType: 'trident_build' });
+        tridentLog('WARN', 'wave-cron', 'GATE HOLD (' + holds + ') → remediation steered to ' + name + ' (' + sid + ') — the agent stays running; its resubmission re-enters the gate');
+      } catch (sErr) {
+        tridentLog('ERROR', 'wave-cron', 'GATE HOLD steer failed for ' + name + ': ' + (sErr instanceof Error ? sErr.message : String(sErr)) + ' — the gate state holds; the next tick re-evaluates.');
+      }
+      return;
+    }
+    // FAILED — the loud named failure; the orchestrator decides (it saw the
+    // vanilla inject's task_result at child terminal; the verdict rides the
+    // tracker row + its status polls).
+    WaveTracker.markFailed(wave.wave, name, 'COMPLETION GATE: ' + (verdict.remediation || 'second return without execution evidence'));
+  } catch (gErr) {
+    tridentLog('ERROR', 'wave-cron', 'completion gate crashed for ' + wave.wave + '/' + name + ' — failing OPEN this cycle: ' + (gErr instanceof Error ? gErr.message : String(gErr)));
+    WaveTracker.markComplete(wave.wave, name);
+  }
+}
+
 // THE TICK (Part 16 — the silent reads + the classifications). The client is
 // injectable (the tests stub the reads); the production uses the live client.
 export async function waveTick(
@@ -316,8 +474,7 @@ export async function waveTick(
       if (agent.taskIds && agent.taskIds.length > 0 && agent.state === 'running') {
         try {
           if (isBackgroundTerminal(agent.taskIds[agent.taskIds.length - 1])) {
-            WaveTracker.markComplete(wave.wave, name);
-            tridentLog('INFO', 'wave-cron', 'background agent ' + wave.wave + '/' + name + ' marked complete (the part stream terminal)');
+            await routeCompletionGate(wave, name, agent, 'background');
           }
         } catch (bgErr) {
           tridentLog('WARN', 'wave-cron', 'background terminal check failed for ' + wave.wave + '/' + name + ' (the next tick retries): ' + (bgErr instanceof Error ? bgErr.message : String(bgErr)));

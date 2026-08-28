@@ -238,6 +238,19 @@ THE LAW:
 
 **§2 — THE TELEMETRY HALLUCINATION GUARD.** The generate result carries `generationTelemetry` per agent — the PROMPT-GENERATION timings (`status:'generated'`, `agentStatus:'dispatched'`). These are NOT the agent's run. An agent that dispatched 5 seconds ago is WORKING, not finished. **DISPATCH ≠ DONE. GENERATION TIME ≠ RUN TIME. The ONLY completion truth is the session stream reaching `complete`.** Never verify, harvest, or build on an agent whose stream you have not read to `complete`.
 
+**§2.1 — THE CANON-UPDATE MANDATE.** UPDATE THE CANON DOCS AFTER EVERY WAVE IS COMPLETED AND ITS QUALITY CONTROL IS DONE, BEFORE DISPATCHING THE NEXT WAVE. The canon is the self-continue mechanism — a compaction mid-build must leave a fresh agent able to pick up exactly where you are. THE MANDATE, per wave:
+- UPDATE `context_management/CURRENT_STATE.md` — the architecture as it now is, with the wave's changes.
+- UPDATE `context_management/BUILD_STATE.md` — the current dist SHA + the battery numbers.
+- UPDATE `context_management/CHANGELOG.md` — the wave's history, appended.
+- UPDATE `context_management/EVIDENCE_STATE.md` — the per-wave evidence: the gate verdicts, the audits, the test results.
+- UPDATE `context_management/DECISION_CHAIN.md` — any ruling the wave produced.
+- UPDATE `context_management/NEXT_STEPS.md` + `context_management/TASK_QUEUE.md` — the queued work, the fired ideas.
+- UPDATE `context_management/POST-COMPACTION_PROMPT.md` — the resume point: what a fresh agent reads first.
+- UPDATE `context_management/COMPACTION_SURVIVAL.md` — the session record, current.
+- A wave whose canon docs are stale is an UNFINISHED wave — the update is PART of the wave's completion, never deferred to "later".
+- The canon-update law applies BETWEEN EVERY WAVE, not only at the build's end.
+- USE THE canon-doc-update SKILL FOR THE UPDATE — load it via the skill tool with name='canon-doc-update' and follow its protocol: read the CANON_MANIFEST, update each doc per its semantics (the append-only logs append, the state docs reflect the current state), and verify the density + the cross-consistency gates before closing the wave.
+
 **§3 — THE SESSION-STREAM TRUTH.** `trident-wave-read sessionId=<id>` (or `action=status sessionId=<id>`) is the ONLY liveness instrument: it reads the opencode.db part stream directly. `task_status` is BANNED for liveness — it reports the background-JOB registry which can say 'cancelled' for a LIVE session. The status values: `stream` = actively working (new parts + unfinished step — LEAVE IT ALONE); `idle` = paused/awaiting mid-task (no new parts + last step finished — THIS is when a kick lands); `complete` = the session TERMINATED — ⚠ TERMINATED ≠ THE WORK IS WHOLE: a provider cut mid-return still lands the terminal finish, and the report can be truncated mid-sentence. The read result's `returnTruncated` flag (the truncation signals on the final text part: dangling-connective / unclosed-code-fence / unclosed-inline-code / trailing-structure-opener) is the integrity layer — a truncated return = an interrupted agent = KICK (resume), NEVER a harvest; `absent` = wrong id. Between polls, read the part content: `lastTools` shows what it is doing; a frozen part count past the ETA = investigate (§5).
 
 **§4 — THE CONTROL PLANE.**

@@ -142,33 +142,12 @@ async function probeP1(
     return r;
   }
   try {
-    const created = await client.session.create({ body: { parentID: mainSessionId, title: 'probe-subagent' } });
-    const childId = created.data.id;
-    results['V1_parentID'] = created.data.parentID === mainSessionId;
-    details.push('childId=' + childId + ' parentID=' + String(created.data.parentID));
-    const t0 = Date.now();
-    await client.session.promptAsync({
-      path: { id: childId },
-      body: {
-        agent: 'trident_explore',
-        parts: [{
-          type: 'subtask',
-          prompt: 'EXECUTE THE FOLLOWING PROBE: report the string PROBE_OK.',
-          description: 'probe-subagent',
-          agent: 'trident_explore',
-        }],
-      },
-    });
-    results['V6_promptAsync_immediate'] = Date.now() - t0 < 2000;
-    details.push('promptAsync latency=' + (Date.now() - t0) + 'ms');
-    const rootList = await client.session.list({});
-    results['V2_no_main_list_pollution'] = !(rootList.data ?? []).some((s) => s.id === childId);
-    const children = await client.session.children({ path: { id: mainSessionId } });
-    results['V3_in_children'] = (children.data ?? []).some((s) => s.id === childId);
-    const tail = await pollForCompletion(client, childId, 120_000);
-    results['V4_subagent_ran'] = tail.finalMessagePresent;
-    results['V5_stream_visible'] = tail.partEvents > 0;
-    details.push('final=' + tail.finalMessagePresent + ' partEvents=' + tail.partEvents);
+    // RETIRED (2026-08-27 — the operator's ruling): client-spawn
+    // (session.create + promptAsync) is the FORBIDDEN spawn path — no
+    // TaskTool → no live card, no completion inject, no idle wake (a mute
+    // agent). Every spawn routes through extra.taskDispatch ONLY. The P1
+    // experiment is concluded; this probe now self-reports the retirement.
+    throw new Error('P1 RETIRED — client-spawn (session.create + promptAsync) is the FORBIDDEN path (2026-08-27): no TaskTool → no card, no completion inject, no wake. Only extra.taskDispatch (TaskTool.execute background) spawns.');
   } catch (p1Err) {
     const msg = p1Err instanceof Error ? p1Err.message : String(p1Err);
     tridentLog('ERROR', 'wave-probe', 'P1 failed: ' + msg);
@@ -484,31 +463,8 @@ async function probeP5(
       results['Q2_effectResolved'] = handle !== null;
       if (handle) {
         // THE CHILD (tethered to the parent):
-        const created = await client.session.create({ body: { parentID: mainSessionId, title: 'probe-p5-child (subagent)' } });
-        const childId = created.data.id;
-        results['Q2_childTethered'] = created.data.parentID === mainSessionId;
-        details.push('childId=' + childId + ' parentID=' + String(created.data.parentID));
-        // THE PARTS (runPromise — proven by P4):
-        const parts = await handle.runPromise(promptOps!.resolvePromptParts!('EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else.'));
-        // THE BACKGROUND FORK — the non-blocking proof:
-        const t0 = Date.now();
-        handle.runFork(promptOps!.prompt!({
-          sessionID: childId,
-          agent: 'trident_explore',
-          tools: { task: false, todowrite: false },
-          parts,
-        }));
-        const forkLatency = Date.now() - t0;
-        results['Q3_forkNonBlocking'] = forkLatency < 2000;
-        details.push('runFork returned in ' + forkLatency + 'ms (non-blocking=' + String(results['Q3_forkNonBlocking']) + ')');
-        // THE CHILD RUNS — poll for the child's parts (the stream grows in the background):
-        const tail = await pollForCompletion(client, childId, 90_000);
-        results['Q4_childStreamed'] = tail.partEvents > 0;
-        results['Q5_childCompleted'] = tail.finalMessagePresent;
-        details.push('child partEvents=' + tail.partEvents + ' final=' + String(tail.finalMessagePresent));
-        if (!results['Q4_childStreamed']) {
-          details.push('H2 VERDICT = FALSE: the child never produced parts — the full promptOps.prompt needs services NOT available to the plugin fork (the provider/agent services are AppLayer-backed, not ALS-backed). The Effect dispatch path is dead for the FULL run → spawnTask fallback.');
-        }
+        // RETIRED (2026-08-27): the client-spawn child is FORBIDDEN (see P1).
+        throw new Error('P5 RETIRED — the Effect-fork experiment\'s client-spawn child (session.create) is the FORBIDDEN path (2026-08-27): no TaskTool → no card, no inject, no wake. Only extra.taskDispatch spawns.');
       } else {
         results['Q2_childTethered'] = false;
         results['Q3_forkNonBlocking'] = false;
@@ -680,43 +636,10 @@ async function probeP6(
         details.push('ABORT: effect not resolvable.');
       } else {
         // STEP 1 — THE CHILD (tethered):
-        const created = await client.session.create({ body: { parentID: mainSessionId, title: 'probe-p6-card (subagent)' } });
-        const childId = created.data.id;
-        results['Q2_childTethered'] = created.data.parentID === mainSessionId;
-        details.push('childId=' + childId + ' parentID=' + String(created.data.parentID));
-        // STEP 2 — THE CARD PART (the tool:"task" ToolPart via the updatePart HTTP endpoint):
-        const partId = genProbeId('prt');
-        const cardPart = {
-          id: partId,
-          messageID: messageId,
-          sessionID: mainSessionId,
-          type: 'tool',
-          callID: genProbeId('cll'),
-          tool: 'task',
-          state: {
-            status: 'running',
-            input: { prompt: 'EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else.', description: 'probe-p6-card', subagent_type: 'trident_explore' },
-            title: 'probe-p6-card',
-            metadata: { sessionId: childId, parentSessionId: mainSessionId, background: true },
-            time: { start: Date.now() },
-          },
-        };
-        const write = await writeCardPart(client, { sessionID: mainSessionId, messageID: messageId, partID: partId }, cardPart);
-        results['Q3_cardPartWritten'] = write.ok;
-        details.push('updatePart via channel=' + write.channel + ' status=' + String(write.status) + ' partId=' + partId + (write.error ? ' error=' + write.error.slice(0, 160) : ''));
-        details.push('client surface: ' + write.surface.join(','));
-        // STEP 3 — THE CHILD RUNS ASYNC (the Effect background fork — H1/H2 proven):
-        const parts = await handle.runPromise(promptOps!.resolvePromptParts!('EXECUTE THE FOLLOWING PROBE: reply with the single token PROBE_OK and nothing else.'));
-        handle.runFork(promptOps!.prompt!({ sessionID: childId, agent: 'trident_explore', tools: { task: false, todowrite: false }, parts }));
-        results['Q4_childForked'] = true;
-        // STEP 4 — VERIFY the card part persisted in the parent's assistant message (the TUI reads it):
-        await new Promise((r) => setTimeout(r, 1500));
-        const check = await client.session.messages({ path: { id: mainSessionId } });
-        const msgs = (check.data ?? []) as Array<{ parts?: Array<{ id?: string; tool?: string; type?: string }> }>;
-        const found = msgs.some((m) => (m.parts ?? []).some((p) => p.id === partId && p.tool === 'task'));
-        results['Q5_cardPartPersisted'] = found;
-        details.push('card part persisted in parent message=' + String(found));
-        if (!found) details.push('the card part did NOT persist — the updatePart write failed or the part was rejected; H3 = FALSE (panel-only via the child session row).');
+        // RETIRED (2026-08-27): the updatePart fake card + the client-spawn
+        // child are BOTH on the forbidden list (a PATCHed card is not a live
+        // ctx.toolcalls entry; the client-spawn has no TaskTool at all).
+        throw new Error('P6 RETIRED — the updatePart fake card + the client-spawn child are FORBIDDEN (2026-08-27): only extra.taskDispatch (createLiveToolPart → TaskTool.execute background) makes real cards + completion injects.');
       }
     }
   } catch (p6Err) {

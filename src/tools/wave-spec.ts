@@ -169,6 +169,29 @@ export function validateSpecFile(filePath: string): SpecDiagnostic[] {
     if (intentDiag) diags.push(intentDiag);
   }
 
+  // ═══ THE VERIFICATION-CLASS CHECK (COMPLETION_GATE_SPEC §3.3 — the
+  // upstream refusal): a B-template agent whose taskTargets/acceptance carry
+  // NO execution-class verification signal is a smoke-verification plan — the
+  // completion gate would HOLD its agent at return time. Refuse it AT SPEC
+  // TIME so the plan never dispatches half-built. The signal set: any of
+  // test/battery/tsc/typecheck/run/harness/execute/container/sha256 in the
+  // agent's taskTargets or acceptance. ═══
+  for (const agent of parsed.agents) {
+    const tpl = String(agent?.template ?? '');
+    if (!tpl.toUpperCase().startsWith('B')) continue;   // E-agents: reads are fine
+    const targets = String(agent?.taskTargets ?? '') + ' ' + String(agent?.acceptance ?? '');
+    const hasVerificationSignal = /\b(test|battery|tsc|typecheck|run|harness|execut|container|sha256|battery output|run output)\b/i.test(targets);
+    if (!hasVerificationSignal) {
+      diags.push({
+        agent: String(agent?.name ?? 'unknown'),
+        field: 'taskTargets/acceptance',
+        severity: 'error',
+        message: `smoke-verification plan: no execution-class verification signal in taskTargets/acceptance (grep/ls/read-only checks are NOT gate-passing evidence for a build agent)`,
+        fix: `add the verification commands to taskTargets/acceptance — e.g. "tsc --noEmit + bun test with pasted counts" (TYPE_BATTERY), "execute under a harness and paste the run output" (RUNTIME), "python3 run with pasted output" (RUN) — the completion gate will demand this evidence at return time`,
+      });
+    }
+  }
+
   return diags;
 }
 

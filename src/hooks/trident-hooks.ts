@@ -77,6 +77,7 @@ import {
 import { ReminderQueue } from '../tools/wave-reminder-queue.ts';
 import { SHADOW_TOOLS, TRIDENT_TMP_DIR } from '../tools/wave-constants.ts';
 import { WaveTracker } from '../tools/wave-tracker.ts';
+import { blindSleepSeconds } from '../tools/wave-sleep-guard.ts';
 import { startWaveCron, setCronMainSessionId } from '../tools/wave-cron.ts';
 import { advancePlanOnEvent } from '../tools/wave-todowrite.ts';
 import {
@@ -1774,6 +1775,28 @@ var toolBeforeHook = async function(input: Record<string, unknown>, output: Reco
       var bashArgs = cast<Record<string, unknown>>(output?.args || {});
       bashCmd = typeof bashArgs.command === 'string' ? bashArgs.command : JSON.stringify(bashArgs);
     } catch (e2) { console.error('[TridentHooks] error:', e2); }
+    // ═══ THE WAVE SLEEP GUARD (2026-08-26 — the RC-5 fix, the operator: "the
+    // retarded agent is on a 3min blind sleep 0 fucking event awareness"): an
+    // orchestrator that OWNS a wave with live agents must never blind-sleep —
+    // poll status or do real work; the task-completion toasts arrive on their
+    // own. SCOPED (zero misfires by construction): fires ONLY when ALL of
+    // (c1) bash + a `sleep N` with N>30s, (c2) the CALLING session owns a
+    // tracked wave (ownerSessionId — stamped at generate), (c3) that wave has
+    // live agents. Container-test internals run via their own execSync channel
+    // (never this hook); subagents never own waves; short sleeps + non-sleep
+    // commands pass untouched. ═══
+    try {
+      if (WaveTracker.ownerHasRunningAgents(sid || sessionId)) {
+        const blindSecs = blindSleepSeconds(bashCmd);
+        if (blindSecs !== null && blindSecs > 60) {   // 60s: the sanctioned poll cadence (sleep 45 between status polls is legal orchestration — W16)
+          throw new Error(
+            '[WAVE SLEEP GUARD] Blind sleep ' + blindSecs + 's REFUSED — you OWN a running wave. Event-aware orchestration instead: poll trident-wave-manager action=status waveId=<id> (the compact per-agent summary, ~every 90s), kick an idle agent with action=steer sessionId=<id> mode=soft, and keep working — task-completion events are delivered into your session automatically as agents finish. Sleeps up to 60s between status polls are the sanctioned cadence — longer blind sleeps while your agents run are the observed degenerate (a stalled agent + a sleeping orchestrator = a dead wave).');
+        }
+      }
+    } catch (sgErr) {
+      if (sgErr instanceof Error && sgErr.message.indexOf('[WAVE SLEEP GUARD]') === 0) throw sgErr;
+      tridentLog('WARN', 'trident-hooks', 'sleep-gate failed (non-gate): ' + (sgErr instanceof Error ? sgErr.message : String(sgErr)));
+    }
     if (isContainerTestingCommand(bashCmd)) {
       if (!isContainerSkillLoaded(sid || sessionId)) {
         throw new Error(
@@ -2989,16 +3012,15 @@ var toolAfterHook = async function(input: Record<string, unknown>, output: Recor
       // waveId, NOT with the batch form. The batch form is a debugger's view,
       // not a dispatch contract. The next step is the tool call.)
       var wdAppend = '';
-      var wdParsed2: Record<string, unknown> | null = null;
-      try { wdParsed2 = JSON.parse(wdRaw) as Record<string, unknown>; } catch (e6) { /* plain text */ }
-      if (wdParsed2 && wdParsed2.wave) {
-        wdAppend = '\n\n## WAVE GENERATED — call trident-wave-manager action=dispatch waveId=' + String(wdParsed2.wave) + ' NOW. The dispatch tool IS the next step — do not paste the batch form; the T.E.A. wipe fires on dispatch.\n';
-      } else {
-        wdAppend = '\n\n## WAVE GENERATED — the wave manager returned without a parseable wave — see the raw result and call the dispatch tool.\n';
-      }
-      if (typeof wdOut.output === 'string') { wdOut.output = wdOut.output + wdAppend; }
-      else { wdOut.output = wdAppend; }
-      tridentLog('INFO', 'trident-hooks', 'WAVE GENERATOR after: the batch-dispatch instruction appended');
+      // THE STALE-SUFFIX FIX (2026-08-28 — the T8 cosmetic finding, deleted):
+      // the old code appended "WAVE GENERATED — call action=dispatch NOW" to
+      // ANY wave-manager result that parsed with a .wave field — including
+      // status/kill/steer reads (the mislabel), and even on generate the
+      // instruction is WRONG for the auto-dispatch era (agents dispatch
+      // themselves at generation completion; generate's own checkIn carries
+      // the correct contract). The suffix is DELETED — no appended dispatch
+      // instruction on any action; the tool result itself is the truth.
+      tridentLog('INFO', 'trident-hooks', 'WAVE-GENERATOR after: no suffix (the stale dispatch instruction deleted 2026-08-28)');
     } catch (wdErr) {
       tridentLog('WARN', 'trident-hooks', 'WAVE DISPATCH after append failed: ' + (wdErr instanceof Error ? wdErr.message : String(wdErr)));
     }
