@@ -1,0 +1,15 @@
+title = "trident gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "mimo-api-key-assignment"
+description = "MIMO_API_KEY or the opencode-go api key set to a quoted literal"
+regex = '''(?i)(?:MIMO_API_KEY\s*=\s*['"]|"opencode-go"\s*:\s*\{[^}]*"key"\s*:\s*")([^'"\n]{8,})['"]'''
+keywords = ["MIMO_API_KEY", "opencode-go"]
+
+[[rules.allowlists]]
+description = "Placeholder left where the deploy note used to carry the key"
+regexTarget = "secret"
+regexes = ['''^<REDACTED_SET_VIA_ENV>$''']

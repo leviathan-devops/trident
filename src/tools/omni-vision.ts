@@ -21,7 +21,7 @@ import { z } from 'zod';
 
 // ── MiMo API Config (mode: "api" fallback) ──
 const MIMO_ENDPOINT = 'https://opencode.ai/zen/go/v1/chat/completions';
-const MIMO_API_KEY = 'sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb';
+const MIMO_API_KEY = process.env.MIMO_API_KEY || '';
 const MIMO_MODEL = 'mimo-v2.5';
 
 // ── Media Type Detection ──
