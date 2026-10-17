@@ -224356,7 +224356,7 @@ import * as fs10 from "fs";
 import * as path15 from "path";
 import * as os6 from "os";
 var MIMO_ENDPOINT = "https://opencode.ai/zen/go/v1/chat/completions";
-var MIMO_API_KEY = "sk-lkZjcgry9o53V0QcACvfCYWWEDtLOADJkPu63VoqQFCXxWL8N4IyrKutJLcqYUkb";
+var MIMO_API_KEY = process.env.MIMO_API_KEY || "";
 var MIMO_MODEL = "mimo-v2.5";
 var IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 var VIDEO_EXTS = new Set([".mp4", ".webm", ".avi", ".mov", ".mkv"]);
