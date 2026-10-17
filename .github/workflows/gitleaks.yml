@@ -18,4 +18,4 @@ jobs:
           gitleaks version
 
       - name: Scan the current tree
-        run: gitleaks dir . --redact
+        run: gitleaks dir . --config .gitleaks.toml --redact
